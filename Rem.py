@@ -20,18 +20,13 @@ from groq import Groq
 GROQ_API_KEY = "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"
 IMAGEN_FONDO = r"D:\Documentos\L rem\wallhaven-j5zopp_1920x1080.png"
 VOZ_REM = "es-MX-DaliaNeural"
-
-# Dispositivo de salida de audio:
-# 4  = CABLE Input (VB-Audio) → pasa por el voice changer
-# Cambia a 6 si quieres saltarte el voice changer y escuchar directo
-DISPOSITIVO_SALIDA = 4
+DISPOSITIVO_CABLE_INPUT = 4
 
 COMANDOS = {
     "fortnite": r"C:\Users\esteb\Desktop\Fortnite.lnk",
     "brave": r"C:\Users\esteb\Desktop\Brave.lnk",
 }
 
-# ── CLIENTE GROQ ──────────────────────────────────────────────────────
 cliente = Groq(api_key=GROQ_API_KEY)
 historial = []
 
@@ -76,25 +71,27 @@ def preguntar_groq(texto_usuario):
     return contenido
 
 
-# ── TTS ───────────────────────────────────────────────────────────────
 def hablar(texto):
     async def _hablar():
+        archivo = os.path.join(os.path.expanduser("~"), "rem_voz_temp.mp3")
         try:
-            communicate = edge_tts.Communicate(texto, VOZ_REM)
-            archivo = os.path.join(os.path.expanduser("~"), "rem_voz_temp.mp3")
+            communicate = edge_tts.Communicate(texto, VOZ_REM, rate="-40%")
             await communicate.save(archivo)
-
-            # Reproducir por CABLE Input para que el voice changer procese la voz
             data, samplerate = sf.read(archivo)
-            sd.play(data, samplerate, device=DISPOSITIVO_SALIDA)
-            sd.wait()
+            try:
+                info = sd.query_devices(DISPOSITIVO_CABLE_INPUT)
+                sr_cable = int(info['default_samplerate'])
+                sd.play(data, sr_cable, device=DISPOSITIVO_CABLE_INPUT)
+                sd.wait()
+            except Exception:
+                print("CABLE no disponible, reproduciendo directo")
+                sd.play(data, samplerate)
+                sd.wait()
         except Exception as e:
             print(f"Error TTS: {e}")
-
     asyncio.run(_hablar())
 
 
-# ── ACCIONES ──────────────────────────────────────────────────────────
 def optimizar_pc():
     try:
         subprocess.run('del /q/f/s %TEMP%\\*', shell=True, capture_output=True)
@@ -108,7 +105,6 @@ def optimizar_pc():
 
 def ejecutar_accion(datos):
     accion = datos.get("accion")
-
     if accion == "abrir":
         programa = datos.get("programa", "").lower()
         for clave in COMANDOS:
@@ -123,7 +119,6 @@ def ejecutar_accion(datos):
             return f"Abriendo {programa}..."
         except Exception:
             return f"No encontre {programa}."
-
     elif accion == "cerrar":
         programa = datos.get("programa", "").lower()
         cerrados = []
@@ -135,7 +130,6 @@ def ejecutar_accion(datos):
             except Exception:
                 pass
         return f"Cerre: {', '.join(cerrados)}" if cerrados else f"No encontre {programa}."
-
     elif accion == "volumen":
         valor = datos.get("valor", 50)
         try:
@@ -149,15 +143,12 @@ def ejecutar_accion(datos):
             return f"Volumen a {valor}%"
         except Exception:
             return "No pude ajustar el volumen."
-
     elif accion == "apagar":
         subprocess.run("shutdown /s /t 10", shell=True)
         return "Apagando la PC en 10 segundos!"
-
     elif accion == "reiniciar":
         subprocess.run("shutdown /r /t 10", shell=True)
         return "Reiniciando la PC en 10 segundos!"
-
     elif accion == "captura":
         try:
             ruta = os.path.join(os.path.expanduser("~"), "Desktop", "captura_rem.png")
@@ -165,7 +156,6 @@ def ejecutar_accion(datos):
             return "Captura guardada en el escritorio!"
         except Exception as e:
             return f"Error al capturar: {e}"
-
     elif accion == "buscar":
         archivo = datos.get("archivo", "")
         try:
@@ -175,21 +165,17 @@ def ejecutar_accion(datos):
             return f"No encontre {archivo}."
         except Exception as e:
             return f"Error al buscar: {e}"
-
     elif accion == "optimizar":
         return optimizar_pc()
-
     elif accion == "buscar_web":
         query = datos.get("query", "")
         webbrowser.open(f"https://www.google.com/search?q={query}")
         return f"Buscando '{query}' en internet!"
-
     elif accion == "escribir":
         texto = datos.get("texto", "")
         time.sleep(1)
         pyautogui.typewrite(texto, interval=0.05)
         return "Texto escrito!"
-
     return "No entendi esa accion."
 
 
@@ -205,7 +191,6 @@ def procesar_respuesta(respuesta):
     return respuesta, False
 
 
-# ── INTERFAZ ──────────────────────────────────────────────────────────
 app = tk.Tk()
 app.title("Rem - Asistente Virtual")
 app.geometry("500x750")
@@ -213,7 +198,6 @@ app.resizable(True, True)
 app.configure(bg="#0d0d1a")
 
 img_original = Image.open(IMAGEN_FONDO)
-
 bg_label = tk.Label(app, bg="#0d0d1a")
 bg_label.place(x=0, y=0, relwidth=1, relheight=1)
 
@@ -231,38 +215,18 @@ def actualizar_imagen(event=None):
 app.bind("<Configure>", actualizar_imagen)
 
 chat_var = tk.StringVar()
-chat_label = tk.Label(
-    app,
-    textvariable=chat_var,
-    font=("Arial", 11, "bold"),
-    bg="#1a1a2e",
-    fg="white",
-    wraplength=420,
-    justify=tk.LEFT,
-    padx=10, pady=8
-)
+chat_label = tk.Label(app, textvariable=chat_var, font=("Arial", 11, "bold"),
+    bg="#1a1a2e", fg="white", wraplength=420, justify=tk.LEFT, padx=10, pady=8)
 chat_label.place(relx=0.05, rely=0.55, relwidth=0.9)
 
 estado_var = tk.StringVar(value="Haz clic en el microfono para hablar")
-estado_label = tk.Label(
-    app,
-    textvariable=estado_var,
-    font=("Arial", 10),
-    bg="#0d0d1a",
-    fg="#aaaaff"
-)
+estado_label = tk.Label(app, textvariable=estado_var, font=("Arial", 10),
+    bg="#0d0d1a", fg="#aaaaff")
 estado_label.place(relx=0.05, rely=0.88, relwidth=0.9)
 
 entrada_var = tk.StringVar()
-entrada = tk.Entry(
-    app,
-    textvariable=entrada_var,
-    font=("Arial", 11),
-    bg="#1a1a2e",
-    fg="white",
-    insertbackground="white",
-    relief=tk.FLAT
-)
+entrada = tk.Entry(app, textvariable=entrada_var, font=("Arial", 11),
+    bg="#1a1a2e", fg="white", insertbackground="white", relief=tk.FLAT)
 entrada.place(relx=0.05, rely=0.92, relwidth=0.72, height=35)
 
 mensajes = []
@@ -293,15 +257,8 @@ def enviar_texto():
         threading.Thread(target=responder, args=(texto,), daemon=True).start()
 
 
-boton_enviar = tk.Button(
-    app,
-    text="Enviar",
-    font=("Arial", 10, "bold"),
-    bg="#3a3a6e",
-    fg="white",
-    relief=tk.FLAT,
-    command=enviar_texto
-)
+boton_enviar = tk.Button(app, text="Enviar", font=("Arial", 10, "bold"),
+    bg="#3a3a6e", fg="white", relief=tk.FLAT, command=enviar_texto)
 boton_enviar.place(relx=0.79, rely=0.92, relwidth=0.16, height=35)
 entrada.bind("<Return>", lambda e: enviar_texto())
 
@@ -331,16 +288,8 @@ def click_microfono():
     threading.Thread(target=escuchar_microfono, daemon=True).start()
 
 
-boton_mic = tk.Button(
-    app,
-    text="🎤",
-    font=("Arial", 20),
-    bg="#3a3a6e",
-    fg="white",
-    relief=tk.FLAT,
-    width=3,
-    command=click_microfono
-)
+boton_mic = tk.Button(app, text="🎤", font=("Arial", 20), bg="#3a3a6e",
+    fg="white", relief=tk.FLAT, width=3, command=click_microfono)
 boton_mic.place(relx=0.38, rely=0.78, anchor="n")
 
 
@@ -353,5 +302,4 @@ def bienvenida():
 
 
 threading.Thread(target=bienvenida, daemon=True).start()
-
 app.mainloop()
