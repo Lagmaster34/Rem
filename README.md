@@ -110,7 +110,7 @@ Puedes pedirle a Rem que haga lo siguiente:
 ---
 
 ## 📜 Créditos
-
+- https://www.tiktok.com/@unseguidormasdesilvie?_r=1&_t=ZS-95s1toDtD73 (La mente maestra del Asistente Virtual)
 - Modelo de voz RVC: Rem de Re:Zero
 - Voice Changer: [w-okada/voice-changer](https://github.com/w-okada/voice-changer)
 - LLM: [Groq](https://groq.com) con Llama 3.3 70B
