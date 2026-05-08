@@ -1,0 +1,16 @@
+# Secretos — NUNCA subir
+.env
+
+# Memoria del chat (datos personales)
+memoria_rem.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Sprites (pueden ser pesados, súbelos aparte si quieres)
+sprites/
+
+# Archivos temporales
+*.mp3
