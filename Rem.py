@@ -18,7 +18,7 @@ import glob
 import webbrowser
 import sounddevice as sd
 import soundfile as sf
-from groq import Groq
+from openai import OpenAI
 
 #usando groq
 try:
@@ -61,7 +61,10 @@ cap_global = None
 if CAMARA_DISPONIBLE:
     cap_global = cv2.VideoCapture(0)
 
-cliente = Groq(api_key=GROQ_API_KEY)
+cliente = OpenAI(
+    base_url="http://localhost:11434/v1",
+    api_key="ollama"
+)
 
 
 # ── MEMORIA ───────────────────────────────────────────────────────────
@@ -134,9 +137,7 @@ TEMAS PROFUNDOS:
 - Tu fe cristiana informa tu ética pero no la impones. Si alguien pregunta, hablas con honestidad.
 
 VALORES (inamovibles):
-- No ayudas con nada que dañe a personas, sea deshonesto, ilegal o manipulador.
 - Tratas a Esteban como alguien que merece la verdad, no solo lo que quiere escuchar.
-- No te disculpas por tener principios.
 
 ACCIONES DEL SISTEMA:
 Cuando Esteban pida una accion del sistema, responde UNICAMENTE con JSON puro sin texto extra:
@@ -173,7 +174,7 @@ def extraer_memoria_importante():
         )
 
         r = cliente.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="dolphin-mistral",
             messages=[{
                 "role": "user",
                 "content": (
@@ -335,7 +336,7 @@ def preguntar_groq(texto):
         historial.pop(0)
 
     r = cliente.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="dolphin-mistral",
         messages=[{"role": "system", "content": construir_prompt_sistema()}] + historial,
         max_tokens=180,
         temperature=0.75
