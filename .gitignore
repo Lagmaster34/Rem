@@ -3,6 +3,7 @@
 
 # Memoria del chat (datos personales)
 memoria_rem.json
+memoria_larga.json
 
 # Python
 __pycache__/
