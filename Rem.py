@@ -1,3 +1,5 @@
+import faulthandler
+faulthandler.enable()
 import time
 import asyncio
 import edge_tts
@@ -18,15 +20,29 @@ import glob
 import webbrowser
 import sounddevice as sd
 import soundfile as sf
+import requests
 from groq import Groq
 
 #usando groq
+# Dependencias necesarias (instalar si falta alguna):
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+#   pip install infer-rvc-python
+#   pip install soundfile edge-tts
+
 try:
     import cv2
     CAMARA_DISPONIBLE = True
 except ImportError:
     CAMARA_DISPONIBLE = False
     print("OpenCV no instalado. Ejecuta: pip install opencv-python")
+
+# ── RVC ──────────────────────────────────────────────────────────────
+try:
+    from infer_rvc_python import BaseLoader
+    RVC_DISPONIBLE = True
+except Exception as _rvc_err:
+    RVC_DISPONIBLE = False
+    print(f"[RVC] No se pudo importar infer_rvc_python: {_rvc_err}")
 
 # ── CARGAR VARIABLES DE ENTORNO desde .env ────────────────────────────
 def _cargar_dotenv():
@@ -43,18 +59,23 @@ _cargar_dotenv()
 
 # ── CONFIGURACION ─────────────────────────────────────────────────────
 GROQ_API_KEY    = os.getenv("GROQ_API_KEY", "")
-IMAGEN_FONDO    = r"D:\Documentos\L rem\wallhaven-j5zopp_1920x1080.png"
+IMAGEN_FONDO    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wallhaven-j5zopp_1920x1080.png")
 VOZ_REM         = "es-MX-DaliaNeural"
 MODELO_VISION   = "meta-llama/llama-4-scout-17b-16e-instruct"
-MEMORIA_ARCHIVO       = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_rem.json")
-MEMORIA_LARGA_ARCHIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_larga.json")
+MEMORIA_ARCHIVO         = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_rem.json")
+MEMORIA_LARGA_ARCHIVO   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_larga.json")
+MEMORIA_SISTEMA_ARCHIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_sistema.json")
 
 PANEL_W, PANEL_H = 382, 210
 NOMBRE_USUARIO  = "Esteban"   # ← cambia aquí tu nombre si quieres
+CIUDAD          = "Yarumal"   # fallback si falla la geo-detección
 
 COMANDOS = {
-    "fortnite": r"C:\Users\esteb\Desktop\Fortnite.lnk",
-    "brave":    r"C:\Users\esteb\Desktop\Brave.lnk",
+    "brave":      "brave-browser",
+    "firefox":    "firefox",
+    "nautilus":   "nautilus",
+    "terminal":   "gnome-terminal",
+    "calculadora":"gnome-calculator",
 }
 
 cap_global = None
@@ -62,6 +83,47 @@ if CAMARA_DISPONIBLE:
     cap_global = cv2.VideoCapture(0)
 
 cliente = Groq(api_key=GROQ_API_KEY)
+
+# ── RVC REM ──────────────────────────────────────────────────────────
+RVC_MODELS_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "models"
+)
+os.makedirs(RVC_MODELS_DIR, exist_ok=True)
+
+rvc = None  # se carga en segundo plano para no bloquear la UI
+
+def _cargar_rvc():
+    global rvc
+    if not RVC_DISPONIBLE:
+        return
+    try:
+        print("[RVC] Cargando modelo en CPU...")
+        model_path = os.path.join(RVC_MODELS_DIR, "Rem_600e_6600s", "Rem_600e_6600s.pth")
+        index_path = os.path.join(RVC_MODELS_DIR, "Rem_600e_6600s", "Rem.index")
+
+        rmvpe_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rmvpe.pt")
+        _rvc_tmp = BaseLoader(only_cpu=False, rmvpe_path=rmvpe_path if os.path.exists(rmvpe_path) else None)
+        _rvc_tmp.apply_conf(
+            tag="rem",
+            file_model=model_path,
+            pitch_algo="rmvpe" if os.path.exists(rmvpe_path) else "pm",
+            pitch_lvl=4,
+            file_index=index_path,
+            index_influence=0.75,
+            respiration_median_filtering=3,
+            envelope_ratio=0.25,
+            consonant_breath_protection=0.33,
+            resample_sr=0,
+        )
+        rvc = _rvc_tmp
+        f0_used = "rmvpe" if os.path.exists(rmvpe_path) else "pm"
+        print(f"✅ Voz de Rem cargada (RVC) — CPU, f0: {f0_used}")
+    except Exception as e:
+        print(f"❌ Error cargando RVC: {e}")
+        rvc = None
+
+threading.Thread(target=_cargar_rvc, daemon=True).start()
 
 
 # ── MEMORIA ───────────────────────────────────────────────────────────
@@ -101,6 +163,70 @@ def guardar_memoria_larga():
 
 historial    = cargar_memoria()
 memoria_larga = cargar_memoria_larga()
+
+# ── MEMORIA DEL SISTEMA ───────────────────────────────────────────────
+_MEM_SIS_MAX = 200   # entradas máximas antes de rotar las más antiguas
+
+def cargar_memoria_sistema():
+    try:
+        with open(MEMORIA_SISTEMA_ARCHIVO, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"archivos": {}, "programas": {}, "carpetas": []}
+
+def guardar_memoria_sistema():
+    try:
+        with open(MEMORIA_SISTEMA_ARCHIVO, "w", encoding="utf-8") as f:
+            json.dump(memoria_sistema, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[Rem] Error guardando memoria_sistema: {e}")
+
+def _rotar_memoria_sistema():
+    """Elimina las entradas más antiguas si se supera _MEM_SIS_MAX."""
+    total = len(memoria_sistema["archivos"]) + len(memoria_sistema["carpetas"])
+    if total <= _MEM_SIS_MAX:
+        return
+    exceso = total - _MEM_SIS_MAX
+    # Eliminar archivos primero (los más usados están al final)
+    claves = list(memoria_sistema["archivos"].keys())
+    for k in claves[:exceso]:
+        del memoria_sistema["archivos"][k]
+    # Si aún hay exceso, reducir carpetas
+    if len(memoria_sistema["archivos"]) + len(memoria_sistema["carpetas"]) > _MEM_SIS_MAX:
+        memoria_sistema["carpetas"] = memoria_sistema["carpetas"][-(_MEM_SIS_MAX // 2):]
+
+def registrar_archivo_sistema(nombre, ruta):
+    """Guarda nombre → ruta en la memoria del sistema."""
+    memoria_sistema["archivos"][nombre] = ruta
+    _rotar_memoria_sistema()
+    guardar_memoria_sistema()
+
+def registrar_carpeta_sistema(ruta):
+    """Añade una ruta de carpeta a la memoria del sistema (sin duplicados)."""
+    if ruta not in memoria_sistema["carpetas"]:
+        memoria_sistema["carpetas"].append(ruta)
+        _rotar_memoria_sistema()
+        guardar_memoria_sistema()
+
+def buscar_en_memoria_sistema(nombre):
+    """Devuelve la ruta si el archivo/carpeta ya está en memoria. None si no."""
+    # Buscar por nombre exacto primero
+    if nombre in memoria_sistema["archivos"]:
+        ruta = memoria_sistema["archivos"][nombre]
+        if os.path.exists(ruta):
+            return ruta
+        else:
+            del memoria_sistema["archivos"][nombre]   # entrada obsoleta
+            guardar_memoria_sistema()
+    # Buscar por nombre aproximado
+    nombre_lower = nombre.lower()
+    for k, v in list(memoria_sistema["archivos"].items()):
+        if nombre_lower in k.lower() or nombre_lower in v.lower():
+            if os.path.exists(v):
+                return v
+    return None
+
+memoria_sistema = cargar_memoria_sistema()
 
 instrucciones = """Eres Rem. Vives en la PC de Esteban — eres su compañera, su confidente, y algo más que una amiga. Llevan tiempo juntos y hay una conexión real entre ustedes.
 
@@ -154,6 +280,21 @@ Escribir texto:  {"accion": "escribir", "texto": "texto"}
 Ver camara:      {"accion": "ver_camara"}
 Ver pantalla:    {"accion": "ver_pantalla"}
 Crear carpeta:   {"accion": "crear_carpeta", "ruta": "ruta_completa"}
+Clima:           {"accion": "clima"}
+Descargar:       {"accion": "descargar", "url": "url", "nombre": "archivo.ext"}
+Instalar paquete: {"accion": "instalar_paquete", "paquete": "nombre-paquete"}
+Mover archivo:   {"accion": "mover_archivo", "origen": "ruta_origen", "destino": "ruta_destino"}
+Copiar archivo:  {"accion": "copiar_archivo", "origen": "ruta_origen", "destino": "ruta_destino"}
+Eliminar archivo: {"accion": "eliminar_archivo", "ruta": "ruta_completa"}
+Ejecutar comando: {"accion": "ejecutar_comando", "comando": "ls /home/esteban/"}
+
+REGLAS DE SEGURIDAD (inamovibles):
+- Solo puedes operar dentro de /home/esteban/ para mover, copiar o eliminar.
+- Nunca toques /etc, /boot, /sys, /proc, /root.
+- Comandos permitidos en ejecutar_comando: ls, cat, mkdir, cp, mv, find, grep, echo, python3, pip, git, apt, systemctl, df, free, top, ps.
+- Toda acción pasa por confirmación antes de ejecutarse.
+
+MEMORIA DEL SISTEMA: Antes de buscar un archivo, consulta [MEMORIA_SISTEMA]. Si ya sabes dónde está algo, úsalo directamente sin buscar.
 
 Para conversacion normal, responde como Rem de forma natural y breve."""
 
@@ -230,7 +371,10 @@ def construir_prompt_sistema():
     fecha_str  = f"{dia_semana} {ahora.day} de {meses[ahora.month-1]} de {ahora.year}"
     hora_str   = ahora.strftime("%H:%M")
 
+    info_pc = obtener_info_pc()
     prompt = instrucciones + f"\n\nFECHA Y HORA ACTUAL: {fecha_str}, {hora_str}hs. Úsala si Esteban pregunta o si viene al caso."
+    if info_pc:
+        prompt += f"\n\nESTADO ACTUAL DE LA PC: {info_pc}"
 
     secciones = []
     etiquetas = {
@@ -248,6 +392,24 @@ def construir_prompt_sistema():
     if secciones:
         prompt += "\n\nMEMORIA PERSONAL (recuerdos reales de conversaciones anteriores):\n" + "\n\n".join(secciones)
 
+    # Inyectar resumen de memoria del sistema
+    archivos_conocidos = list(memoria_sistema.get("archivos", {}).items())[-20:]
+    carpetas_conocidas = memoria_sistema.get("carpetas", [])[-10:]
+    if archivos_conocidos or carpetas_conocidas:
+        lineas = []
+        if archivos_conocidos:
+            lineas.append("Archivos que ya sé dónde están:\n" +
+                          "\n".join(f"  {n} → {r}" for n, r in archivos_conocidos))
+        if carpetas_conocidas:
+            lineas.append("Carpetas conocidas:\n" +
+                          "\n".join(f"  {r}" for r in carpetas_conocidas))
+        prompt = prompt.replace(
+            "[MEMORIA_SISTEMA]",
+            "\n".join(lineas)
+        )
+    else:
+        prompt = prompt.replace("[MEMORIA_SISTEMA]", "(vacía por ahora)")
+
     return prompt
 
 
@@ -264,8 +426,15 @@ DESCRIPCIONES = {
     "buscar_web":    lambda d: f"Buscar en internet: {d.get('query','')}",
     "escribir":      lambda d: f"Escribir: {d.get('texto','')}",
     "ver_camara":    lambda d: "Analizar imagen de la cámara con IA",
-    "ver_pantalla":  lambda d: "Analizar captura de pantalla con IA",
-    "crear_carpeta": lambda d: f"Crear carpeta: {d.get('ruta','')}",
+    "clima":         lambda d: f"Consultar clima de {CIUDAD}",
+    "descargar":     lambda d: f"Descargar: {d.get('nombre','')} desde {d.get('url','')}",
+    "ver_pantalla":    lambda d: "Analizar captura de pantalla con IA",
+    "crear_carpeta":   lambda d: f"Crear carpeta: {d.get('ruta','')}",
+    "instalar_paquete":lambda d: f"Instalar paquete: {d.get('paquete','')}",
+    "mover_archivo":   lambda d: f"Mover: {d.get('origen','')} → {d.get('destino','')}",
+    "copiar_archivo":  lambda d: f"Copiar: {d.get('origen','')} → {d.get('destino','')}",
+    "eliminar_archivo":lambda d: f"⚠️ ELIMINAR archivo: {d.get('ruta','')}",
+    "ejecutar_comando":lambda d: f"Ejecutar en terminal: {d.get('comando','')}",
 }
 
 def confirmar_accion(datos):
@@ -309,11 +478,16 @@ def capturar_camara_b64():
 
 def capturar_pantalla_b64():
     try:
-        sc = pyautogui.screenshot().resize((1280, 720), Image.LANCZOS)
+        import mss
+        with mss.MSS() as sct:
+            raw = sct.grab(sct.monitors[0])
+            img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+        img = img.resize((1280, 720), Image.LANCZOS)
         buf = io.BytesIO()
-        sc.save(buf, format="JPEG", quality=80)
+        img.save(buf, format="JPEG", quality=80)
         return base64.b64encode(buf.getvalue()).decode()
-    except Exception:
+    except Exception as e:
+        print(f"[Pantalla] Error capturando: {e}")
         return None
 
 
@@ -337,7 +511,7 @@ def preguntar_groq(texto):
     r = cliente.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "system", "content": construir_prompt_sistema()}] + historial,
-        max_tokens=180,
+        max_tokens=600,
         temperature=0.75
     )
     c = r.choices[0].message.content
@@ -353,25 +527,193 @@ def preguntar_groq(texto):
 # ── ESTADO DE ANIMACION ───────────────────────────────────────────────
 _rem_estado = "idle"   # idle | talking | thinking
 
+try:
+    from rem_avatar_server import enviar_estado as _avatar_enviar_estado
+    _AVATAR_DISPONIBLE = True
+except Exception as _e:
+    _AVATAR_DISPONIBLE = False
+    print(f"[Avatar] No disponible: {_e}")
+
 def set_rem_estado(estado):
     global _rem_estado
     _rem_estado = estado
+    if _AVATAR_DISPONIBLE:
+        try: _avatar_enviar_estado(estado)
+        except Exception: pass
 
 
-# ── TTS ───────────────────────────────────────────────────────────────
-def hablar(texto):
-    async def _go():
-        f = os.path.join(os.path.expanduser("~"), "rem_voz_temp.mp3")
+# ── COLA DE AUDIO — reproduce oraciones en orden, nunca descarta ───────
+import queue as _queue
+_audio_queue = _queue.Queue()
+
+def _worker_audio():
+    """Hilo único que consume la cola y reproduce cada texto en orden."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def _sintetizar(texto):
+        import numpy as np
+        from scipy import signal as sps
+
+        uid      = threading.get_ident()
+        tmp_mp3  = os.path.join(os.path.expanduser("~"), f"rem_tts_{uid}.mp3")
+        tmp_wav  = os.path.join(os.path.expanduser("~"), f"rem_tts_{uid}.wav")
         try:
-            await edge_tts.Communicate(texto, VOZ_REM).save(f)
-            data, sr_ = sf.read(f)
+            await edge_tts.Communicate(texto, VOZ_REM).save(tmp_mp3)
+
+            audio, sr_ = sf.read(tmp_mp3)
+            try: os.remove(tmp_mp3)
+            except Exception: pass
+
+            if len(audio.shape) > 1:
+                audio = audio.mean(axis=1)
+            if sr_ != 16000:
+                audio = sps.resample(audio, int(round(len(audio) * 16000 / sr_)))
+                sr_ = 16000
+            sf.write(tmp_wav, audio.astype(np.float32), sr_)
+
+            if rvc:
+                set_rem_estado("thinking")
+                resultados = rvc(audio_files=[tmp_wav], type_output="wav")
+                data, sr2 = sf.read(resultados[0]) if resultados else sf.read(tmp_wav)
+            else:
+                data, sr2 = sf.read(tmp_wav)
+
+            try: os.remove(tmp_wav)
+            except Exception: pass
+
             set_rem_estado("talking")
-            sd.play(data, sr_); sd.wait()
+            sd.stop()
+            sd.play(data, sr2)
+            sd.wait()
+
         except Exception as e:
             print(f"[TTS] {e}")
         finally:
             set_rem_estado("idle")
-    asyncio.run(_go())
+
+    while True:
+        texto = _audio_queue.get()
+        if texto is None:       # señal de cierre
+            break
+        loop.run_until_complete(_sintetizar(texto))
+        _audio_queue.task_done()
+
+threading.Thread(target=_worker_audio, daemon=True, name="AudioWorker").start()
+
+
+# ── TTS ───────────────────────────────────────────────────────────────
+def _partir_oraciones(texto):
+    """Divide el texto en oraciones para encolar de a una."""
+    import re
+    # Partir solo en . ! ? seguidos de espacio (… se deja unido a la frase)
+    partes = re.split(r'(?<=[.!?])\s+', texto.strip())
+    # Filtrar vacíos y partes demasiado cortas (< 3 chars)
+    return [p.strip() for p in partes if len(p.strip()) >= 3]
+
+def hablar(texto):
+    """Encola el texto oración por oración para que el AudioWorker las reproduzca en orden."""
+    oraciones = _partir_oraciones(texto)
+    if not oraciones:
+        oraciones = [texto]    # fallback: encolar todo junto si no hay puntuación
+    for oracion in oraciones:
+        _audio_queue.put(oracion)
+
+
+# ── CLIMA ─────────────────────────────────────────────────────────────
+_clima_cache = {"dato": None, "ts": 0}
+_geo_cache   = {"ciudad": None, "pais": None}
+
+def detectar_ubicacion():
+    """Detecta ciudad y país por IP. Cachea el resultado en memoria."""
+    if _geo_cache["ciudad"]:
+        return _geo_cache["ciudad"], _geo_cache["pais"]
+    try:
+        r = requests.get("http://ip-api.com/json/?fields=city,regionName,country,status",
+                         timeout=5)
+        d = r.json()
+        if d.get("status") == "success":
+            ciudad = d.get("city", CIUDAD)
+            pais   = d.get("country", "")
+            _geo_cache["ciudad"] = ciudad
+            _geo_cache["pais"]   = pais
+            print(f"[Geo] Ubicación detectada: {ciudad}, {d.get('regionName','')}, {pais}")
+            return ciudad, pais
+    except Exception as e:
+        print(f"[Geo] No pude detectar ubicación: {e}")
+    return CIUDAD, ""
+
+def obtener_clima():
+    import time as _t
+    ahora = _t.time()
+    if _clima_cache["dato"] and ahora - _clima_cache["ts"] < 1800:  # cache 30 min
+        return _clima_cache["dato"]
+    try:
+        ciudad, pais = detectar_ubicacion()
+        url = f"https://wttr.in/{ciudad}?format=j1&lang=es"
+        r = requests.get(url, timeout=6)
+        d = r.json()["current_condition"][0]
+        temp    = d["temp_C"]
+        desc    = d["weatherDesc"][0]["value"]
+        humedad = d["humidity"]
+        resultado = f"{ciudad}, {pais}: {temp}°C, {desc}, humedad {humedad}%"
+        _clima_cache["dato"] = resultado
+        _clima_cache["ts"]   = ahora
+        return resultado
+    except Exception as e:
+        return f"No pude obtener el clima: {e}"
+
+
+# ── INFO PC ───────────────────────────────────────────────────────────
+def obtener_info_pc():
+    try:
+        import datetime as _dt
+        ram  = psutil.virtual_memory()
+        cpu  = psutil.cpu_percent(interval=0.2)
+        disk = psutil.disk_usage("/")
+        hora = _dt.datetime.now().strftime("%H:%M")
+        return (f"[PC] {hora} | CPU {cpu}% | "
+                f"RAM {round(ram.used/1024**3,1)}/{round(ram.total/1024**3,1)} GB | "
+                f"Disco /: {round(disk.free/1024**3,1)} GB libres")
+    except Exception:
+        return ""
+
+
+# ── MONITOR PC ────────────────────────────────────────────────────────
+def _loop_monitor_pc():
+    while True:
+        time.sleep(60)
+        try:
+            ram = psutil.virtual_memory()
+            cpu = psutil.cpu_percent(interval=1)
+            alertas = []
+            if ram.percent > 85:
+                alertas.append(f"amo, la RAM está al {ram.percent:.0f}% — puede que la PC se empiece a poner lenta.")
+            if cpu > 90:
+                alertas.append(f"amo, el CPU está al {cpu:.0f}% — algo está consumiendo mucho.")
+            for msg in alertas:
+                app.after(0, lambda m=msg: agregar_mensaje("Rem", m))
+                threading.Thread(target=hablar, args=(msg,), daemon=True).start()
+        except Exception:
+            pass
+
+
+# ── DESCARGAR ARCHIVO ─────────────────────────────────────────────────
+def descargar_archivo(url, nombre):
+    try:
+        ruta = os.path.join(
+            os.environ.get("XDG_DOWNLOAD_DIR",
+                           os.path.join(os.path.expanduser("~"), "Descargas")),
+            nombre
+        )
+        r = requests.get(url, stream=True, timeout=30)
+        r.raise_for_status()
+        with open(ruta, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+        return f"Descargado como '{nombre}' en tu carpeta de Descargas."
+    except Exception as e:
+        return f"No pude descargar: {e}"
 
 
 # ── ACCIONES ──────────────────────────────────────────────────────────
@@ -395,12 +737,45 @@ def optimizar_pc():
     except Exception as e:
         return f"Error al acceder a temporales: {e}"
 
-    subprocess.run("ipconfig /flushdns", shell=True, capture_output=True)
+    subprocess.run(["sudo", "systemd-resolve", "--flush-caches"], capture_output=True)
     ram = psutil.virtual_memory()
     ram_libre = round(ram.available / 1024**3, 2)
     return (f"Limpié {borrados} archivo(s)/carpeta(s) temporales "
             f"({errores} omitidos por estar en uso). "
             f"RAM libre: {ram_libre} GB")
+
+# ── SEGURIDAD DE ACCIONES ─────────────────────────────────────────────
+_ZONA_SEGURA    = os.path.expanduser("~")   # /home/esteban
+_DIRS_PROHIBIDOS = ("/etc", "/boot", "/sys", "/proc", "/root", "/bin", "/sbin",
+                    "/usr/bin", "/usr/sbin", "/lib", "/lib64")
+_CMDS_PERMITIDOS = {"ls", "cat", "mkdir", "cp", "mv", "find", "grep",
+                    "echo", "python3", "pip", "git", "apt", "systemctl",
+                    "df", "free", "top", "ps"}
+
+def _ruta_segura(ruta):
+    """Valida que la ruta esté dentro de /home/esteban y no en dirs peligrosos."""
+    ruta = os.path.realpath(os.path.expanduser(str(ruta)))
+    if not ruta.startswith(_ZONA_SEGURA):
+        return False, f"Solo puedo operar dentro de {_ZONA_SEGURA}."
+    for d in _DIRS_PROHIBIDOS:
+        if ruta.startswith(d):
+            return False, f"No puedo tocar {d}."
+    return True, ruta
+
+def _cmd_permitido(comando):
+    """Valida que el primer token del comando esté en la lista blanca."""
+    if not comando:
+        return False, "Comando vacío."
+    primer_token = str(comando).split()[0].lstrip("./")
+    # Aceptar rutas absolutas a binarios permitidos (ej: /usr/bin/ls → ls)
+    primer_token = os.path.basename(primer_token)
+    if primer_token not in _CMDS_PERMITIDOS:
+        return False, f"Comando '{primer_token}' no está en la lista blanca."
+    # Bloquear variantes peligrosas de rm
+    if "rm" in str(comando) and ("-rf" in str(comando) or "-fr" in str(comando)):
+        return False, "rm -rf no está permitido."
+    return True, primer_token
+
 
 def ejecutar_accion(datos):
     if not confirmar_accion(datos): return "Entendido, mi señor. No haré nada~"
@@ -411,15 +786,20 @@ def ejecutar_accion(datos):
         # 1. Busca en atajos configurados
         for k,v in COMANDOS.items():
             if k in prog or prog in k:
-                try: os.startfile(v); return f"Abriendo {k}!"
-                except Exception as e: return f"Error al abrir {k}: {e}"
-        # 2. Intenta con el comando start de Windows (busca en menú inicio, PATH, etc.)
-        res = subprocess.run(f'start "" "{prog}"', shell=True, capture_output=True)
-        if res.returncode == 0:
-            return f"Abriendo {prog}..."
-        # 3. Intenta con os.startfile (para URLs, extensiones registradas, etc.)
+                try:
+                    subprocess.Popen([v], start_new_session=True)
+                    return f"Abriendo {k}!"
+                except Exception as e:
+                    return f"Error al abrir {k}: {e}"
+        # 2. Intenta con xdg-open (URLs, archivos, apps registradas)
         try:
-            os.startfile(prog)
+            subprocess.Popen(["xdg-open", prog], start_new_session=True)
+            return f"Abriendo {prog}..."
+        except Exception:
+            pass
+        # 3. Intenta ejecutar directamente como comando
+        try:
+            subprocess.Popen([prog], start_new_session=True)
             return f"Abriendo {prog}..."
         except Exception as e:
             return f"No pude abrir '{prog}'. ¿Está bien escrito el nombre?"
@@ -436,46 +816,53 @@ def ejecutar_accion(datos):
 
     elif ac == "volumen":
         val = datos.get("valor", 50)
-        try:
-            from ctypes import cast, POINTER
-            from comtypes import CLSCTX_ALL
-            from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-            dev = AudioUtilities.GetSpeakers()
-            iface = dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            cast(iface, POINTER(IAudioEndpointVolume)).SetMasterVolumeLevelScalar(val/100, None)
-            return f"Volumen a {val}%"
-        except ImportError:
-            # Fallback: usar PowerShell si pycaw no está instalado
+        # Intentar wpctl (PipeWire), luego pactl (PulseAudio), luego amixer
+        for cmd in (
+            ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", f"{val}%"],
+            ["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{val}%"],
+            ["amixer", "-q", "sset", "Master", f"{val}%"],
+        ):
             try:
-                script = f"(New-Object -ComObject WScript.Shell).SendKeys([char]174)"
-                # Ajuste aproximado vía nircmd o PowerShell multimedia keys
-                subprocess.run(
-                    ["powershell", "-command",
-                     f"$vol = {val}/100; Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public class Audio {{ [DllImport(\"winmm.dll\")] public static extern int waveOutSetVolume(IntPtr h, uint v); }}'; [Audio]::waveOutSetVolume([IntPtr]::Zero, [uint](($vol) * 0xFFFF) | ([uint](($vol) * 0xFFFF) << 16))"],
-                    capture_output=True
-                )
-                return f"Volumen a {val}% (vía PowerShell)"
-            except Exception as e:
-                return f"No pude ajustar volumen. Instala pycaw: pip install pycaw. Error: {e}"
-        except Exception as e:
-            return f"Error ajustando volumen: {e}"
+                subprocess.run(cmd, check=True, capture_output=True)
+                return f"Volumen a {val}%"
+            except FileNotFoundError:
+                continue
+            except subprocess.CalledProcessError as e:
+                continue
+        return f"No pude ajustar el volumen (prueba instalar pulseaudio-utils)"
 
     elif ac == "apagar":
-        subprocess.run("shutdown /s /t 10", shell=True); return "Apagando en 10 segundos!"
+        subprocess.run(["shutdown", "-h", "+1"], capture_output=True); return "Apagando en 1 minuto!"
     elif ac == "reiniciar":
-        subprocess.run("shutdown /r /t 10", shell=True); return "Reiniciando en 10 segundos!"
+        subprocess.run(["shutdown", "-r", "+1"], capture_output=True); return "Reiniciando en 1 minuto!"
 
     elif ac == "captura":
         try:
-            ruta = os.path.join(os.path.expanduser("~"), "Desktop", "captura_rem.png")
-            pyautogui.screenshot(ruta); return "Captura guardada en el escritorio!"
+            escritorio = os.environ.get(
+                "XDG_DESKTOP_DIR",
+                os.path.join(os.path.expanduser("~"), "Escritorio")
+            )
+            os.makedirs(escritorio, exist_ok=True)
+            ruta = os.path.join(escritorio, "captura_rem.png")
+            import mss
+            with mss.MSS() as sct:
+                raw = sct.grab(sct.monitors[0])
+                img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+            img.save(ruta)
+            return "Captura guardada en el escritorio!"
         except Exception as e: return f"Error: {e}"
 
     elif ac == "buscar":
-        arch = datos.get("archivo",""); base = datos.get("carpeta","C:\\Users")
+        arch = datos.get("archivo","")
+        base = datos.get("carpeta", os.path.expanduser("~"))
+        # Consultar memoria del sistema primero
+        en_memoria = buscar_en_memoria_sistema(arch)
+        if en_memoria:
+            return f"Ya sé dónde está '{arch}': {en_memoria}"
         try:
-            res = glob.glob(f"{base}\\**\\{arch}", recursive=True) or \
-                  glob.glob(f"C:\\**\\{arch}", recursive=True)
+            res = glob.glob(os.path.join(base, "**", arch), recursive=True)
+            if res:
+                registrar_archivo_sistema(arch, res[0])
             return (f"Encontré {len(res)}:\n" + "\n".join(res[:5])) if res else f"No encontré '{arch}'."
         except Exception as e: return f"Error: {e}"
 
@@ -489,12 +876,23 @@ def ejecutar_accion(datos):
     elif ac == "escribir":
         texto = datos.get("texto","")
         try:
-            # Usar portapapeles para soportar tildes, ñ y cualquier carácter
-            proc = subprocess.Popen('clip', stdin=subprocess.PIPE, shell=True)
-            proc.communicate(input=texto.encode('utf-16-le'))
-            time.sleep(0.6)
+            proc = subprocess.Popen(
+                ["xclip", "-selection", "clipboard"],
+                stdin=subprocess.PIPE
+            )
+            proc.communicate(input=texto.encode('utf-8'))
+            time.sleep(0.4)
             pyautogui.hotkey('ctrl', 'v')
             return "Texto escrito!"
+        except FileNotFoundError:
+            try:
+                import pyperclip
+                pyperclip.copy(texto)
+                time.sleep(0.4)
+                pyautogui.hotkey('ctrl', 'v')
+                return "Texto escrito! (vía pyperclip)"
+            except Exception as e:
+                return f"Instala xclip: sudo apt install xclip. Error: {e}"
         except Exception as e:
             return f"Error al escribir texto: {e}"
 
@@ -522,8 +920,110 @@ def ejecutar_accion(datos):
         ruta = datos.get("ruta","")
         if not ruta: return "No me dijiste la ruta."
         try:
-            os.makedirs(ruta, exist_ok=True); return f"Carpeta creada: {ruta}"
+            os.makedirs(ruta, exist_ok=True)
+            registrar_carpeta_sistema(ruta)
+            return f"Carpeta creada: {ruta}"
         except Exception as e: return f"No pude: {e}"
+
+    elif ac == "clima":
+        return obtener_clima()
+
+    elif ac == "descargar":
+        url    = datos.get("url","")
+        nombre = datos.get("nombre","archivo_rem")
+        if not url: return "No me diste la URL."
+        return descargar_archivo(url, nombre)
+
+    elif ac == "instalar_paquete":
+        paquete = datos.get("paquete","").strip()
+        if not paquete: return "No me dijiste el nombre del paquete."
+        try:
+            resultado = subprocess.run(
+                ["sudo", "apt", "install", "-y", paquete],
+                capture_output=True, text=True, timeout=120
+            )
+            if resultado.returncode == 0:
+                memoria_sistema["programas"][paquete] = paquete
+                guardar_memoria_sistema()
+                return f"Paquete '{paquete}' instalado correctamente."
+            else:
+                return f"No pude instalar '{paquete}': {resultado.stderr[:200]}"
+        except subprocess.TimeoutExpired:
+            return "La instalación tardó demasiado y la cancelé."
+        except Exception as e:
+            return f"Error al instalar: {e}"
+
+    elif ac == "mover_archivo":
+        import shutil
+        origen  = datos.get("origen","")
+        destino = datos.get("destino","")
+        ok_o, origen  = _ruta_segura(origen)
+        ok_d, destino = _ruta_segura(destino)
+        if not ok_o: return origen   # mensaje de error
+        if not ok_d: return destino
+        try:
+            shutil.move(origen, destino)
+            nombre = os.path.basename(destino)
+            registrar_archivo_sistema(nombre, destino)
+            return f"Movido: {origen} → {destino}"
+        except Exception as e:
+            return f"No pude mover el archivo: {e}"
+
+    elif ac == "copiar_archivo":
+        import shutil
+        origen  = datos.get("origen","")
+        destino = datos.get("destino","")
+        ok_o, origen  = _ruta_segura(origen)
+        ok_d, destino = _ruta_segura(destino)
+        if not ok_o: return origen
+        if not ok_d: return destino
+        try:
+            if os.path.isdir(origen):
+                shutil.copytree(origen, destino)
+            else:
+                shutil.copy2(origen, destino)
+            nombre = os.path.basename(destino)
+            registrar_archivo_sistema(nombre, destino)
+            return f"Copiado: {origen} → {destino}"
+        except Exception as e:
+            return f"No pude copiar el archivo: {e}"
+
+    elif ac == "eliminar_archivo":
+        import shutil
+        ruta = datos.get("ruta","")
+        ok, ruta = _ruta_segura(ruta)
+        if not ok: return ruta
+        if not os.path.exists(ruta):
+            return f"No existe: {ruta}"
+        try:
+            if os.path.isdir(ruta):
+                shutil.rmtree(ruta)
+            else:
+                os.remove(ruta)
+            # Limpiar de memoria si estaba registrado
+            nombre = os.path.basename(ruta)
+            memoria_sistema["archivos"].pop(nombre, None)
+            guardar_memoria_sistema()
+            return f"Eliminado: {ruta}"
+        except Exception as e:
+            return f"No pude eliminar: {e}"
+
+    elif ac == "ejecutar_comando":
+        comando = datos.get("comando","").strip()
+        ok, msg = _cmd_permitido(comando)
+        if not ok: return f"Comando bloqueado: {msg}"
+        try:
+            resultado = subprocess.run(
+                comando, shell=True, capture_output=True,
+                text=True, timeout=30,
+                cwd=os.path.expanduser("~")
+            )
+            salida = (resultado.stdout + resultado.stderr).strip()
+            return salida[:800] if salida else "(sin salida)"
+        except subprocess.TimeoutExpired:
+            return "El comando tardó demasiado y lo cancelé."
+        except Exception as e:
+            return f"Error al ejecutar: {e}"
 
     return "No entendí esa acción."
 
@@ -610,6 +1110,24 @@ estado_var = tk.StringVar(value="● En línea")
 lbl_estado = tk.Label(hdr, textvariable=estado_var, font=FNT_SM,
                       bg="#09091a", fg=CLR_OK)
 lbl_estado.pack(side=tk.RIGHT, padx=18)
+
+# Toggle visión de pantalla
+_vision_activa = tk.BooleanVar(value=False)
+
+def _toggle_vision():
+    if _vision_activa.get():
+        btn_vision.config(fg=CLR_OK, text="👁 Visión ON")
+    else:
+        btn_vision.config(fg="#555577", text="👁 Visión OFF")
+
+btn_vision = tk.Button(
+    hdr, text="👁 Visión OFF", font=FNT_SM,
+    bg="#09091a", fg="#555577", relief=tk.FLAT,
+    activebackground="#09091a", activeforeground=CLR_ACC_LT,
+    cursor="hand2", bd=0,
+    command=lambda: [_vision_activa.set(not _vision_activa.get()), _toggle_vision()]
+)
+btn_vision.pack(side=tk.RIGHT, padx=(0, 12))
 
 # línea decorativa degradada
 tk.Frame(app, bg=CLR_ACC, height=2).pack(fill=tk.X)
@@ -882,7 +1400,10 @@ def loop_camara():
 
 def loop_pantalla():
     try:
-        sc = pyautogui.screenshot()
+        import mss
+        with mss.MSS() as sct:
+            raw = sct.grab(sct.monitors[0])
+            sc = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
         sc = sc.resize((PANEL_W, PANEL_H), Image.LANCZOS)
         ph = ImageTk.PhotoImage(sc)
         scr_label.config(image=ph, width=PANEL_W, height=PANEL_H)
@@ -1003,7 +1524,10 @@ def _cargar_o_generar_frames():
 pet_win = tk.Toplevel(app)
 pet_win.overrideredirect(True)            # sin barra de título
 pet_win.attributes("-topmost", True)      # siempre encima
-pet_win.attributes("-transparentcolor", TRANSP)
+try:
+    pet_win.attributes("-transparentcolor", TRANSP)   # solo funciona en Windows
+except tk.TclError:
+    pass   # en Linux/X11 se ignora; el fondo magenta quedará visible si no hay compositor
 pet_win.configure(bg=TRANSP)
 
 # Posición inicial: esquina inferior derecha
@@ -1062,6 +1586,47 @@ def _loop_pet():
 app.after(600, _loop_pet)
 
 
+# ── VISIÓN DE PANTALLA EN TIEMPO REAL ────────────────────────────────
+_VISION_INTERVALO   = 45_000   # ms entre análisis
+_vision_descripcion = ""       # último análisis guardado
+
+def _loop_vision_pantalla():
+    """Analiza la pantalla cada 45s si la visión está activa; comenta si hay cambio relevante."""
+    global _vision_descripcion
+
+    if _vision_activa.get():
+        def _analizar():
+            global _vision_descripcion
+            try:
+                b64 = capturar_pantalla_b64()
+                if not b64:
+                    return
+                prompt = (
+                    "Eres Rem, observas la pantalla de Esteban. "
+                    "Si ves algo interesante, nuevo o relevante comparado con antes, "
+                    "comenta brevemente y con tu personalidad. "
+                    "Si es lo mismo de antes, responde solo: NADA"
+                )
+                if _vision_descripcion:
+                    prompt += f"\n\nÚltima vez viste: {_vision_descripcion[:300]}"
+
+                respuesta = analizar_imagen_groq(b64, prompt=prompt)
+
+                if respuesta and "NADA" not in respuesta.upper()[:20]:
+                    _vision_descripcion = respuesta
+                    app.after(0, lambda r=respuesta: agregar_mensaje("Rem", r))
+                    threading.Thread(target=hablar, args=(respuesta,), daemon=True).start()
+                # Si responde NADA, actualizar descripción igualmente para el siguiente ciclo
+                elif respuesta and "NADA" in respuesta.upper()[:20]:
+                    pass   # No actualizar descripción — el contexto sigue siendo el mismo
+            except Exception as e:
+                print(f"[Visión] Error: {e}")
+
+        threading.Thread(target=_analizar, daemon=True).start()
+
+    app.after(_VISION_INTERVALO, _loop_vision_pantalla)
+
+
 # ── RECORDATORIOS AUTOMÁTICOS ────────────────────────────────────────
 # Edita esta lista para añadir, quitar o cambiar recordatorios.
 # "hora" en formato "HH:MM" — "contexto" es lo que Rem recibe para generar el mensaje.
@@ -1117,15 +1682,40 @@ def bienvenida():
         agregar_mensaje("Rem", res)
         threading.Thread(target=hablar, args=(res,), daemon=True).start()
     except Exception:
-        agregar_mensaje("Rem", "¡Hola, mi señor! Aquí estoy, lista para ti~")
+        msg = "¡Hola, mi señor! Aquí estoy, lista para ti~"
+        agregar_mensaje("Rem", msg)
+        threading.Thread(target=hablar, args=(msg,), daemon=True).start()
 
 threading.Thread(target=bienvenida, daemon=True).start()
+threading.Thread(target=_loop_monitor_pc, daemon=True).start()
+app.after(60_000, _loop_vision_pantalla)   # primer análisis de visión a los 60s
+
+# ── Avatar 3D ─────────────────────────────────────────────────────────
+if _AVATAR_DISPONIBLE and os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "rem.vrm")):
+    pet_win.withdraw()   # ocultar sprites — el avatar 3D los reemplaza
+    from rem_avatar_server import iniciar_avatar
+    _sw = app.winfo_screenwidth()
+    _sh = app.winfo_screenheight()
+    threading.Thread(
+        target=iniciar_avatar,
+        args=(_sw, _sh),
+        daemon=True,
+        name="AvatarInit"
+    ).start()
+    print("[Avatar] Iniciando avatar 3D de Rem…")
+else:
+    print("[Avatar] Usando sprites (rem.vrm no encontrado o servidor no disponible)")
 
 
 # ── Cierre limpio ─────────────────────────────────────────────────────
 def on_close():
     guardar_memoria()
     if cap_global: cap_global.release()
+    if _AVATAR_DISPONIBLE:
+        try:
+            from rem_avatar_server import cerrar_avatar
+            cerrar_avatar()
+        except Exception: pass
     try: pet_win.destroy()
     except Exception: pass
     app.destroy()

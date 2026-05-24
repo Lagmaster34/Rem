@@ -15,3 +15,22 @@ sprites/
 
 # Archivos temporales
 *.mp3
+
+# Modelos RVC y ML (muy pesados)
+models/
+*.pth
+*.index
+*.pt
+
+# Modelo VRM (23MB)
+rem.vrm
+
+# Entorno virtual
+venv/
+
+# Imagen de fondo
+*.png
+
+# Archivos de prueba/debug
+test_*.py
+fix_pipeline.py
