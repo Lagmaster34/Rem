@@ -1721,5 +1721,3 @@ def on_close():
     app.destroy()
 
 app.protocol("WM_DELETE_WINDOW", on_close)
-
-#hola mundo
