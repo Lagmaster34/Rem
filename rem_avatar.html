@@ -3,120 +3,52 @@
 <head>
 <meta charset="UTF-8">
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    background: transparent;
-    overflow: hidden;
-    width: 100vw; height: 100vh;
-    pointer-events: none;
-  }
-  canvas { display: block; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:transparent; overflow:hidden; width:100vw; height:100vh; pointer-events:none; }
+  canvas { display:block; }
+  #dbg { position:fixed; top:4px; left:6px; color:lime; font:11px monospace; pointer-events:none; }
 </style>
 </head>
 <body>
-
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
-    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2/lib/three-vrm.module.min.js"
-  }
-}
-</script>
+<div id="dbg">iniciando…</div>
 
 <script type="module">
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+// esm.sh resuelve todas las dependencias sin necesidad de importmap
+import * as THREE from 'https://esm.sh/three@0.169.0';
+import { GLTFLoader }    from 'https://esm.sh/three@0.169.0/examples/jsm/loaders/GLTFLoader.js';
+import { VRMLoaderPlugin, VRMUtils } from 'https://esm.sh/@pixiv/three-vrm@2';
+
+const dbg = document.getElementById('dbg');
+const log = s => { dbg.textContent = s; };
 
 // ── Renderer transparente ──────────────────────────────────────────────
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setClearColor(0x000000, 0);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
 // ── Escena ────────────────────────────────────────────────────────────
-const scene = new THREE.Scene();
-
-// Cámara: personaje grande (~65% altura pantalla), pies visibles
-const camera = new THREE.PerspectiveCamera(
-  55, window.innerWidth / window.innerHeight, 0.1, 30
-);
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 30);
 camera.position.set(0, 0.85, 2.4);
 camera.lookAt(0, 0.7, 0);
 
-// Luces
-scene.add(new THREE.AmbientLight(0x99aacc, 1.1));
-const keyLight = new THREE.DirectionalLight(0xfff5e0, 1.3);
-keyLight.position.set(1, 3, 2);
-scene.add(keyLight);
-const fillLight = new THREE.DirectionalLight(0x88aaff, 0.5);
-fillLight.position.set(-2, 1, 0.5);
-scene.add(fillLight);
+scene.add(new THREE.AmbientLight(0xaabbdd, 1.1));
+const key = new THREE.DirectionalLight(0xfff5e0, 1.4); key.position.set(1,3,2); scene.add(key);
+const fill= new THREE.DirectionalLight(0x88aaff, 0.5); fill.position.set(-2,1,0.5); scene.add(fill);
 
 // ── Estado ────────────────────────────────────────────────────────────
-let estadoRemoto = 'idle';   // viene de Python vía WS
+let estadoRemoto = 'idle';
 let vrm = null;
 const clock = new THREE.Clock();
 
-// ── Posición del personaje en el mundo ────────────────────────────────
-// z=2.4, FOV=55, aspect=16/9 → visible ~±4.4m en X
-const BORDE_IZQ  = -2.0;
-const BORDE_DER  =  2.0;
-const VELOCIDAD  =  0.55; // m/s
-
-let charX    = 0;
-let charDir  = 1;   // 1=derecha, -1=izquierda
-
-// ── Máquina de estados del pet ────────────────────────────────────────
-// Estados: 'idle_anim', 'walking', 'paused'
-let petEstado   = 'idle_anim';
-let petTimer    = 3 + Math.random() * 3;
-let walkDuration = 0;
-
-// ── Animación ─────────────────────────────────────────────────────────
-let walkPhase  = 0;   // 0..1 ciclo de caminar
-let breathT    = 0;
-let swayT      = 0;
-let lookTimer  = 2 + Math.random() * 3;
-let lookTarget = { x: 0, y: 0 };
-let lookCurrent = { x: 0, y: 0 };
-
-let blinkTimer   = 2 + Math.random() * 2;
-let blinkVal     = 0;
-let blinkClosing = false;
-
-let talkT     = 0;
-const VOWELS  = ['aa', 'ih', 'ou', 'ee', 'oh'];
-let lastVowel = '';
-
-// Suavizado
-const sm = {
-  headX: 0, headY: 0, headZ: 0,
-  bodyZ: 0,
-  lulX: 0, rulX: 0,   // upper leg X
-  lllX: 0, rllX: 0,   // lower leg X
-  lftX: 0, rftX: 0,   // foot X
-  luaX: 0, ruaX: 0,   // upper arm X (swing)
-  charY: -0.05,        // bob vertical
-};
-
-// ── Helpers ───────────────────────────────────────────────────────────
-function setExpr(name, value) {
-  if (!vrm?.expressionManager) return;
-  try { vrm.expressionManager.setValue(name, Math.max(0, Math.min(1, value))); }
-  catch(_) {}
-}
-function getBone(name) {
-  return vrm?.humanoid?.getNormalizedBoneNode(name) ?? null;
-}
-function lerp(a, b, t) { return a + (b - a) * t; }
-
-// ── Cargar VRM ────────────────────────────────────────────────────────
+// ── Carga VRM ─────────────────────────────────────────────────────────
 const loader = new GLTFLoader();
 loader.register(p => new VRMLoaderPlugin(p));
+
+log('cargando modelo…');
 loader.load('/rem.vrm',
   gltf => {
     vrm = gltf.userData.vrm;
@@ -124,271 +56,203 @@ loader.load('/rem.vrm',
     vrm.scene.rotation.y = Math.PI;
     vrm.scene.position.set(charX, 0, 0);
     scene.add(vrm.scene);
+    dbg.style.display = 'none';
+    console.log('VRM cargado OK | springBones:', vrm.springBoneManager ? 'sí':'no');
   },
-  xhr => {},
-  err => console.error(err)
+  xhr => log('cargando ' + Math.round(xhr.loaded/xhr.total*100) + '%'),
+  err => { log('ERROR VRM: '+err); console.error(err); }
 );
 
-// ── Maquina del pet (decide cuándo caminar o parar) ───────────────────
-function tickPet(delta) {
-  // Si Python pide hablar/pensar → quieta
-  if (estadoRemoto === 'talking' || estadoRemoto === 'thinking') {
-    petEstado = 'idle_anim';
-    return;
-  }
+// ── Desktop pet — movimiento ───────────────────────────────────────────
+const BORDE_IZQ=-2.0, BORDE_DER=2.0, VEL=0.5;
+let charX=0, charDir=1;
+let petEstado='idle_anim', petTimer=3+Math.random()*3;
 
-  petTimer -= delta;
-  if (petTimer <= 0) {
-    if (petEstado === 'idle_anim') {
-      // Empezar a caminar
-      petEstado = 'walking';
-      walkDuration = 3 + Math.random() * 5;
-      petTimer = walkDuration;
-      // A veces voltear dirección aleatoriamente
-      if (Math.random() < 0.3) charDir *= -1;
-    } else {
-      // Parar y descansar
-      petEstado = 'idle_anim';
-      petTimer  = 2.5 + Math.random() * 4;
-    }
+function tickPet(dt) {
+  if (estadoRemoto==='talking'||estadoRemoto==='thinking'){ petEstado='idle_anim'; return; }
+  petTimer -= dt;
+  if (petTimer<=0) {
+    petEstado = petEstado==='idle_anim' ? 'walking' : 'idle_anim';
+    petTimer  = petEstado==='walking' ? 3+Math.random()*5 : 2+Math.random()*4;
+    if (petEstado==='walking'&&Math.random()<0.3) charDir*=-1;
   }
-
-  // Mover posición si camina
-  if (petEstado === 'walking') {
-    charX += charDir * VELOCIDAD * delta;
-    if (charX > BORDE_DER) {
-      charX = BORDE_DER;
-      charDir = -1;
-      petEstado = 'idle_anim';
-      petTimer  = 1 + Math.random() * 2;
-    } else if (charX < BORDE_IZQ) {
-      charX = BORDE_IZQ;
-      charDir = 1;
-      petEstado = 'idle_anim';
-      petTimer  = 1 + Math.random() * 2;
-    }
-    if (vrm) vrm.scene.position.x = charX;
+  if (petEstado==='walking') {
+    charX += charDir*VEL*dt;
+    if (charX>BORDE_DER){ charX=BORDE_DER; charDir=-1; petEstado='idle_anim'; petTimer=1+Math.random()*2; }
+    if (charX<BORDE_IZQ){ charX=BORDE_IZQ; charDir= 1; petEstado='idle_anim'; petTimer=1+Math.random()*2; }
+    if (vrm) vrm.scene.position.x=charX;
   }
 }
 
-// ── Aplicar pose base (corrige T-pose VRM) ────────────────────────────
-function aplicarPoseBase() {
-  const rua = getBone('rightUpperArm');
-  const lua = getBone('leftUpperArm');
-  const rla = getBone('rightLowerArm');
-  const lla = getBone('leftLowerArm');
-  if (rua) { rua.rotation.z = lerp(rua.rotation.z, -1.30, 0.15); rua.rotation.x = lerp(rua.rotation.x, 0.05, 0.1); }
-  if (lua) { lua.rotation.z = lerp(lua.rotation.z,  1.30, 0.15); lua.rotation.x = lerp(lua.rotation.x, 0.05, 0.1); }
-  if (rla) { rla.rotation.x = lerp(rla.rotation.x, -0.12, 0.1); rla.rotation.z = lerp(rla.rotation.z, -0.08, 0.1); }
-  if (lla) { lla.rotation.x = lerp(lla.rotation.x, -0.12, 0.1); lla.rotation.z = lerp(lla.rotation.z,  0.08, 0.1); }
+// ── Helpers ───────────────────────────────────────────────────────────
+const getB = n => vrm?.humanoid?.getNormalizedBoneNode(n)??null;
+const setE = (n,v) => { try{vrm?.expressionManager?.setValue(n,Math.max(0,Math.min(1,v)));}catch(_){} };
+const lerp  = (a,b,t) => a+(b-a)*t;
+
+// Spring crítico: movimiento orgánico sin oscilación
+function spStep(pos, vel, target, stiffness, damping, dt) {
+  const f = -stiffness*(pos-target) - damping*vel;
+  vel += f*dt; pos += vel*dt;
+  return [pos, vel];
 }
 
-// ── Animación de caminar ──────────────────────────────────────────────
-function animarCaminata(delta) {
-  const isWalking = (petEstado === 'walking') && estadoRemoto !== 'talking' && estadoRemoto !== 'thinking';
-  const speed     = isWalking ? 2.2 : 0;   // velocidad del ciclo
+// ── Estado dinámico ───────────────────────────────────────────────────
+const S = {
+  // cabeza
+  hZ:0,hX:0,hY:0, hvZ:0,hvX:0,hvY:0,
+  // cuerpo
+  bZ:0,bvZ:0,
+  // brazos z (pose natural: derecho negativo, izquierdo positivo)
+  ruZ:-1.30, ruVZ:0,
+  luZ: 1.30, luVZ:0,
+  // swing de brazos en x durante caminata
+  ruX:0, ruVX:0,
+  luX:0, luVX:0,
+  // caderas
+  hipZ:0,hipVZ:0,
+  // piernas
+  lulX:0,lulV:0, rulX:0,rulV:0,
+  lllX:0,lllV:0, rllX:0,rllV:0,
+  lftX:0,lftV:0, rftX:0,rftV:0,
+};
 
-  walkPhase = (walkPhase + delta * speed) % 1;
-  const t   = walkPhase * Math.PI * 2;
+// ── Parpadeo ──────────────────────────────────────────────────────────
+let blinkT=2+Math.random()*2, blinkV=0, blinkClose=false;
 
-  // Amplitudes
-  const legAmp    = isWalking ? 0.42 : 0;
-  const kneeAmp   = isWalking ? 0.35 : 0;
-  const footAmp   = isWalking ? 0.20 : 0;
-  const armSwing  = isWalking ? 0.28 : 0;
-  const hipRock   = isWalking ? 0.06 : 0;
-  const hipBob    = isWalking ? 0.025 : 0;
+// ── Habla ─────────────────────────────────────────────────────────────
+const VOWELS=['aa','ih','ou','ee','oh'];
+let talkT=0, lastVowel='';
 
-  const lerpSpeed = 8;
+// ── Mirada ────────────────────────────────────────────────────────────
+let lookT=0, lookTgt={x:0,y:0}, lookCur={x:0,y:0};
 
-  // Upper legs
-  sm.lulX = lerp(sm.lulX,  Math.sin(t) * legAmp,        delta * lerpSpeed);
-  sm.rulX = lerp(sm.rulX, -Math.sin(t) * legAmp,        delta * lerpSpeed);
-  // Lower legs (rodilla dobla cuando la pierna va hacia atrás)
-  sm.lllX = lerp(sm.lllX, Math.max(0, -Math.sin(t)) * kneeAmp * 1.6, delta * lerpSpeed);
-  sm.rllX = lerp(sm.rllX, Math.max(0,  Math.sin(t)) * kneeAmp * 1.6, delta * lerpSpeed);
-  // Pies
-  sm.lftX = lerp(sm.lftX,  Math.sin(t) * footAmp * 0.4, delta * lerpSpeed);
-  sm.rftX = lerp(sm.rftX, -Math.sin(t) * footAmp * 0.4, delta * lerpSpeed);
-  // Brazos (opuestos a piernas)
-  sm.luaX = lerp(sm.luaX, -Math.sin(t) * armSwing,      delta * lerpSpeed);
-  sm.ruaX = lerp(sm.ruaX,  Math.sin(t) * armSwing,      delta * lerpSpeed);
-  // Bob vertical de caderas
-  sm.charY = lerp(sm.charY, Math.abs(Math.sin(t * 2)) * -hipBob, delta * lerpSpeed);
-
-  // Aplicar a huesos
-  const lul = getBone('leftUpperLeg');
-  const rul = getBone('rightUpperLeg');
-  const lll = getBone('leftLowerLeg');
-  const rll = getBone('rightLowerLeg');
-  const lft = getBone('leftFoot');
-  const rft = getBone('rightFoot');
-  const lua = getBone('leftUpperArm');
-  const rua = getBone('rightUpperArm');
-  const hips = getBone('hips');
-  const spine = getBone('spine');
-
-  if (lul) lul.rotation.x = sm.lulX;
-  if (rul) rul.rotation.x = sm.rulX;
-  if (lll) lll.rotation.x = sm.lllX;
-  if (rll) rll.rotation.x = sm.rllX;
-  if (lft) lft.rotation.x = sm.lftX;
-  if (rft) rft.rotation.x = sm.rftX;
-
-  // Brazos: base pose + swing de caminar
-  if (lua) {
-    lua.rotation.z = lerp(lua.rotation.z,  1.30, delta * 5);
-    lua.rotation.x = lerp(lua.rotation.x, sm.luaX + 0.05, delta * 5);
-  }
-  if (rua) {
-    rua.rotation.z = lerp(rua.rotation.z, -1.30, delta * 5);
-    rua.rotation.x = lerp(rua.rotation.x, sm.ruaX + 0.05, delta * 5);
-  }
-
-  // Caderas: rock lateral mientras camina
-  if (hips) {
-    hips.rotation.z = lerp(hips.rotation.z, Math.sin(t) * hipRock, delta * 6);
-    hips.position.y = sm.charY;
-  }
-  // Torso compensa
-  if (spine) {
-    spine.rotation.z = lerp(spine.rotation.z, -Math.sin(t) * hipRock * 0.5, delta * 4);
-  }
-
-  // Orientación del personaje según dirección
-  if (vrm) {
-    const targetY = charDir > 0 ? Math.PI * 0.5 : Math.PI * 1.5;
-    // Mirar hacia el frente (cámara) cuando está quieta
-    const targetYIdle = Math.PI;
-    const tY = isWalking ? targetY : targetYIdle;
-    vrm.scene.rotation.y = lerp(vrm.scene.rotation.y, tY, delta * 3.5);
-  }
-}
+// ── Fase caminata ─────────────────────────────────────────────────────
+let walkPhase=0, breathT=0, swayT=0;
 
 // ── Loop principal ────────────────────────────────────────────────────
 function animate() {
   requestAnimationFrame(animate);
-  const delta = Math.min(clock.getDelta(), 0.05);
-  if (!vrm) { renderer.render(scene, camera); return; }
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (!vrm) { renderer.render(scene,camera); return; }
 
-  vrm.update(delta);
-  breathT += delta;
-  swayT   += delta;
+  vrm.update(dt);  // actualiza spring bones + expression manager
 
-  // ── Lógica del pet ────────────────────────────────────────────────
-  tickPet(delta);
+  breathT+=dt; swayT+=dt;
 
-  // ── Animación de caminar / pose ────────────────────────────────────
-  animarCaminata(delta);
-  if (petEstado === 'idle_anim' || estadoRemoto === 'talking' || estadoRemoto === 'thinking') {
-    aplicarPoseBase();
-  }
+  // ── Pet logic ──────────────────────────────────────────────────────
+  tickPet(dt);
+  const walk = petEstado==='walking' && estadoRemoto!=='talking' && estadoRemoto!=='thinking';
+
+  // Orientar personaje hacia dirección de marcha
+  const tgtY = walk ? (charDir>0?Math.PI*0.55:Math.PI*1.45) : Math.PI;
+  vrm.scene.rotation.y = lerp(vrm.scene.rotation.y, tgtY, dt*4);
 
   // ── Respiración ───────────────────────────────────────────────────
-  const breath = Math.sin(breathT * 1.05) * 0.011;
-  const chest  = getBone('upperChest') ?? getBone('chest');
-  if (chest) chest.rotation.x = lerp(chest.rotation.x, breath, delta * 3);
+  const breath = Math.sin(breathT*1.05)*0.013;
+  const spineB = getB('spine'), chestB = getB('upperChest')??getB('chest');
+  if (chestB) chestB.rotation.x = breath*0.6;
 
   // ── Balanceo idle ─────────────────────────────────────────────────
-  if (petEstado === 'idle_anim' && estadoRemoto !== 'talking') {
-    const sw = Math.sin(swayT * 0.55) * 0.018;
-    const spine = getBone('spine');
-    if (spine) spine.rotation.z = lerp(spine.rotation.z, sw, delta * 2);
-  }
+  ;[S.bZ,S.bvZ] = spStep(S.bZ, S.bvZ, walk?0:Math.sin(swayT*0.6)*0.025, 16,5,dt);
+  if (spineB) { spineB.rotation.z=S.bZ; spineB.rotation.x=breath; }
+
+  // ── Animación caminata ────────────────────────────────────────────
+  const wspd  = walk ? 2.2 : 0;
+  walkPhase   = (walkPhase + dt*wspd) % 1;
+  const wt    = walkPhase * Math.PI * 2;
+  const legA  = walk ? 0.42 : 0;
+  const kneeA = walk ? 0.55 : 0;
+  const armA  = walk ? 0.30 : 0;
+  const hipA  = walk ? 0.06 : 0;
+  const hipB_ = walk ? 0.022: 0;
+  const K=10, D=4;
+
+  ;[S.lulX,S.lulV]=spStep(S.lulX,S.lulV, Math.sin(wt)*legA,K,D,dt);
+  ;[S.rulX,S.rulV]=spStep(S.rulX,S.rulV,-Math.sin(wt)*legA,K,D,dt);
+  ;[S.lllX,S.lllV]=spStep(S.lllX,S.lllV,Math.max(0,-Math.sin(wt))*kneeA,K,D,dt);
+  ;[S.rllX,S.rllV]=spStep(S.rllX,S.rllV,Math.max(0, Math.sin(wt))*kneeA,K,D,dt);
+  ;[S.lftX,S.lftV]=spStep(S.lftX,S.lftV, Math.sin(wt)*0.18,K,D,dt);
+  ;[S.rftX,S.rftV]=spStep(S.rftX,S.rftV,-Math.sin(wt)*0.18,K,D,dt);
+  // Swing de brazos opuesto a piernas
+  ;[S.ruX,S.ruVX]=spStep(S.ruX,S.ruVX, Math.sin(wt)*armA,K,D,dt);
+  ;[S.luX,S.luVX]=spStep(S.luX,S.luVX,-Math.sin(wt)*armA,K,D,dt);
+
+  const lul=getB('leftUpperLeg');  if(lul){lul.rotation.x=S.lulX;}
+  const rul=getB('rightUpperLeg'); if(rul){rul.rotation.x=S.rulX;}
+  const lll=getB('leftLowerLeg');  if(lll){lll.rotation.x=S.lllX;}
+  const rll=getB('rightLowerLeg'); if(rll){rll.rotation.x=S.rllX;}
+  const lft=getB('leftFoot');      if(lft){lft.rotation.x=S.lftX;}
+  const rft=getB('rightFoot');     if(rft){rft.rotation.x=S.rftX;}
+
+  // Caderas — rock y bob
+  ;[S.hipZ,S.hipVZ]=spStep(S.hipZ,S.hipVZ,Math.sin(wt)*hipA,18,5,dt);
+  const hipB=getB('hips');
+  if(hipB){hipB.rotation.z=S.hipZ; hipB.position.y=Math.abs(Math.sin(wt*2))*(-hipB_);}
+
+  // ── Brazos ────────────────────────────────────────────────────────
+  ;[S.ruZ,S.ruVZ]=spStep(S.ruZ,S.ruVZ,-1.30,22,6,dt);
+  ;[S.luZ,S.luVZ]=spStep(S.luZ,S.luVZ, 1.30,22,6,dt);
+  const rua=getB('rightUpperArm'), lua=getB('leftUpperArm');
+  const rla=getB('rightLowerArm'), lla=getB('leftLowerArm');
+  if(rua){rua.rotation.z=S.ruZ; rua.rotation.x=S.ruX+0.05;}
+  if(lua){lua.rotation.z=S.luZ; lua.rotation.x=S.luX+0.05;}
+  if(rla){rla.rotation.x=-0.15; rla.rotation.z=-0.08;}
+  if(lla){lla.rotation.x=-0.15; lla.rotation.z= 0.08;}
 
   // ── Mirada dinámica ───────────────────────────────────────────────
-  lookTimer -= delta;
-  if (lookTimer <= 0) {
-    lookTarget.x = (Math.random() - 0.5) * 0.25;
-    lookTarget.y = (Math.random() - 0.5) * 0.12;
-    lookTimer = 2 + Math.random() * 4;
-  }
-  lookCurrent.x = lerp(lookCurrent.x, lookTarget.x, delta * 1.8);
-  lookCurrent.y = lerp(lookCurrent.y, lookTarget.y, delta * 1.8);
+  lookT-=dt;
+  if(lookT<=0){ lookTgt.x=(Math.random()-0.5)*0.28; lookTgt.y=(Math.random()-0.5)*0.14; lookT=2+Math.random()*4; }
+  lookCur.x=lerp(lookCur.x,lookTgt.x,dt*1.8);
+  lookCur.y=lerp(lookCur.y,lookTgt.y,dt*1.8);
 
-  const head = getBone('head');
-  const neck = getBone('neck');
-  if (head) {
-    let tHZ = lookCurrent.x * 0.55;
-    let tHX = -lookCurrent.y * 0.35;
-    let tHY = -lookCurrent.x * 0.28;
-    if (estadoRemoto === 'thinking') {
-      tHZ = lerp(tHZ, -0.20, 0.75);
-      tHX = lerp(tHX,  0.13, 0.75);
-      tHY = lerp(tHY,  0.18, 0.75);
-    }
-    sm.headZ = lerp(sm.headZ, tHZ, delta * 3.5);
-    sm.headX = lerp(sm.headX, tHX, delta * 3.5);
-    sm.headY = lerp(sm.headY, tHY, delta * 3.5);
-    head.rotation.z = sm.headZ;
-    head.rotation.x = sm.headX;
-    head.rotation.y = sm.headY;
-  }
-  if (neck) {
-    neck.rotation.z = sm.headZ * 0.3;
-    neck.rotation.x = sm.headX * 0.35;
-  }
+  // ── Cabeza con springs ────────────────────────────────────────────
+  let tHZ=lookCur.x*0.55, tHX=-lookCur.y*0.35, tHY=-lookCur.x*0.28;
+  if(estadoRemoto==='thinking'){tHZ=lerp(tHZ,-0.20,0.75);tHX=lerp(tHX,0.13,0.75);tHY=lerp(tHY,0.18,0.75);}
+  ;[S.hZ,S.hvZ]=spStep(S.hZ,S.hvZ,tHZ,20,6,dt);
+  ;[S.hX,S.hvX]=spStep(S.hX,S.hvX,tHX,20,6,dt);
+  ;[S.hY,S.hvY]=spStep(S.hY,S.hvY,tHY,20,6,dt);
+  const headB=getB('head'), neckB=getB('neck');
+  if(headB){headB.rotation.z=S.hZ;headB.rotation.x=S.hX;headB.rotation.y=S.hY;}
+  if(neckB){neckB.rotation.z=S.hZ*0.3;neckB.rotation.x=S.hX*0.4;}
 
   // ── Parpadeo ──────────────────────────────────────────────────────
-  blinkTimer -= delta;
-  if (blinkTimer <= 0) {
-    blinkClosing = true;
-    blinkTimer = 3 + Math.random() * 3;
-  }
-  if (blinkClosing) {
-    blinkVal += delta * 16;
-    if (blinkVal >= 1) { blinkVal = 1; blinkClosing = false; }
-  } else {
-    blinkVal = Math.max(0, blinkVal - delta * 12);
-  }
-  setExpr('blink', blinkVal);
+  blinkT-=dt;
+  if(blinkT<=0){blinkClose=true;blinkT=3+Math.random()*3;}
+  blinkClose ? (blinkV+=dt*16, blinkV>=1&&(blinkV=1,blinkClose=false))
+             : (blinkV=Math.max(0,blinkV-dt*12));
+  setE('blink',blinkV);
 
   // ── Boca ──────────────────────────────────────────────────────────
-  if (estadoRemoto === 'talking') {
-    talkT += delta;
-    const idx   = Math.floor(talkT * 5) % VOWELS.length;
-    const vowel = VOWELS[idx];
-    const amp   = Math.max(0.1, 0.45 + Math.sin(talkT * 9) * 0.3);
-    if (vowel !== lastVowel) {
-      if (lastVowel) setExpr(lastVowel, 0);
-      lastVowel = vowel;
-    }
-    setExpr(vowel, amp);
+  if(estadoRemoto==='talking'){
+    talkT+=dt;
+    const v=VOWELS[Math.floor(talkT*5)%VOWELS.length];
+    if(v!==lastVowel){if(lastVowel)setE(lastVowel,0);lastVowel=v;}
+    setE(v, Math.max(0.1, 0.45+Math.sin(talkT*9)*0.3));
   } else {
-    if (lastVowel) { setExpr(lastVowel, 0); lastVowel = ''; }
-    talkT = 0;
+    if(lastVowel){setE(lastVowel,0);lastVowel='';}
+    talkT=0;
   }
+  setE('thinking', estadoRemoto==='thinking'?0.55:0);
 
-  // ── Expresión thinking ────────────────────────────────────────────
-  setExpr('thinking', estadoRemoto === 'thinking' ? 0.55 : 0);
-
-  renderer.render(scene, camera);
+  renderer.render(scene,camera);
 }
 animate();
 
 // ── Resize ────────────────────────────────────────────────────────────
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+window.addEventListener('resize', ()=>{
+  camera.aspect=window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(window.innerWidth,window.innerHeight);
 });
 
 // ── WebSocket ─────────────────────────────────────────────────────────
-function conectarWS() {
-  const ws = new WebSocket('ws://localhost:18766');
-  ws.onopen    = () => console.log('[WS] conectado');
-  ws.onmessage = e => {
-    try {
-      const d = JSON.parse(e.data);
-      if (d.estado) estadoRemoto = d.estado;
-    } catch(_) {}
-  };
-  ws.onclose = () => setTimeout(conectarWS, 1500);
-  ws.onerror = () => {};
-}
-conectarWS();
+(function conectar(){
+  const ws=new WebSocket('ws://localhost:18766');
+  ws.onmessage=e=>{try{const d=JSON.parse(e.data);if(d.estado)estadoRemoto=d.estado;}catch(_){}};
+  ws.onclose=()=>setTimeout(conectar,1500);
+})();
 
-window.setEstado = s => { estadoRemoto = s; };
+window.setEstado=s=>{estadoRemoto=s;};
 </script>
 </body>
 </html>
