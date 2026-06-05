@@ -28,8 +28,8 @@ const scene = new THREE.Scene();
 
 // Cámara tipo teleobjetivo — plano medio VTuber
 const camera = new THREE.PerspectiveCamera(28, window.innerWidth / window.innerHeight, 0.1, 20);
-camera.position.set(0, 1.2, 1.8);
-camera.lookAt(0, 1.1, 0);
+camera.position.set(0, 1.05, 1.6);
+camera.lookAt(0, 1.0, 0);
 
 // Iluminación tipo estudio de stream
 scene.add(new THREE.AmbientLight(0xb0c0dd, 1.0));
@@ -48,6 +48,32 @@ const lerp  = (a, b, t) => a + (b - a) * t;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // ═══════════════════════════════════════════════════
+// DESKTOP PET — CAMINATA (tercio derecho de pantalla)
+// FOV=28°, z=1.6, aspect=16/9 → ancho visible ≈ ±0.709 u
+// Píxeles 1400-1900 → world x ≈ 0.32-0.68
+// ═══════════════════════════════════════════════════
+const BORDE_IZQ = 0.32, BORDE_DER = 0.68, VEL = 0.18;
+let charX = 0.50, charDir = -1;  // empieza en el centro-derecha
+let petEstado = 'idle_anim', petTimer = 2 + Math.random() * 3;
+let walkBlend = 0, walkPhase = 0;
+
+function tickPet(dt) {
+  if (estado === 'talking' || estado === 'thinking') { petEstado = 'idle_anim'; return; }
+  petTimer -= dt;
+  if (petTimer <= 0) {
+    petEstado = petEstado === 'idle_anim' ? 'walking' : 'idle_anim';
+    petTimer  = petEstado === 'walking' ? 4 + Math.random() * 6 : 3 + Math.random() * 5;
+    if (petEstado === 'walking' && Math.random() < 0.3) charDir *= -1;
+  }
+  if (petEstado === 'walking') {
+    charX += charDir * VEL * dt;
+    if (charX > BORDE_DER) { charX = BORDE_DER; charDir = -1; petEstado = 'idle_anim'; petTimer = 2 + Math.random() * 3; }
+    if (charX < BORDE_IZQ) { charX = BORDE_IZQ; charDir =  1; petEstado = 'idle_anim'; petTimer = 2 + Math.random() * 3; }
+    if (vrm) vrm.scene.position.x = charX;
+  }
+}
+
+// ═══════════════════════════════════════════════════
 // CARGA VRM
 // ═══════════════════════════════════════════════════
 const loader = new GLTFLoader();
@@ -58,9 +84,11 @@ loader.load('/rem.vrm',
     vrm = gltf.userData.vrm;
     VRMUtils.removeUnnecessaryJoints(vrm.scene);
     vrm.scene.rotation.y = Math.PI;
-    // Plano medio: cabeza cerca del 15% superior, torso visible
-    vrm.scene.position.set(0, -0.15, 0);
+    vrm.scene.scale.set(1, 1, 1);
+    // Plano medio VTuber: cabeza al ~15% superior, pies fuera de frame
+    vrm.scene.position.set(charX, -0.85, 0);
     scene.add(vrm.scene);
+    camera.updateProjectionMatrix();
     const names = vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? [];
     console.log('[VRM] OK | expressions:', names.join(', '));
     console.log('[VRM] springBones:', vrm.springBoneManager ? 'sí' : 'no');
@@ -379,6 +407,58 @@ function getStatePose(t) {
 }
 
 // ═══════════════════════════════════════════════════
+// ANIMACIÓN DE CAMINATA ORGÁNICA
+// ═══════════════════════════════════════════════════
+function updateWalking(dt) {
+  const shouldWalk = petEstado === 'walking' && estado !== 'talking' && estado !== 'thinking';
+
+  // Blend con aceleración/desaceleración gradual
+  walkBlend = clamp(walkBlend + (shouldWalk ? dt * 2.5 : -dt * 3.0), 0, 1);
+
+  // Bug 2 fix: charDir=1→derecha=1.45π, charDir=-1→izquierda=0.55π
+  const tgtRotY = walkBlend > 0.01
+    ? (charDir > 0 ? Math.PI * 1.45 : Math.PI * 0.55)
+    : Math.PI;
+  if (vrm) vrm.scene.rotation.y = lerp(vrm.scene.rotation.y, tgtRotY, dt * 5);
+
+  if (walkBlend < 0.001) return;
+
+  walkPhase = (walkPhase + dt * 2.2 * walkBlend) % 1;
+  const wt = walkPhase * Math.PI * 2;
+  const wb = walkBlend;
+
+  // Caderas: bob vertical vía scene.position.y + rock lateral en hueso
+  const hipBob  = -Math.abs(Math.sin(wt)) * 0.022 * wb;
+  const hipRock =  Math.sin(wt) * 0.055 * wb;
+  if (vrm) vrm.scene.position.y = -0.85 + hipBob;   // bob: cuerpo baja al apoyar pie
+  const hipB = getB('hips');
+  if (hipB) { hipB.rotation.z = hipRock; hipB.rotation.x = Math.sin(wt * 0.5) * 0.015 * wb; }
+
+  // Torso: contra-rotación respecto a caderas (se añade sobre pose del estado)
+  const spineB = getB('spine');
+  if (spineB) spineB.rotation.z += -hipRock * 0.4;
+
+  // Piernas
+  const legSwing = 0.32 * wb, kneeFlex = 0.40 * wb;
+  const lul = getB('leftUpperLeg');  if (lul) lul.rotation.x =  Math.sin(wt) * legSwing;
+  const rul = getB('rightUpperLeg'); if (rul) rul.rotation.x = -Math.sin(wt) * legSwing;
+  const lll = getB('leftLowerLeg');  if (lll) lll.rotation.x = Math.max(0, -Math.sin(wt)) * kneeFlex * 1.5;
+  const rll = getB('rightLowerLeg'); if (rll) rll.rotation.x = Math.max(0,  Math.sin(wt)) * kneeFlex * 1.5;
+  const lft = getB('leftFoot');      if (lft) lft.rotation.x =  Math.sin(wt) * 0.15 * wb;
+  const rft = getB('rightFoot');     if (rft) rft.rotation.x = -Math.sin(wt) * 0.15 * wb;
+
+  // Brazos: swing opuesto a piernas (brazo derecho con pierna izquierda)
+  const armSwing = 0.22 * wb;
+  const rua = getB('rightUpperArm'), lua = getB('leftUpperArm');
+  if (rua) rua.rotation.x += Math.sin(wt + Math.PI) * armSwing;
+  if (lua) lua.rotation.x += Math.sin(wt) * armSwing;
+
+  // Cabeza: mira levemente hacia donde camina
+  const headB = getB('head');
+  if (headB) headB.rotation.y += charDir * 0.04 * wb;
+}
+
+// ═══════════════════════════════════════════════════
 // LOOP PRINCIPAL
 // ═══════════════════════════════════════════════════
 function animate() {
@@ -399,11 +479,12 @@ function animate() {
   // Decaer snap de sorpresa
   if (surprisedSnap > 0) surprisedSnap = Math.max(0, surprisedSnap - dt * 1.8);
 
-  // ── Sistemas de expresión / boca / parpadeo / mirada ──
+  // ── Sistemas de expresión / boca / parpadeo / mirada / caminata ──
   updateExpressions(dt);
   updateBlink(dt);
   updateMouth(dt, t);
   updateLook(dt, t);
+  tickPet(dt);
 
   // ── Pose procedural del estado actual ──
   const pose = getStatePose(t);
@@ -439,6 +520,9 @@ function animate() {
   if (lua) { lua.rotation.z = spr.luZ.step(pose.luZ, dt); lua.rotation.x = spr.luX.step(pose.luX, dt); }
   if (rla) { rla.rotation.x = -0.15; rla.rotation.z = -0.08; }
   if (lla) { lla.rotation.x = -0.15; lla.rotation.z =  0.08; }
+
+  // Caminata: se añade SOBRE los valores ya aplicados (+=)
+  updateWalking(dt);
 
   renderer.render(scene, camera);
 }
