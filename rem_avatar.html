@@ -6,253 +6,465 @@
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:transparent; overflow:hidden; width:100vw; height:100vh; pointer-events:none; }
   canvas { display:block; }
-  #dbg { position:fixed; top:4px; left:6px; color:lime; font:11px monospace; pointer-events:none; }
 </style>
 </head>
 <body>
-<div id="dbg">iniciando…</div>
-
 <script type="module">
-// esm.sh resuelve todas las dependencias sin necesidad de importmap
 import * as THREE from 'https://esm.sh/three@0.169.0';
 import { GLTFLoader }    from 'https://esm.sh/three@0.169.0/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from 'https://esm.sh/@pixiv/three-vrm@2';
 
-const dbg = document.getElementById('dbg');
-const log = s => { dbg.textContent = s; };
-
-// ── Renderer transparente ──────────────────────────────────────────────
-const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+// ═══════════════════════════════════════════════════
+// RENDERER + ESCENA
+// ═══════════════════════════════════════════════════
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setClearColor(0x000000, 0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
-// ── Escena ────────────────────────────────────────────────────────────
-const scene  = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 30);
-camera.position.set(0, 0.85, 2.4);
-camera.lookAt(0, 0.7, 0);
+const scene = new THREE.Scene();
 
-scene.add(new THREE.AmbientLight(0xaabbdd, 1.1));
-const key = new THREE.DirectionalLight(0xfff5e0, 1.4); key.position.set(1,3,2); scene.add(key);
-const fill= new THREE.DirectionalLight(0x88aaff, 0.5); fill.position.set(-2,1,0.5); scene.add(fill);
+// Cámara tipo teleobjetivo — plano medio VTuber
+const camera = new THREE.PerspectiveCamera(28, window.innerWidth / window.innerHeight, 0.1, 20);
+camera.position.set(0, 1.2, 1.8);
+camera.lookAt(0, 1.1, 0);
 
-// ── Estado ────────────────────────────────────────────────────────────
-let estadoRemoto = 'idle';
+// Iluminación tipo estudio de stream
+scene.add(new THREE.AmbientLight(0xb0c0dd, 1.0));
+const keyLight  = new THREE.DirectionalLight(0xfff8f0, 1.4); keyLight.position.set(1.5, 3, 2);   scene.add(keyLight);
+const fillLight = new THREE.DirectionalLight(0x8899ff, 0.6); fillLight.position.set(-2, 1, 0.5); scene.add(fillLight);
+const rimLight  = new THREE.DirectionalLight(0xffffff, 0.3); rimLight.position.set(0, 2, -2);    scene.add(rimLight);
+
+// ═══════════════════════════════════════════════════
+// ESTADO GLOBAL
+// ═══════════════════════════════════════════════════
+let estado = 'idle';
+let prevEstado = '';
 let vrm = null;
 const clock = new THREE.Clock();
+const lerp  = (a, b, t) => a + (b - a) * t;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-// ── Carga VRM ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════
+// CARGA VRM
+// ═══════════════════════════════════════════════════
 const loader = new GLTFLoader();
 loader.register(p => new VRMLoaderPlugin(p));
 
-log('cargando modelo…');
 loader.load('/rem.vrm',
   gltf => {
     vrm = gltf.userData.vrm;
     VRMUtils.removeUnnecessaryJoints(vrm.scene);
     vrm.scene.rotation.y = Math.PI;
-    vrm.scene.position.set(charX, 0, 0);
+    // Plano medio: cabeza cerca del 15% superior, torso visible
+    vrm.scene.position.set(0, -0.15, 0);
     scene.add(vrm.scene);
-    dbg.style.display = 'none';
-    console.log('VRM cargado OK | springBones:', vrm.springBoneManager ? 'sí':'no');
+    const names = vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? [];
+    console.log('[VRM] OK | expressions:', names.join(', '));
+    console.log('[VRM] springBones:', vrm.springBoneManager ? 'sí' : 'no');
   },
-  xhr => log('cargando ' + Math.round(xhr.loaded/xhr.total*100) + '%'),
-  err => { log('ERROR VRM: '+err); console.error(err); }
+  xhr => console.log('[VRM] cargando', Math.round(xhr.loaded / xhr.total * 100) + '%'),
+  err => console.error('[VRM] error:', err)
 );
 
-// ── Desktop pet — movimiento ───────────────────────────────────────────
-const BORDE_IZQ=-2.0, BORDE_DER=2.0, VEL=0.5;
-let charX=0, charDir=1;
-let petEstado='idle_anim', petTimer=3+Math.random()*3;
+// ═══════════════════════════════════════════════════
+// HELPERS: HUESOS Y EXPRESIONES
+// ═══════════════════════════════════════════════════
+const getB = n => vrm?.humanoid?.getNormalizedBoneNode(n) ?? null;
 
-function tickPet(dt) {
-  if (estadoRemoto==='talking'||estadoRemoto==='thinking'){ petEstado='idle_anim'; return; }
-  petTimer -= dt;
-  if (petTimer<=0) {
-    petEstado = petEstado==='idle_anim' ? 'walking' : 'idle_anim';
-    petTimer  = petEstado==='walking' ? 3+Math.random()*5 : 2+Math.random()*4;
-    if (petEstado==='walking'&&Math.random()<0.3) charDir*=-1;
-  }
-  if (petEstado==='walking') {
-    charX += charDir*VEL*dt;
-    if (charX>BORDE_DER){ charX=BORDE_DER; charDir=-1; petEstado='idle_anim'; petTimer=1+Math.random()*2; }
-    if (charX<BORDE_IZQ){ charX=BORDE_IZQ; charDir= 1; petEstado='idle_anim'; petTimer=1+Math.random()*2; }
-    if (vrm) vrm.scene.position.x=charX;
-  }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────
-const getB = n => vrm?.humanoid?.getNormalizedBoneNode(n)??null;
-const setE = (n,v) => { try{vrm?.expressionManager?.setValue(n,Math.max(0,Math.min(1,v)));}catch(_){} };
-const lerp  = (a,b,t) => a+(b-a)*t;
-
-// Spring crítico: movimiento orgánico sin oscilación
-function spStep(pos, vel, target, stiffness, damping, dt) {
-  const f = -stiffness*(pos-target) - damping*vel;
-  vel += f*dt; pos += vel*dt;
-  return [pos, vel];
-}
-
-// ── Estado dinámico ───────────────────────────────────────────────────
-const S = {
-  // cabeza
-  hZ:0,hX:0,hY:0, hvZ:0,hvX:0,hvY:0,
-  // cuerpo
-  bZ:0,bvZ:0,
-  // brazos z (pose natural: derecho negativo, izquierdo positivo)
-  ruZ:-1.30, ruVZ:0,
-  luZ: 1.30, luVZ:0,
-  // swing de brazos en x durante caminata
-  ruX:0, ruVX:0,
-  luX:0, luVX:0,
-  // caderas
-  hipZ:0,hipVZ:0,
-  // piernas
-  lulX:0,lulV:0, rulX:0,rulV:0,
-  lllX:0,lllV:0, rllX:0,rllV:0,
-  lftX:0,lftV:0, rftX:0,rftV:0,
+// Cache de nombres de expresión que funcionan en este modelo
+const _exprCache = {};
+const _exprVariants = {
+  happy:     ['happy', 'joy',  'Joy',  'blendShape.Joy',       'preset.happy'],
+  sad:       ['sad',   'sorrow','Sorrow','blendShape.Sorrow',   'preset.sad'],
+  angry:     ['angry', 'Angry','blendShape.Angry',              'preset.angry'],
+  surprised: ['surprised','Surprised','blendShape.Surprised',   'preset.surprised'],
+  neutral:   ['neutral','Neutral'],
+  blink:     ['blink', 'Blink','blendShape.Blink','blinkLeft','BlinkL'],
+  aa:        ['aa', 'A', 'blendShape.A'],
+  oh:        ['oh', 'O', 'blendShape.O'],
+  ih:        ['ih', 'I', 'blendShape.I'],
 };
 
-// ── Parpadeo ──────────────────────────────────────────────────────────
-let blinkT=2+Math.random()*2, blinkV=0, blinkClose=false;
+function trySetExpr(key, value) {
+  if (!vrm?.expressionManager) return;
+  value = clamp(value, 0, 1);
+  if (_exprCache[key]) {
+    try { vrm.expressionManager.setValue(_exprCache[key], value); return; } catch(_) {}
+  }
+  const tries = _exprVariants[key] ?? [key];
+  for (const name of tries) {
+    try { vrm.expressionManager.setValue(name, value); _exprCache[key] = name; return; } catch(_) {}
+  }
+}
 
-// ── Habla ─────────────────────────────────────────────────────────────
-const VOWELS=['aa','ih','ou','ee','oh'];
-let talkT=0, lastVowel='';
+// ═══════════════════════════════════════════════════
+// SISTEMA DE EXPRESIONES EMOCIONALES
+// ═══════════════════════════════════════════════════
+const EXPR_PROFILES = {
+  idle:      { happy: 0.0, sad: 0.0, angry: 0.0, surprised: 0.0 },
+  talking:   { happy: 0.3, sad: 0.0, angry: 0.0, surprised: 0.0 },
+  thinking:  { happy: 0.0, sad: 0.1, angry: 0.0, surprised: 0.0 },
+  happy:     { happy: 1.0, sad: 0.0, angry: 0.0, surprised: 0.1 },
+  sad:       { happy: 0.0, sad: 0.9, angry: 0.0, surprised: 0.0 },
+  angry:     { happy: 0.0, sad: 0.0, angry: 0.8, surprised: 0.0 },
+  surprised: { happy: 0.1, sad: 0.0, angry: 0.0, surprised: 1.0 },
+};
+const curExpr = { happy: 0, sad: 0, angry: 0, surprised: 0 };
 
-// ── Mirada ────────────────────────────────────────────────────────────
-let lookT=0, lookTgt={x:0,y:0}, lookCur={x:0,y:0};
+function updateExpressions(dt) {
+  const profile = EXPR_PROFILES[estado] ?? EXPR_PROFILES.idle;
+  for (const [k, target] of Object.entries(profile)) {
+    curExpr[k] = lerp(curExpr[k], target, dt * 2.5);
+    trySetExpr(k, curExpr[k]);
+  }
+}
 
-// ── Fase caminata ─────────────────────────────────────────────────────
-let walkPhase=0, breathT=0, swayT=0;
+// ═══════════════════════════════════════════════════
+// SISTEMA DE PARPADEO NATURAL
+// ═══════════════════════════════════════════════════
+let blinkPhase = 'wait'; // 'wait' | 'closing' | 'opening' | 'doubleWait'
+let blinkTimer  = 2.5 + Math.random() * 2;
+let blinkVal    = 0;
+let blinkDouble = false;
+let blinkDoubleWait = 0;
 
-// ── Loop principal ────────────────────────────────────────────────────
+function updateBlink(dt) {
+  // Intervalo base por estado — thinking parpadea más
+  const baseInterval = estado === 'thinking' ? 1.8
+                     : estado === 'talking'   ? 2.2 : 3.5;
+
+  switch (blinkPhase) {
+    case 'wait':
+      blinkTimer -= dt;
+      if (blinkTimer <= 0) {
+        blinkPhase = 'closing';
+        blinkDouble = Math.random() < 0.05; // 5% doble parpadeo
+      }
+      break;
+    case 'closing':
+      blinkVal += dt / 0.08; // cierra en 80ms
+      if (blinkVal >= 1) { blinkVal = 1; blinkPhase = 'opening'; }
+      break;
+    case 'opening':
+      blinkVal -= dt / 0.12; // abre en 120ms
+      if (blinkVal <= 0) {
+        blinkVal = 0;
+        if (blinkDouble) { blinkDouble = false; blinkDoubleWait = 0.07; blinkPhase = 'doubleWait'; }
+        else              { blinkPhase = 'wait'; blinkTimer = baseInterval * (0.7 + Math.random() * 0.8); }
+      }
+      break;
+    case 'doubleWait':
+      blinkDoubleWait -= dt;
+      if (blinkDoubleWait <= 0) blinkPhase = 'closing';
+      break;
+  }
+  trySetExpr('blink', blinkVal);
+}
+
+// ═══════════════════════════════════════════════════
+// SISTEMA DE BOCA — NOISE ORGÁNICO + MICRO-PAUSAS
+// ═══════════════════════════════════════════════════
+let mouthSilenceActive = false;
+let mouthSilenceTimer  = 0;
+let mouthSilenceNext   = 1.8 + Math.random() * 1.2;
+
+function updateMouth(dt, t) {
+  if (estado !== 'talking') {
+    trySetExpr('aa', 0);
+    trySetExpr('oh', 0);
+    mouthSilenceActive = false;
+    return;
+  }
+
+  mouthSilenceNext -= dt;
+  if (!mouthSilenceActive && mouthSilenceNext <= 0) {
+    mouthSilenceActive = true;
+    mouthSilenceTimer  = 0.08 + Math.random() * 0.07; // 80-150ms pausa
+    mouthSilenceNext   = 1.8 + Math.random() * 1.2;
+  }
+  if (mouthSilenceActive) {
+    mouthSilenceTimer -= dt;
+    if (mouthSilenceTimer <= 0) mouthSilenceActive = false;
+    trySetExpr('aa', 0); trySetExpr('oh', 0);
+    return;
+  }
+
+  const intensity = clamp(0.3 + Math.sin(t * 8.5) * 0.25 + Math.sin(t * 13.7) * 0.15, 0, 1);
+  const aaW = clamp(0.5 + Math.sin(t * 3.7) * 0.35, 0, 1);
+  trySetExpr('aa', intensity * aaW);
+  trySetExpr('oh', intensity * (1 - aaW));
+}
+
+// ═══════════════════════════════════════════════════
+// SISTEMA DE MIRADA POR ESTADO
+// ═══════════════════════════════════════════════════
+const lookCur = { x: 0, y: 0 };
+let lookDrift = { x: 0, y: 0 };
+let lookChangeTimer = 2 + Math.random() * 3;
+
+function updateLook(dt, t) {
+  lookChangeTimer -= dt;
+  if (lookChangeTimer <= 0 && (estado === 'idle' || estado === 'happy' || estado === 'sad')) {
+    lookDrift.x = (Math.random() - 0.5) * 0.22;
+    lookDrift.y = (Math.random() - 0.5) * 0.10;
+    lookChangeTimer = 2.5 + Math.random() * 3.5;
+  }
+
+  let tgtX, tgtY, lerpSpd;
+  switch (estado) {
+    case 'thinking':
+      tgtX = -0.18; tgtY = 0.12; lerpSpd = 1.2; // arriba-izquierda
+      break;
+    case 'talking':
+      tgtX = Math.sin(t * 0.12) * 0.04; tgtY = Math.sin(t * 0.09) * 0.03; lerpSpd = 2.5;
+      break;
+    default:
+      tgtX = lookDrift.x; tgtY = lookDrift.y; lerpSpd = 1.3;
+  }
+  lookCur.x = lerp(lookCur.x, tgtX, dt * lerpSpd);
+  lookCur.y = lerp(lookCur.y, tgtY, dt * lerpSpd);
+}
+
+// ═══════════════════════════════════════════════════
+// SISTEMA DE SPRINGS (AMORTIGUADORES)
+// ═══════════════════════════════════════════════════
+class Spring {
+  constructor(init = 0, k = 20, d = 6) { this.v = init; this.vel = 0; this.k = k; this.d = d; }
+  step(target, dt) {
+    const f = -this.k * (this.v - target) - this.d * this.vel;
+    this.vel += f * dt; this.v += this.vel * dt; return this.v;
+  }
+  tune(k, d) { this.k = k; this.d = d; }
+}
+
+const spr = {
+  hX: new Spring(0,    18, 5.5),
+  hY: new Spring(0,    18, 5.5),
+  hZ: new Spring(-0.04,18, 5.5),
+  bZ: new Spring(0,    14, 4.5),
+  bX: new Spring(0,    12, 4.0),
+  ruZ: new Spring(-1.28, 22, 7.0),
+  luZ: new Spring( 1.28, 22, 7.0),
+  ruX: new Spring(0.05,  16, 5.0),
+  luX: new Spring(0.05,  16, 5.0),
+};
+
+// Perfiles de stiffness/damping por estado
+const SPRING_CFG = {
+  idle:      [18, 5.5, 14, 4.5],
+  talking:   [20, 5.0, 16, 4.0],
+  thinking:  [14, 6.0, 10, 5.0],
+  happy:     [22, 4.5, 18, 3.5],
+  sad:       [10, 7.0,  8, 6.0],
+  angry:     [26, 3.0, 22, 2.8], // menos damping = más brusco
+  surprised: [30, 4.0, 25, 3.5],
+};
+
+function applySpringConfig() {
+  const [hk, hd, bk, bd] = SPRING_CFG[estado] ?? SPRING_CFG.idle;
+  spr.hX.tune(hk, hd); spr.hY.tune(hk, hd); spr.hZ.tune(hk, hd);
+  spr.bZ.tune(bk, bd); spr.bX.tune(bk, bd);
+}
+
+// ═══════════════════════════════════════════════════
+// POSE PROCEDURAL POR ESTADO
+// ═══════════════════════════════════════════════════
+let surprisedSnap = 0;
+
+function getStatePose(t) {
+  // Velocidades de animación por estado
+  const SPEEDS = { idle:1.0, talking:1.8, thinking:0.5, happy:1.5, sad:0.4, angry:1.3, surprised:2.0 };
+  const ts = t * (SPEEDS[estado] ?? 1.0); // tiempo escalado por emoción
+
+  // Respiración siempre presente
+  const breath = Math.sin(ts * 0.8 / (SPEEDS[estado] ?? 1.0)) * 0.018;
+
+  switch (estado) {
+
+    case 'idle':
+      return {
+        hX: Math.sin(ts * 0.3) * Math.sin(ts * 0.71) * 0.025,
+        hY: Math.sin(ts * 0.2) * Math.sin(ts * 0.53) * 0.018,
+        hZ: -0.04 + Math.sin(ts * 0.4) * Math.sin(ts * 0.61) * 0.015,
+        bZ: Math.sin(ts * 0.4) * 0.008,
+        bX: breath,
+        ruZ: -1.28, luZ: 1.28, ruX: 0.05, luX: 0.05,
+      };
+
+    case 'talking':
+      return {
+        hX: Math.sin(ts * 0.45) * Math.sin(ts * 1.27) * 0.09,
+        hY: Math.sin(ts * 0.54) * Math.sin(ts * 0.95) * 0.12,
+        hZ: Math.sin(ts * 0.72) * Math.sin(ts * 1.27) * 0.13,
+        bZ: Math.sin(ts * 1.2)  * 0.025,
+        bX: breath,
+        ruZ: -1.28,
+        luZ: 1.18,  // brazo izquierdo ligeramente elevado (gesto)
+        ruX: Math.sin(ts * 1.1) * 0.04 + 0.05,
+        luX: Math.sin(ts * 1.3) * 0.07 + 0.09,
+      };
+
+    case 'thinking': {
+      return {
+        hX:  0.18 + Math.sin(ts * 0.1) * 0.018,
+        hY:  0.15 + Math.sin(ts * 0.13) * 0.012,
+        hZ: -0.22 + Math.sin(ts * 0.2)  * 0.012,
+        bZ: Math.sin(ts * 0.2) * 0.005,
+        bX: breath * 0.7,
+        ruZ: -1.05, // brazo derecho elevado (pensativa, mano cerca de la cara)
+        luZ: 1.28,
+        ruX: 0.15, luX: 0.05,
+      };
+    }
+
+    case 'happy': {
+      const bob = Math.sin(ts * 2.5) * 0.015; // pequeño rebote de cabeza
+      return {
+        hX: bob + Math.sin(ts * 0.6) * 0.03,
+        hY: Math.sin(ts * 0.7) * 0.045,
+        hZ: Math.sin(ts * 0.8) * 0.055,
+        bZ: Math.sin(ts * 0.8) * 0.022,
+        bX: breath * 1.2,
+        ruZ: -1.15, luZ: 1.15, // brazos más abiertos (postura alegre)
+        ruX: 0.09, luX: 0.09,
+      };
+    }
+
+    case 'sad':
+      return {
+        hX:  0.25 + Math.sin(ts * 0.15) * 0.012, // cabeza caída
+        hY:  Math.sin(ts * 0.1) * 0.008,
+        hZ:  0.05,
+        bZ:  Math.sin(ts * 0.2) * 0.004,
+        bX:  0.05 + breath * 0.5, // spine ligeramente inclinada
+        ruZ: -1.30, luZ: 1.30,
+        ruX: 0.02, luX: 0.02,
+      };
+
+    case 'angry': {
+      // Micro-sacudidas bruscos (sin suavidad)
+      const jZ = Math.sin(ts * 12) * Math.sign(Math.sin(ts * 7)) * 0.018;
+      const jY = Math.sin(ts *  9) * Math.sign(Math.sin(ts * 5)) * 0.012;
+      return {
+        hX: 0.06,
+        hY: jY,
+        hZ: jZ,
+        bZ: Math.sin(ts * 1.5) * 0.018,
+        bX: 0.02,
+        ruZ: -1.24, luZ: 1.24,
+        ruX: 0.08, luX: 0.08,
+      };
+    }
+
+    case 'surprised': {
+      const snap = clamp(surprisedSnap, 0, 1);
+      return {
+        hX: -0.20 * snap + Math.sin(ts * 0.3) * 0.018 * (1 - snap),
+        hY:  Math.sin(ts * 0.2) * 0.015,
+        hZ:  Math.sin(ts * 0.4) * 0.010,
+        bZ: -0.04 * snap,
+        bX: -0.03 * snap + breath,
+        ruZ: -1.28 - 0.12 * snap,
+        luZ:  1.28 + 0.12 * snap,
+        ruX: 0.12, luX: 0.12,
+      };
+    }
+
+    default:
+      return { hX:0, hY:0, hZ:-0.04, bZ:0, bX:0, ruZ:-1.28, luZ:1.28, ruX:0.05, luX:0.05 };
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// LOOP PRINCIPAL
+// ═══════════════════════════════════════════════════
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (!vrm) { renderer.render(scene,camera); return; }
+  if (!vrm) { renderer.render(scene, camera); return; }
 
-  vrm.update(dt);  // actualiza spring bones + expression manager
+  vrm.update(dt); // spring bones + morphs internos del VRM
+  const t = clock.getElapsedTime();
 
-  breathT+=dt; swayT+=dt;
-
-  // ── Pet logic ──────────────────────────────────────────────────────
-  tickPet(dt);
-  const walk = petEstado==='walking' && estadoRemoto!=='talking' && estadoRemoto!=='thinking';
-
-  // Orientar personaje hacia dirección de marcha
-  const tgtY = walk ? (charDir>0?Math.PI*0.55:Math.PI*1.45) : Math.PI;
-  vrm.scene.rotation.y = lerp(vrm.scene.rotation.y, tgtY, dt*4);
-
-  // ── Respiración ───────────────────────────────────────────────────
-  const breath = Math.sin(breathT*1.05)*0.013;
-  const spineB = getB('spine'), chestB = getB('upperChest')??getB('chest');
-  if (chestB) chestB.rotation.x = breath*0.6;
-
-  // ── Balanceo idle ─────────────────────────────────────────────────
-  ;[S.bZ,S.bvZ] = spStep(S.bZ, S.bvZ, walk?0:Math.sin(swayT*0.6)*0.025, 16,5,dt);
-  if (spineB) { spineB.rotation.z=S.bZ; spineB.rotation.x=breath; }
-
-  // ── Animación caminata ────────────────────────────────────────────
-  const wspd  = walk ? 2.2 : 0;
-  walkPhase   = (walkPhase + dt*wspd) % 1;
-  const wt    = walkPhase * Math.PI * 2;
-  const legA  = walk ? 0.42 : 0;
-  const kneeA = walk ? 0.55 : 0;
-  const armA  = walk ? 0.30 : 0;
-  const hipA  = walk ? 0.06 : 0;
-  const hipB_ = walk ? 0.022: 0;
-  const K=10, D=4;
-
-  ;[S.lulX,S.lulV]=spStep(S.lulX,S.lulV, Math.sin(wt)*legA,K,D,dt);
-  ;[S.rulX,S.rulV]=spStep(S.rulX,S.rulV,-Math.sin(wt)*legA,K,D,dt);
-  ;[S.lllX,S.lllV]=spStep(S.lllX,S.lllV,Math.max(0,-Math.sin(wt))*kneeA,K,D,dt);
-  ;[S.rllX,S.rllV]=spStep(S.rllX,S.rllV,Math.max(0, Math.sin(wt))*kneeA,K,D,dt);
-  ;[S.lftX,S.lftV]=spStep(S.lftX,S.lftV, Math.sin(wt)*0.18,K,D,dt);
-  ;[S.rftX,S.rftV]=spStep(S.rftX,S.rftV,-Math.sin(wt)*0.18,K,D,dt);
-  // Swing de brazos opuesto a piernas
-  ;[S.ruX,S.ruVX]=spStep(S.ruX,S.ruVX, Math.sin(wt)*armA,K,D,dt);
-  ;[S.luX,S.luVX]=spStep(S.luX,S.luVX,-Math.sin(wt)*armA,K,D,dt);
-
-  const lul=getB('leftUpperLeg');  if(lul){lul.rotation.x=S.lulX;}
-  const rul=getB('rightUpperLeg'); if(rul){rul.rotation.x=S.rulX;}
-  const lll=getB('leftLowerLeg');  if(lll){lll.rotation.x=S.lllX;}
-  const rll=getB('rightLowerLeg'); if(rll){rll.rotation.x=S.rllX;}
-  const lft=getB('leftFoot');      if(lft){lft.rotation.x=S.lftX;}
-  const rft=getB('rightFoot');     if(rft){rft.rotation.x=S.rftX;}
-
-  // Caderas — rock y bob
-  ;[S.hipZ,S.hipVZ]=spStep(S.hipZ,S.hipVZ,Math.sin(wt)*hipA,18,5,dt);
-  const hipB=getB('hips');
-  if(hipB){hipB.rotation.z=S.hipZ; hipB.position.y=Math.abs(Math.sin(wt*2))*(-hipB_);}
-
-  // ── Brazos ────────────────────────────────────────────────────────
-  ;[S.ruZ,S.ruVZ]=spStep(S.ruZ,S.ruVZ,-1.30,22,6,dt);
-  ;[S.luZ,S.luVZ]=spStep(S.luZ,S.luVZ, 1.30,22,6,dt);
-  const rua=getB('rightUpperArm'), lua=getB('leftUpperArm');
-  const rla=getB('rightLowerArm'), lla=getB('leftLowerArm');
-  if(rua){rua.rotation.z=S.ruZ; rua.rotation.x=S.ruX+0.05;}
-  if(lua){lua.rotation.z=S.luZ; lua.rotation.x=S.luX+0.05;}
-  if(rla){rla.rotation.x=-0.15; rla.rotation.z=-0.08;}
-  if(lla){lla.rotation.x=-0.15; lla.rotation.z= 0.08;}
-
-  // ── Mirada dinámica ───────────────────────────────────────────────
-  lookT-=dt;
-  if(lookT<=0){ lookTgt.x=(Math.random()-0.5)*0.28; lookTgt.y=(Math.random()-0.5)*0.14; lookT=2+Math.random()*4; }
-  lookCur.x=lerp(lookCur.x,lookTgt.x,dt*1.8);
-  lookCur.y=lerp(lookCur.y,lookTgt.y,dt*1.8);
-
-  // ── Cabeza con springs ────────────────────────────────────────────
-  let tHZ=lookCur.x*0.55, tHX=-lookCur.y*0.35, tHY=-lookCur.x*0.28;
-  if(estadoRemoto==='thinking'){tHZ=lerp(tHZ,-0.20,0.75);tHX=lerp(tHX,0.13,0.75);tHY=lerp(tHY,0.18,0.75);}
-  ;[S.hZ,S.hvZ]=spStep(S.hZ,S.hvZ,tHZ,20,6,dt);
-  ;[S.hX,S.hvX]=spStep(S.hX,S.hvX,tHX,20,6,dt);
-  ;[S.hY,S.hvY]=spStep(S.hY,S.hvY,tHY,20,6,dt);
-  const headB=getB('head'), neckB=getB('neck');
-  if(headB){headB.rotation.z=S.hZ;headB.rotation.x=S.hX;headB.rotation.y=S.hY;}
-  if(neckB){neckB.rotation.z=S.hZ*0.3;neckB.rotation.x=S.hX*0.4;}
-
-  // ── Parpadeo ──────────────────────────────────────────────────────
-  blinkT-=dt;
-  if(blinkT<=0){blinkClose=true;blinkT=3+Math.random()*3;}
-  blinkClose ? (blinkV+=dt*16, blinkV>=1&&(blinkV=1,blinkClose=false))
-             : (blinkV=Math.max(0,blinkV-dt*12));
-  setE('blink',blinkV);
-
-  // ── Boca ──────────────────────────────────────────────────────────
-  if(estadoRemoto==='talking'){
-    talkT+=dt;
-    const v=VOWELS[Math.floor(talkT*5)%VOWELS.length];
-    if(v!==lastVowel){if(lastVowel)setE(lastVowel,0);lastVowel=v;}
-    setE(v, Math.max(0.1, 0.45+Math.sin(talkT*9)*0.3));
-  } else {
-    if(lastVowel){setE(lastVowel,0);lastVowel='';}
-    talkT=0;
+  // Detectar cambio de estado
+  if (estado !== prevEstado) {
+    if (estado === 'surprised') surprisedSnap = 1.0;
+    applySpringConfig();
+    prevEstado = estado;
   }
-  setE('thinking', estadoRemoto==='thinking'?0.55:0);
 
-  renderer.render(scene,camera);
+  // Decaer snap de sorpresa
+  if (surprisedSnap > 0) surprisedSnap = Math.max(0, surprisedSnap - dt * 1.8);
+
+  // ── Sistemas de expresión / boca / parpadeo / mirada ──
+  updateExpressions(dt);
+  updateBlink(dt);
+  updateMouth(dt, t);
+  updateLook(dt, t);
+
+  // ── Pose procedural del estado actual ──
+  const pose = getStatePose(t);
+
+  // Cabeza: pose base + mirada + spring
+  const tHX = pose.hX - lookCur.y * 0.32;
+  const tHY = pose.hY - lookCur.x * 0.26;
+  const tHZ = pose.hZ + lookCur.x * 0.48;
+
+  const headB = getB('head'), neckB = getB('neck');
+  if (headB) {
+    headB.rotation.x = spr.hX.step(tHX, dt);
+    headB.rotation.y = spr.hY.step(tHY, dt);
+    headB.rotation.z = spr.hZ.step(tHZ, dt);
+  }
+  if (neckB) {
+    neckB.rotation.x = spr.hX.v * 0.38;
+    neckB.rotation.y = spr.hY.v * 0.30;
+    neckB.rotation.z = spr.hZ.v * 0.28;
+  }
+
+  // Cuerpo
+  const spineB = getB('spine'), chestB = getB('upperChest') ?? getB('chest');
+  const bZ = spr.bZ.step(pose.bZ, dt);
+  const bX = spr.bX.step(pose.bX, dt);
+  if (spineB) { spineB.rotation.z = bZ; spineB.rotation.x = bX; }
+  if (chestB) { chestB.rotation.x = Math.sin(t * 0.8) * 0.018; } // respiración visible en pecho
+
+  // Brazos — pose natural + variaciones emocionales
+  const rua = getB('rightUpperArm'), lua = getB('leftUpperArm');
+  const rla = getB('rightLowerArm'), lla = getB('leftLowerArm');
+  if (rua) { rua.rotation.z = spr.ruZ.step(pose.ruZ, dt); rua.rotation.x = spr.ruX.step(pose.ruX, dt); }
+  if (lua) { lua.rotation.z = spr.luZ.step(pose.luZ, dt); lua.rotation.x = spr.luX.step(pose.luX, dt); }
+  if (rla) { rla.rotation.x = -0.15; rla.rotation.z = -0.08; }
+  if (lla) { lla.rotation.x = -0.15; lla.rotation.z =  0.08; }
+
+  renderer.render(scene, camera);
 }
 animate();
 
-// ── Resize ────────────────────────────────────────────────────────────
-window.addEventListener('resize', ()=>{
-  camera.aspect=window.innerWidth/window.innerHeight;
+// ═══════════════════════════════════════════════════
+// RESIZE
+// ═══════════════════════════════════════════════════
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth,window.innerHeight);
+  renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// ── WebSocket ─────────────────────────────────────────────────────────
-(function conectar(){
-  const ws=new WebSocket('ws://localhost:18766');
-  ws.onmessage=e=>{try{const d=JSON.parse(e.data);if(d.estado)estadoRemoto=d.estado;}catch(_){}};
-  ws.onclose=()=>setTimeout(conectar,1500);
+// ═══════════════════════════════════════════════════
+// WEBSOCKET
+// ═══════════════════════════════════════════════════
+(function conectar() {
+  const ws = new WebSocket('ws://localhost:18766');
+  ws.onopen    = () => console.log('[WS] conectado');
+  ws.onmessage = e => { try { const d = JSON.parse(e.data); if (d.estado) estado = d.estado; } catch(_) {} };
+  ws.onclose   = () => setTimeout(conectar, 1500);
+  ws.onerror   = () => {};
 })();
 
-window.setEstado=s=>{estadoRemoto=s;};
+window.setEstado = s => { estado = s; };
 </script>
 </body>
 </html>

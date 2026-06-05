@@ -541,6 +541,33 @@ def set_rem_estado(estado):
         try: _avatar_enviar_estado(estado)
         except Exception: pass
 
+# ── DETECCIÓN DE SENTIMIENTO (keywords simples) ──────────────────────
+_HAPPY_WORDS    = ['jaja','hehe','jeje','feliz','alegr','encanta','genial',
+                   'fantástic','maravill','divertid','me gusta','claro que sí',
+                   '😊','😄','🥰','💕','~','encantada']
+_SURPRISED_WORDS= ['¡qué','wow','increíble','sorprend','no lo puedo creer',
+                   'de verdad','impresionante','asombros','¡vaya','¡oh']
+_SAD_WORDS      = ['triste','lament','lo siento mucho','qué pena','condolencia',
+                   'dolor','😢','😭','lo lamento']
+_ANGRY_WORDS    = ['enoj','molest','irrit','rabia','disgustad','no me gusta']
+
+def _detectar_emocion(texto: str):
+    """Retorna (emocion, duracion_seg) o None si no hay emoción clara."""
+    t = texto.lower()
+    if any(w in t for w in _HAPPY_WORDS):     return ('happy',    3.5)
+    if any(w in t for w in _SURPRISED_WORDS): return ('surprised', 2.0)
+    if any(w in t for w in _SAD_WORDS):       return ('sad',       5.0)
+    if any(w in t for w in _ANGRY_WORDS):     return ('angry',     3.0)
+    return None
+
+def _enviar_emocion_temporal(emocion: str, duracion: float):
+    """Envía una emoción y restaura idle después de `duracion` segundos."""
+    set_rem_estado(emocion)
+    def _restaurar():
+        if _rem_estado == emocion:  # solo si no cambió
+            set_rem_estado('idle')
+    threading.Timer(duracion, _restaurar).start()
+
 
 # ── COLA DE AUDIO — reproduce oraciones en orden, nunca descarta ───────
 import queue as _queue
@@ -1327,6 +1354,12 @@ def responder(texto_usuario):
         raw = preguntar_groq(texto_usuario)
         resultado, _ = procesar_respuesta(raw)
         agregar_mensaje("Rem", resultado)
+        # Detectar emoción y enviarla antes de hablar
+        emoc = _detectar_emocion(resultado)
+        if emoc:
+            threading.Thread(
+                target=_enviar_emocion_temporal, args=emoc, daemon=True
+            ).start()
         threading.Thread(target=hablar, args=(resultado,), daemon=True).start()
     except Exception as e:
         agregar_mensaje("Rem", f"Algo salió mal: {e}")

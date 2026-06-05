@@ -37,6 +37,15 @@ def enviar_estado(estado: str):
     asyncio.run_coroutine_threadsafe(_broadcast(), _ws_loop)
 
 
+# Estados válidos para el avatar
+ESTADOS_VALIDOS = {'idle', 'talking', 'thinking', 'happy', 'sad', 'angry', 'surprised'}
+
+def enviar_estado_emocional(emocion: str):
+    """Envía un estado emocional al avatar. Válidos: happy, sad, angry, surprised."""
+    if emocion in ESTADOS_VALIDOS:
+        enviar_estado(emocion)
+
+
 # ── Servidor HTTP silencioso ──────────────────────────────────────────
 class _SilentHandler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
