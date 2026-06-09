@@ -1,0 +1,266 @@
+# Rem — Guía de instalación completa (Arch Linux)
+
+## Archivos grandes NO incluidos en el repo (descargar manualmente)
+
+| Archivo | Tamaño | Dónde conseguirlo |
+|---|---|---|
+| `rmvpe.pt` | 173 MB | [HuggingFace — lj1995/VoiceConversionWebUI](https://huggingface.co/lj1995/VoiceConversionWebUI/blob/main/rmvpe.pt) |
+| `hubert_base.pt` | 181 MB | [HuggingFace — lj1995/VoiceConversionWebUI](https://huggingface.co/lj1995/VoiceConversionWebUI/blob/main/hubert_base.pt) |
+
+Descarga ambos y colócalos en la **raíz** del proyecto (mismo nivel que `Rem.py`).
+
+---
+
+## 1. Dependencias del sistema (pacman)
+
+```bash
+sudo pacman -S --needed \
+    python python-gobject webkit2gtk-4.1 gtk3 \
+    ffmpeg portaudio \
+    base-devel git \
+    cuda cudnn \
+    nvidia nvidia-utils
+```
+
+> Si no tienes GPU NVIDIA, omite `cuda cudnn nvidia nvidia-utils`.  
+> El overlay GTK necesita **system Python** (3.12+) con `python-gobject` y `webkit2gtk-4.1`.
+
+---
+
+## 2. Python 3.10 para el venv
+
+Arch usa Python 3.12+. RVC e `infer_rvc_python` necesitan Python **3.10**.
+
+```bash
+# Instalar pyenv
+sudo pacman -S pyenv
+
+# En tu ~/.bashrc o ~/.zshrc añade:
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init -)"
+
+# Reinicia la terminal, luego:
+pyenv install 3.10.14
+```
+
+O desde AUR con `yay`:
+
+```bash
+yay -S python310
+```
+
+---
+
+## 3. Crear el entorno virtual
+
+```bash
+cd "/ruta/al/proyecto Rem"
+
+# Con pyenv:
+pyenv local 3.10.14
+python -m venv venv
+
+# O con python310 de AUR:
+python3.10 -m venv venv
+```
+
+---
+
+## 4. Instalar dependencias Python en el venv
+
+```bash
+source venv/bin/activate
+
+# PyTorch con CUDA 12.4 (ajusta cu124 a tu versión de CUDA)
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# RVC y conversión de voz
+pip install infer-rvc-python
+
+# Sin GPU — versión CPU:
+# pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# Resto de dependencias
+pip install \
+    edge-tts \
+    SpeechRecognition \
+    Pillow \
+    psutil \
+    pyautogui \
+    sounddevice \
+    soundfile \
+    requests \
+    groq \
+    opencv-python \
+    mss \
+    websockets \
+    librosa \
+    scipy \
+    numpy \
+    numba \
+    faiss-cpu \
+    praat-parselmouth \
+    pyworld \
+    torchcrepe \
+    transformers \
+    safetensors \
+    huggingface_hub \
+    ffmpeg-python \
+    pyxdg \
+    rich
+```
+
+---
+
+## 5. Instalar fairseq (shim parcheado para RVC)
+
+`infer_rvc_python` necesita fairseq pero la versión de PyPI falla con PyTorch moderno.
+Hay que instalar el shim incluido en el repo:
+
+```bash
+# Estando dentro del venv activado:
+pip install fairseq==0.12.2 --no-deps 2>/dev/null || true
+
+# Luego sobreescribir el __init__.py con el shim del repo:
+FAIRSEQ_DIR="venv/lib/python3.10/site-packages/fairseq"
+
+cp fairseq_shim/__init__.py         "$FAIRSEQ_DIR/__init__.py"
+cp fairseq_shim/checkpoint_utils.py "$FAIRSEQ_DIR/checkpoint_utils.py"
+```
+
+> **Nota:** Los archivos del shim están en la carpeta `fairseq_shim/` del repo.
+> Si fairseq no instala nada, clona el repo original y copia manualmente:
+> ```bash
+> git clone --depth 1 https://github.com/facebookresearch/fairseq /tmp/fairseq
+> cp -r /tmp/fairseq/fairseq/* "$FAIRSEQ_DIR/"
+> # Editar checkpoint_utils.py: cambiar torch.load(...) a torch.load(..., weights_only=False)
+> ```
+
+---
+
+## 6. Configurar el archivo `.env`
+
+Crea un archivo `.env` en la raíz del proyecto:
+
+```bash
+cat > .env << 'EOF'
+GROQ_API_KEY=tu_clave_aqui
+EOF
+```
+
+Obtén tu clave gratis en [console.groq.com](https://console.groq.com).
+
+---
+
+## 7. Colocar los modelos RVC
+
+La estructura debe ser:
+
+```
+Proyecto Rem/
+├── models/
+│   └── Rem_600e_6600s/
+│       ├── Rem_600e_6600s.pth   ← modelo de voz RVC
+│       └── Rem.index            ← índice FAISS
+├── rmvpe.pt                     ← descargar de HuggingFace
+├── hubert_base.pt               ← descargar de HuggingFace
+└── rem.vrm                      ← modelo 3D del avatar
+```
+
+---
+
+## 8. Imagen de fondo
+
+El archivo `wallhaven-j5zopp_1920x1080.png` debe estar en la raíz del proyecto.
+Está incluido en el repo. Si quieres usar otra imagen, cambia la variable en `Rem.py`:
+
+```python
+IMAGEN_FONDO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tu_imagen.png")
+```
+
+---
+
+## 9. Permisos de audio y micrófono
+
+En Arch con PipeWire (recomendado):
+
+```bash
+sudo pacman -S pipewire pipewire-pulse pipewire-alsa wireplumber
+systemctl --user enable --now pipewire pipewire-pulse wireplumber
+```
+
+Para que `sounddevice` funcione correctamente, el usuario debe estar en el grupo `audio`:
+
+```bash
+sudo usermod -aG audio $USER
+```
+
+---
+
+## 10. Ejecutar Rem
+
+```bash
+cd "/ruta/al/proyecto Rem"
+venv/bin/python Rem.py
+```
+
+O activando el venv primero:
+
+```bash
+source venv/bin/activate
+python Rem.py
+```
+
+---
+
+## Resumen de archivos que NO están en git
+
+| Archivo | Razón |
+|---|---|
+| `.env` | Contiene la API key — nunca subir |
+| `rmvpe.pt` | 173 MB — descargar de HuggingFace |
+| `hubert_base.pt` | 181 MB — descargar de HuggingFace |
+| `memoria_rem.json` | Memoria de conversaciones (datos personales) |
+| `memoria_larga.json` | Memoria de conversaciones (datos personales) |
+| `venv/` | Entorno virtual — recrear con esta guía |
+
+---
+
+## Arquitectura del sistema
+
+```
+Rem.py                  ← App principal (Tkinter UI, IA, voz, acciones)
+  ├── Groq API          ← llama-3.3-70b-versatile (lenguaje)
+  ├── EdgeTTS           ← síntesis de voz (es-MX-DaliaNeural)
+  ├── RVC               ← conversión de voz al timbre de Rem
+  ├── SpeechRecognition ← micrófono → texto
+  └── rem_avatar_server.py
+        ├── HTTP :18765 → sirve rem_avatar.html + rem.vrm
+        ├── WS   :18766 → envía estados (idle/talking/thinking/happy/sad...)
+        └── rem_overlay.py (system Python 3.12)
+              └── GTK3 + WebKit2 4.1 (overlay transparente fullscreen)
+                    └── Three.js + @pixiv/three-vrm (renderiza rem.vrm)
+```
+
+---
+
+## Solución de problemas frecuentes
+
+### El avatar 3D no aparece
+- Verifica que `webkit2gtk-4.1` esté instalado: `pacman -Qi webkit2gtk-4.1`
+- Lanza el overlay manualmente para ver errores: `/usr/bin/python3 rem_overlay.py`
+- El compositor (KWin/Mutter) debe soportar RGBA — en KDE activa "Efectos de escritorio"
+
+### Error de audio / PortAudio crash
+- Instala PipeWire (paso 9) en lugar de PulseAudio clásico
+- Verifica que `sounddevice` use el dispositivo correcto: `python -c "import sounddevice; print(sounddevice.query_devices())"`
+
+### fairseq ImportError
+- Verifica que el `__init__.py` del shim esté en `venv/lib/python3.10/site-packages/fairseq/`
+- Comprueba que `checkpoint_utils.py` tenga `weights_only=False` en el `torch.load()`
+
+### RVC no carga el modelo
+- Confirma que `models/Rem_600e_6600s/Rem_600e_6600s.pth` existe
+- Confirma que `rmvpe.pt` está en la raíz del proyecto
+- Si no hay GPU: el modelo carga en CPU (tarda ~30 segundos la primera vez)

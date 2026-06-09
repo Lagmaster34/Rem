@@ -10,26 +10,15 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Sprites (pueden ser pesados, súbelos aparte si quieres)
-sprites/
-
 # Archivos temporales
 *.mp3
 
-# Modelos RVC y ML (muy pesados)
-models/
-*.pth
-*.index
-*.pt
-
-# Modelo VRM (23MB)
-rem.vrm
+# Modelos ML muy grandes (>100MB, descargar de HuggingFace — ver INSTALL.md)
+rmvpe.pt
+hubert_base.pt
 
 # Entorno virtual
 venv/
-
-# Imagen de fondo
-*.png
 
 # Archivos de prueba/debug
 test_*.py
