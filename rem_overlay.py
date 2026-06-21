@@ -74,11 +74,25 @@ def main():
 
     win.add(webview)
 
-    # ── Cargar página ─────────────────────────────────────────────────
+    # ── Cargar página con retry en caso de fallo ──────────────────────
+    _intentos = [0]
+    MAX_INTENTOS = 10
+
     def _cargar(_=None):
+        _intentos[0] += 1
         webview.load_uri('http://localhost:18765/rem_avatar.html')
         return False
 
+    def _on_load_failed(wv, load_event, failing_uri, error, *args):
+        if _intentos[0] < MAX_INTENTOS:
+            espera = min(500 * (2 ** _intentos[0]), 5000)
+            print(f"[Overlay] Carga fallida (intento {_intentos[0]}), reintentando en {espera}ms...")
+            GLib.timeout_add(espera, _cargar)
+        else:
+            print(f"[Overlay] No se pudo cargar el avatar tras {MAX_INTENTOS} intentos")
+        return False
+
+    webview.connect('load-failed', _on_load_failed)
     GLib.timeout_add(1200, _cargar)
 
     # ── Re-raise periódico para mantenerse encima ─────────────────────
@@ -92,6 +106,19 @@ def main():
         return True
 
     GLib.timeout_add(3000, _reraise)
+
+    # ── Detección de proceso padre muerto ─────────────────────────────
+    _ppid = os.getppid()
+
+    def _check_parent(_=None):
+        try:
+            os.kill(_ppid, 0)   # signal 0: solo comprueba si el proceso existe
+        except (OSError, ProcessLookupError):
+            print("[Overlay] Proceso padre terminó, cerrando overlay.")
+            Gtk.main_quit()
+        return True             # continuar el timer
+
+    GLib.timeout_add(5000, _check_parent)
 
     win.connect('destroy', Gtk.main_quit)
     win.show_all()

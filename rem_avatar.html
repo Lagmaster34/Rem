@@ -15,6 +15,21 @@ import { GLTFLoader }    from 'https://esm.sh/three@0.169.0/examples/jsm/loaders
 import { VRMLoaderPlugin, VRMUtils } from 'https://esm.sh/@pixiv/three-vrm@2';
 
 // ═══════════════════════════════════════════════════
+// CONFIGURACIÓN CENTRALIZADA
+// ═══════════════════════════════════════════════════
+const CONFIG = {
+  camera:  { fov: 28, z: 1.6, posY: 1.05, targetY: 1.0 },
+  pet:     { borderLeft: 0.32, borderRight: 0.68, velocity: 0.18, baseY: -0.85 },
+  ws:      { port: 18766, retryDelay: 1500, maxRetries: 10 },
+  lighting: {
+    ambient: { color: 0xb0c0dd, intensity: 1.0 },
+    key:     { color: 0xfff8f0, intensity: 1.4, pos: [1.5, 3, 2] },
+    fill:    { color: 0x8899ff, intensity: 0.6, pos: [-2, 1, 0.5] },
+    rim:     { color: 0xffffff, intensity: 0.3, pos: [0, 2, -2] },
+  },
+};
+
+// ═══════════════════════════════════════════════════
 // RENDERER + ESCENA
 // ═══════════════════════════════════════════════════
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -27,15 +42,15 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 
 // Cámara tipo teleobjetivo — plano medio VTuber
-const camera = new THREE.PerspectiveCamera(28, window.innerWidth / window.innerHeight, 0.1, 20);
-camera.position.set(0, 1.05, 1.6);
-camera.lookAt(0, 1.0, 0);
+const camera = new THREE.PerspectiveCamera(CONFIG.camera.fov, window.innerWidth / window.innerHeight, 0.1, 20);
+camera.position.set(0, CONFIG.camera.posY, CONFIG.camera.z);
+camera.lookAt(0, CONFIG.camera.targetY, 0);
 
 // Iluminación tipo estudio de stream
-scene.add(new THREE.AmbientLight(0xb0c0dd, 1.0));
-const keyLight  = new THREE.DirectionalLight(0xfff8f0, 1.4); keyLight.position.set(1.5, 3, 2);   scene.add(keyLight);
-const fillLight = new THREE.DirectionalLight(0x8899ff, 0.6); fillLight.position.set(-2, 1, 0.5); scene.add(fillLight);
-const rimLight  = new THREE.DirectionalLight(0xffffff, 0.3); rimLight.position.set(0, 2, -2);    scene.add(rimLight);
+scene.add(new THREE.AmbientLight(CONFIG.lighting.ambient.color, CONFIG.lighting.ambient.intensity));
+const keyLight  = new THREE.DirectionalLight(CONFIG.lighting.key.color,  CONFIG.lighting.key.intensity);  keyLight.position.set(...CONFIG.lighting.key.pos);   scene.add(keyLight);
+const fillLight = new THREE.DirectionalLight(CONFIG.lighting.fill.color, CONFIG.lighting.fill.intensity); fillLight.position.set(...CONFIG.lighting.fill.pos); scene.add(fillLight);
+const rimLight  = new THREE.DirectionalLight(CONFIG.lighting.rim.color,  CONFIG.lighting.rim.intensity);  rimLight.position.set(...CONFIG.lighting.rim.pos);   scene.add(rimLight);
 
 // ═══════════════════════════════════════════════════
 // ESTADO GLOBAL
@@ -52,7 +67,7 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // FOV=28°, z=1.6, aspect=16/9 → ancho visible ≈ ±0.709 u
 // Píxeles 1400-1900 → world x ≈ 0.32-0.68
 // ═══════════════════════════════════════════════════
-const BORDE_IZQ = 0.32, BORDE_DER = 0.68, VEL = 0.18;
+const BORDE_IZQ = CONFIG.pet.borderLeft, BORDE_DER = CONFIG.pet.borderRight, VEL = CONFIG.pet.velocity;
 let charX = 0.50, charDir = -1;  // empieza en el centro-derecha
 let petEstado = 'idle_anim', petTimer = 2 + Math.random() * 3;
 let walkBlend = 0, walkPhase = 0;
@@ -538,14 +553,33 @@ window.addEventListener('resize', () => {
 });
 
 // ═══════════════════════════════════════════════════
-// WEBSOCKET
+// WEBSOCKET — con límite de reintentos
 // ═══════════════════════════════════════════════════
+let _wsRetries = 0;
+
 (function conectar() {
-  const ws = new WebSocket('ws://localhost:18766');
-  ws.onopen    = () => console.log('[WS] conectado');
-  ws.onmessage = e => { try { const d = JSON.parse(e.data); if (d.estado) estado = d.estado; } catch(_) {} };
-  ws.onclose   = () => setTimeout(conectar, 1500);
-  ws.onerror   = () => {};
+  if (_wsRetries >= CONFIG.ws.maxRetries) {
+    console.warn('[WS] Máximo de reintentos alcanzado, deteniendo reconexión');
+    return;
+  }
+  const ws = new WebSocket(`ws://localhost:${CONFIG.ws.port}`);
+  ws.onopen = () => {
+    console.log('[WS] conectado');
+    _wsRetries = 0;
+  };
+  ws.onmessage = e => {
+    try {
+      const d = JSON.parse(e.data);
+      if (d.estado) estado = d.estado;
+    } catch (err) {
+      console.warn('[WS] JSON inválido:', err);
+    }
+  };
+  ws.onclose = () => {
+    _wsRetries++;
+    setTimeout(conectar, CONFIG.ws.retryDelay);
+  };
+  ws.onerror = e => console.warn('[WS] Error de conexión:', e.type);
 })();
 
 window.setEstado = s => { estado = s; };
