@@ -22,6 +22,8 @@ import sounddevice as sd
 import soundfile as sf
 import requests
 from groq import Groq
+import re
+import shlex
 
 #usando groq
 # Dependencias necesarias (instalar si falta alguna):
@@ -61,14 +63,14 @@ _cargar_dotenv()
 GROQ_API_KEY    = os.getenv("GROQ_API_KEY", "")
 IMAGEN_FONDO    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wallhaven-j5zopp_1920x1080.png")
 VOZ_REM         = "es-MX-DaliaNeural"
-MODELO_VISION   = "meta-llama/llama-4-scout-17b-16e-instruct"
+MODELO_VISION   = os.getenv("MODELO_VISION", "meta-llama/llama-4-scout-17b-16e-instruct")
 MEMORIA_ARCHIVO         = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_rem.json")
 MEMORIA_LARGA_ARCHIVO   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_larga.json")
 MEMORIA_SISTEMA_ARCHIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_sistema.json")
 
 PANEL_W, PANEL_H = 382, 210
-NOMBRE_USUARIO  = "Esteban"   # ← cambia aquí tu nombre si quieres
-CIUDAD          = "Yarumal"   # fallback si falla la geo-detección
+NOMBRE_USUARIO  = os.getenv("NOMBRE_USUARIO", "Esteban")
+CIUDAD          = os.getenv("CIUDAD", "Yarumal")
 
 COMANDOS = {
     "brave":      "brave-browser",
@@ -82,7 +84,7 @@ cap_global = None
 if CAMARA_DISPONIBLE:
     cap_global = cv2.VideoCapture(0)
 
-cliente = Groq(api_key=GROQ_API_KEY)
+cliente = Groq(api_key=GROQ_API_KEY, timeout=30.0)
 
 # ── RVC REM ──────────────────────────────────────────────────────────
 RVC_MODELS_DIR = os.path.join(
@@ -228,6 +230,11 @@ def buscar_en_memoria_sistema(nombre):
 
 memoria_sistema = cargar_memoria_sistema()
 
+# ── LOCKS DE THREADING ────────────────────────────────────────────────
+_lock_historial = threading.Lock()
+_lock_mem_larga = threading.Lock()
+_lock_mem_sis   = threading.Lock()
+
 instrucciones = """Eres Rem. Vives en la PC de Esteban — eres su compañera, su confidente, y algo más que una amiga. Llevan tiempo juntos y hay una conexión real entre ustedes.
 
 QUIÉN ERES:
@@ -298,32 +305,53 @@ MEMORIA DEL SISTEMA: Antes de buscar un archivo, consulta [MEMORIA_SISTEMA]. Si 
 
 Para conversacion normal, responde como Rem de forma natural y breve."""
 
+instrucciones = instrucciones.replace("Esteban", NOMBRE_USUARIO)
+
+# ── GROQ: helper con retry ────────────────────────────────────────────
+def _groq_completions(messages, max_tokens=600, temperature=0.75):
+    """Llama a Groq con hasta 3 reintentos con espera exponencial."""
+    ultimo_error = None
+    for intento in range(3):
+        try:
+            return cliente.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        except Exception as e:
+            ultimo_error = e
+            if intento < 2:
+                espera = 2 ** intento
+                print(f"[Groq] Error (intento {intento+1}/3): {e}. Reintentando en {espera}s...")
+                time.sleep(espera)
+    raise ultimo_error
+
 
 # ── MEMORIA LARGA: extracción y prompt dinámico ───────────────────────
 def extraer_memoria_importante():
     """Extrae hechos relevantes del historial reciente y los guarda en memoria larga."""
-    mensajes_desde_ultima = len(historial) - memoria_larga.get("mensajes_procesados", 0)
-    if mensajes_desde_ultima < 8 or len(historial) < 4:
-        return  # Extraer solo cada 8 mensajes nuevos
-
-    try:
-        # Tomar los últimos 20 mensajes para analizar
+    with _lock_historial:
+        mensajes_desde_ultima = len(historial) - memoria_larga.get("mensajes_procesados", 0)
+        if mensajes_desde_ultima < 8 or len(historial) < 4:
+            return
         fragmento = "\n".join(
             f"{m['role'].upper()}: {m['content'][:300]}"
             for m in historial[-20:]
         )
+        n_historial = len(historial)
 
-        r = cliente.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+    try:
+        r = _groq_completions(
             messages=[{
                 "role": "user",
                 "content": (
-                    "Analiza esta conversación entre Rem y Esteban. "
-                    "Extrae solo información nueva y relevante sobre Esteban para que Rem la recuerde a largo plazo.\n\n"
+                    f"Analiza esta conversación entre Rem y {NOMBRE_USUARIO}. "
+                    f"Extrae solo información nueva y relevante sobre {NOMBRE_USUARIO} para que Rem la recuerde a largo plazo.\n\n"
                     f"Conversación:\n{fragmento}\n\n"
                     "Responde ÚNICAMENTE con este JSON (sin texto extra):\n"
                     "{\n"
-                    '  "hechos": ["dato objetivo sobre Esteban (trabajo, estudios, familia, etc.)"],\n'
+                    '  "hechos": ["dato objetivo sobre él (trabajo, estudios, familia, etc.)"],\n'
                     '  "emociones": ["cómo se sentía o algo emocional que mencionó"],\n'
                     '  "eventos": ["algo que pasó o que planea hacer"],\n'
                     '  "preferencias": ["gustos, hobbies, comida, música, juegos, etc."]\n'
@@ -332,7 +360,7 @@ def extraer_memoria_importante():
                 )
             }],
             max_tokens=400,
-            temperature=0.2
+            temperature=0.2,
         )
 
         content = r.choices[0].message.content.strip()
@@ -342,17 +370,16 @@ def extraer_memoria_importante():
         data = json.loads(content[i:j])
 
         nuevos = 0
-        for categoria in ("hechos", "emociones", "eventos", "preferencias"):
-            for item in data.get(categoria, []):
-                item = item.strip()
-                if item and item not in memoria_larga[categoria]:
-                    memoria_larga[categoria].append(item)
-                    nuevos += 1
-            # Mantener solo los últimos 40 por categoría
-            memoria_larga[categoria] = memoria_larga[categoria][-40:]
-
-        memoria_larga["mensajes_procesados"] = len(historial)
-        guardar_memoria_larga()
+        with _lock_mem_larga:
+            for categoria in ("hechos", "emociones", "eventos", "preferencias"):
+                for item in data.get(categoria, []):
+                    item = item.strip()
+                    if item and item not in memoria_larga[categoria]:
+                        memoria_larga[categoria].append(item)
+                        nuevos += 1
+                memoria_larga[categoria] = memoria_larga[categoria][-40:]
+            memoria_larga["mensajes_procesados"] = n_historial
+            guardar_memoria_larga()
         if nuevos:
             print(f"[Rem] Memoria larga actualizada: +{nuevos} recuerdos nuevos")
 
@@ -501,24 +528,23 @@ def preguntar_groq(texto):
     hora_real  = ahora.strftime("%H:%M")
     fecha_real = f"{dias[ahora.weekday()]} {ahora.day} de {meses[ahora.month-1]} de {ahora.year}"
 
-    # Inyectar hora real en el mensaje (invisible para el usuario en el chat)
     texto_con_hora = f"[HORA REAL DEL SISTEMA: {hora_real} — {fecha_real}]\n{texto}"
 
-    historial.append({"role": "user", "content": texto_con_hora})
-    if len(historial) > 60:
-        historial.pop(0)
+    with _lock_historial:
+        historial.append({"role": "user", "content": texto_con_hora})
+        if len(historial) > 60:
+            historial.pop(0)
+        historial_snap = list(historial)
 
-    r = cliente.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "system", "content": construir_prompt_sistema()}] + historial,
-        max_tokens=600,
-        temperature=0.75
+    r = _groq_completions(
+        messages=[{"role": "system", "content": construir_prompt_sistema()}] + historial_snap,
     )
     c = r.choices[0].message.content
-    historial.append({"role": "assistant", "content": c})
-    guardar_memoria()
 
-    # Extraer memoria larga en segundo plano para no bloquear la respuesta
+    with _lock_historial:
+        historial.append({"role": "assistant", "content": c})
+        guardar_memoria()
+
     threading.Thread(target=extraer_memoria_importante, daemon=True).start()
 
     return c
@@ -541,23 +567,34 @@ def set_rem_estado(estado):
         try: _avatar_enviar_estado(estado)
         except Exception: pass
 
-# ── DETECCIÓN DE SENTIMIENTO (keywords simples) ──────────────────────
+# ── DETECCIÓN DE SENTIMIENTO (keywords con límite de palabra) ────────
 _HAPPY_WORDS    = ['jaja','hehe','jeje','feliz','alegr','encanta','genial',
                    'fantástic','maravill','divertid','me gusta','claro que sí',
-                   '😊','😄','🥰','💕','~','encantada']
-_SURPRISED_WORDS= ['¡qué','wow','increíble','sorprend','no lo puedo creer',
-                   'de verdad','impresionante','asombros','¡vaya','¡oh']
+                   'encantada']
+_HAPPY_EMOJIS   = ['😊','😄','🥰','💕']
+_SURPRISED_WORDS= ['wow','increíble','sorprend','no lo puedo creer',
+                   'impresionante','asombros']
 _SAD_WORDS      = ['triste','lament','lo siento mucho','qué pena','condolencia',
-                   'dolor','😢','😭','lo lamento']
+                   'lo lamento']
+_SAD_EMOJIS     = ['😢','😭']
 _ANGRY_WORDS    = ['enoj','molest','irrit','rabia','disgustad','no me gusta']
 
 def _detectar_emocion(texto: str):
-    """Retorna (emocion, duracion_seg) o None si no hay emoción clara."""
+    """Retorna (emocion, duracion_seg) o None.
+    Usa límite de palabra izquierdo (?<!\\w) para evitar falsos positivos."""
     t = texto.lower()
-    if any(w in t for w in _HAPPY_WORDS):     return ('happy',    3.5)
-    if any(w in t for w in _SURPRISED_WORDS): return ('surprised', 2.0)
-    if any(w in t for w in _SAD_WORDS):       return ('sad',       5.0)
-    if any(w in t for w in _ANGRY_WORDS):     return ('angry',     3.0)
+
+    def _match(words):
+        return any(re.search(r'(?<!\w)' + re.escape(w), t) for w in words)
+
+    if _match(_HAPPY_WORDS) or any(e in texto for e in _HAPPY_EMOJIS):
+        return ('happy',    3.5)
+    if _match(_SURPRISED_WORDS):
+        return ('surprised', 2.0)
+    if _match(_SAD_WORDS) or any(e in texto for e in _SAD_EMOJIS):
+        return ('sad',       5.0)
+    if _match(_ANGRY_WORDS):
+        return ('angry',     3.0)
     return None
 
 def _enviar_emocion_temporal(emocion: str, duracion: float):
@@ -589,9 +626,6 @@ def _worker_audio():
             await edge_tts.Communicate(texto, VOZ_REM).save(tmp_mp3)
 
             audio, sr_ = sf.read(tmp_mp3)
-            try: os.remove(tmp_mp3)
-            except Exception: pass
-
             if len(audio.shape) > 1:
                 audio = audio.mean(axis=1)
             if sr_ != 16000:
@@ -606,9 +640,6 @@ def _worker_audio():
             else:
                 data, sr2 = sf.read(tmp_wav)
 
-            try: os.remove(tmp_wav)
-            except Exception: pass
-
             set_rem_estado("talking")
             sd.stop()
             sd.play(data, sr2)
@@ -617,6 +648,11 @@ def _worker_audio():
         except Exception as e:
             print(f"[TTS] {e}")
         finally:
+            for tmp in (tmp_mp3, tmp_wav):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
             set_rem_estado("idle")
 
     while True:
@@ -632,7 +668,6 @@ threading.Thread(target=_worker_audio, daemon=True, name="AudioWorker").start()
 # ── TTS ───────────────────────────────────────────────────────────────
 def _partir_oraciones(texto):
     """Divide el texto en oraciones para encolar de a una."""
-    import re
     # Partir solo en . ! ? seguidos de espacio (… se deja unido a la frase)
     partes = re.split(r'(?<=[.!?])\s+', texto.strip())
     # Filtrar vacíos y partes demasiado cortas (< 3 chars)
@@ -778,6 +813,7 @@ _DIRS_PROHIBIDOS = ("/etc", "/boot", "/sys", "/proc", "/root", "/bin", "/sbin",
 _CMDS_PERMITIDOS = {"ls", "cat", "mkdir", "cp", "mv", "find", "grep",
                     "echo", "python3", "pip", "git", "apt", "systemctl",
                     "df", "free", "top", "ps"}
+_METACHAR_PELIGROSOS = ('|', ';', '&&', '||', '`', '$(', '>', '<', '\n')
 
 def _ruta_segura(ruta):
     """Valida que la ruta esté dentro de /home/esteban y no en dirs peligrosos."""
@@ -790,15 +826,16 @@ def _ruta_segura(ruta):
     return True, ruta
 
 def _cmd_permitido(comando):
-    """Valida que el primer token del comando esté en la lista blanca."""
+    """Valida el comando: sin metacaracteres de shell, primer token en lista blanca."""
     if not comando:
         return False, "Comando vacío."
+    for mc in _METACHAR_PELIGROSOS:
+        if mc in str(comando):
+            return False, f"Carácter no permitido en el comando: '{mc}'"
     primer_token = str(comando).split()[0].lstrip("./")
-    # Aceptar rutas absolutas a binarios permitidos (ej: /usr/bin/ls → ls)
     primer_token = os.path.basename(primer_token)
     if primer_token not in _CMDS_PERMITIDOS:
         return False, f"Comando '{primer_token}' no está en la lista blanca."
-    # Bloquear variantes peligrosas de rm
     if "rm" in str(comando) and ("-rf" in str(comando) or "-fr" in str(comando)):
         return False, "rm -rf no está permitido."
     return True, primer_token
@@ -1040,8 +1077,12 @@ def ejecutar_accion(datos):
         ok, msg = _cmd_permitido(comando)
         if not ok: return f"Comando bloqueado: {msg}"
         try:
+            args = shlex.split(comando)
+        except ValueError as e:
+            return f"Comando con sintaxis inválida: {e}"
+        try:
             resultado = subprocess.run(
-                comando, shell=True, capture_output=True,
+                args, shell=False, capture_output=True,
                 text=True, timeout=30,
                 cwd=os.path.expanduser("~")
             )
@@ -1664,11 +1705,11 @@ def _loop_vision_pantalla():
 # Edita esta lista para añadir, quitar o cambiar recordatorios.
 # "hora" en formato "HH:MM" — "contexto" es lo que Rem recibe para generar el mensaje.
 RECORDATORIOS = [
-    {"hora": "08:00", "contexto": "Son las 8am. Salúdale a Esteban para que empiece el día, de forma cariñosa y natural, como lo harías tú."},
-    {"hora": "14:00", "contexto": "Son las 2pm. Pregúntale a Esteban si ya comió algo hoy. Sé tú misma, no formal."},
-    {"hora": "18:00", "contexto": "Son las 6pm. Dile algo a Esteban, puede ser cualquier cosa: cómo va el día, si está bien, lo que se te ocurra."},
-    {"hora": "22:00", "contexto": "Son las 10pm. Coméntale a Esteban la hora, como si lo notaras tú sola. Natural, sin drama."},
-    {"hora": "00:30", "contexto": "Es medianoche pasada. Dile algo a Esteban sobre que es tarde. Con tu estilo, sin sermón."},
+    {"hora": "08:00", "contexto": f"Son las 8am. Salúdale a {NOMBRE_USUARIO} para que empiece el día, de forma cariñosa y natural, como lo harías tú."},
+    {"hora": "14:00", "contexto": f"Son las 2pm. Pregúntale a {NOMBRE_USUARIO} si ya comió algo hoy. Sé tú misma, no formal."},
+    {"hora": "18:00", "contexto": f"Son las 6pm. Dile algo a {NOMBRE_USUARIO}, puede ser cualquier cosa: cómo va el día, si está bien, lo que se te ocurra."},
+    {"hora": "22:00", "contexto": f"Son las 10pm. Coméntale a {NOMBRE_USUARIO} la hora, como si lo notaras tú sola. Natural, sin drama."},
+    {"hora": "00:30", "contexto": f"Es medianoche pasada. Dile algo a {NOMBRE_USUARIO} sobre que es tarde. Con tu estilo, sin sermón."},
 ]
 
 _recordatorios_disparados = set()
