@@ -99,15 +99,25 @@ def _thread_ws():
 
 # ── Lanzar overlay GTK transparente ──────────────────────────────────
 _overlay_proc = None
+_overlay_log  = None   # handle del archivo de log — mantenerlo vivo
 
-def _lanzar_overlay():
+LOG_OVERLAY = os.path.join(BASE_DIR, "rem_overlay.log")
+
+def _lanzar_overlay(layer: str = 'top'):
+    global _overlay_log
     overlay_script = os.path.join(BASE_DIR, "rem_overlay.py")
     try:
+        # line-buffered (buffering=1) para que los prints lleguen inmediatamente al log
+        _overlay_log = open(LOG_OVERLAY, 'w', buffering=1, encoding='utf-8')
+        env = os.environ.copy()
+        env['GDK_BACKEND'] = 'wayland'   # belt-and-suspenders junto al setenv interno
         proc = subprocess.Popen(
-            ["/usr/bin/python3", overlay_script],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            ["/usr/bin/python3", overlay_script, "--layer", layer],
+            stdout=_overlay_log,
+            stderr=_overlay_log,
+            env=env,
         )
+        print(f"[Avatar] Overlay log: {LOG_OVERLAY}  (tail -f para seguirlo)")
         return proc
     except Exception as e:
         print(f"[Avatar] No se pudo lanzar overlay: {e}")
@@ -119,6 +129,11 @@ def iniciar_avatar(screen_w=1920, screen_h=1080):
     """Llamar una vez al arrancar Rem."""
     global _overlay_proc
 
+    # Capa configurable via REM_LAYER=top|overlay en el .env del proyecto
+    layer = os.environ.get('REM_LAYER', 'top').lower()
+    if layer not in ('top', 'overlay'):
+        layer = 'top'
+
     th_http = threading.Thread(target=_iniciar_http, daemon=True, name="AvatarHTTP")
     th_http.start()
 
@@ -128,16 +143,16 @@ def iniciar_avatar(screen_w=1920, screen_h=1080):
     # Esperar a que el WS esté listo (máx 5s) antes de lanzar el overlay
     _ws_ready.wait(timeout=5.0)
 
-    _overlay_proc = _lanzar_overlay()
+    _overlay_proc = _lanzar_overlay(layer=layer)
     if _overlay_proc:
-        print(f"[Avatar] Overlay GTK lanzado (PID {_overlay_proc.pid})")
+        print(f"[Avatar] Overlay GTK lanzado (PID {_overlay_proc.pid}) — capa: {layer.upper()}")
     else:
         print("[Avatar] No se pudo lanzar el overlay")
 
 
 def cerrar_avatar():
     """Llamar al cerrar Rem."""
-    global _overlay_proc
+    global _overlay_proc, _overlay_log
     if _overlay_proc:
         try:
             _overlay_proc.terminate()
@@ -145,3 +160,9 @@ def cerrar_avatar():
         except Exception:
             pass
         _overlay_proc = None
+    if _overlay_log:
+        try:
+            _overlay_log.close()
+        except Exception:
+            pass
+        _overlay_log = None
