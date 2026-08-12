@@ -107,6 +107,7 @@ loader.load('/rem.vrm',
     const names = vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? [];
     console.log('[VRM] OK | expressions:', names.join(', '));
     console.log('[VRM] springBones:', vrm.springBoneManager ? 'sí' : 'no');
+    _exprMap = buildExprMap(names);
   },
   xhr => console.log('[VRM] cargando', Math.round(xhr.loaded / xhr.total * 100) + '%'),
   err => console.error('[VRM] error:', err)
@@ -117,30 +118,35 @@ loader.load('/rem.vrm',
 // ═══════════════════════════════════════════════════
 const getB = n => vrm?.humanoid?.getNormalizedBoneNode(n) ?? null;
 
-// Cache de nombres de expresión que funcionan en este modelo
-const _exprCache = {};
-const _exprVariants = {
-  happy:     ['happy', 'joy',  'Joy',  'blendShape.Joy',       'preset.happy'],
-  sad:       ['sad',   'sorrow','Sorrow','blendShape.Sorrow',   'preset.sad'],
-  angry:     ['angry', 'Angry','blendShape.Angry',              'preset.angry'],
-  surprised: ['surprised','Surprised','blendShape.Surprised',   'preset.surprised'],
-  neutral:   ['neutral','Neutral'],
-  blink:     ['blink', 'Blink','blendShape.Blink','blinkLeft','BlinkL'],
-  aa:        ['aa', 'A', 'blendShape.A'],
-  oh:        ['oh', 'O', 'blendShape.O'],
-  ih:        ['ih', 'I', 'blendShape.I'],
+// Candidatos de nombre por clave lógica — se resuelven contra los nombres reales del VRM al cargar
+const _exprCandidates = {
+  happy:     ['happy', 'joy', 'blendshape.joy', 'preset.happy'],
+  sad:       ['sad', 'sorrow', 'blendshape.sorrow', 'preset.sad'],
+  angry:     ['angry', 'blendshape.angry', 'preset.angry'],
+  surprised: ['surprised', 'blendshape.surprised', 'preset.surprised'],
+  blink:     ['blink', 'blendshape.blink', 'blinkleft', 'blinkl'],
+  aa:        ['aa', 'a', 'blendshape.a'],
+  oh:        ['oh', 'o', 'blendshape.o'],
+  ih:        ['ih', 'i', 'blendshape.i'],
 };
 
+// Mapa clave lógica → nombre real de expresión en este VRM (null si no hay equivalente)
+let _exprMap = {};
+
+function buildExprMap(names) {
+  const map = {};
+  for (const [key, candidates] of Object.entries(_exprCandidates)) {
+    const found = names.find(n => candidates.includes(n.toLowerCase()));
+    map[key] = found ?? null;
+  }
+  console.log('[VRM] mapa de expresiones resuelto:', map);
+  return map;
+}
+
 function trySetExpr(key, value) {
-  if (!vrm?.expressionManager) return;
-  value = clamp(value, 0, 1);
-  if (_exprCache[key]) {
-    try { vrm.expressionManager.setValue(_exprCache[key], value); return; } catch(_) {}
-  }
-  const tries = _exprVariants[key] ?? [key];
-  for (const name of tries) {
-    try { vrm.expressionManager.setValue(name, value); _exprCache[key] = name; return; } catch(_) {}
-  }
+  const name = _exprMap[key];
+  if (!vrm?.expressionManager || !name) return;
+  vrm.expressionManager.setValue(name, clamp(value, 0, 1));
 }
 
 // ═══════════════════════════════════════════════════
@@ -481,7 +487,6 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
   if (!vrm) { renderer.render(scene, camera); return; }
 
-  vrm.update(dt); // spring bones + morphs internos del VRM
   const t = clock.getElapsedTime();
 
   // Detectar cambio de estado
@@ -538,6 +543,8 @@ function animate() {
 
   // Caminata: se añade SOBRE los valores ya aplicados (+=)
   updateWalking(dt);
+
+  vrm.update(dt); // spring bones + morphs internos del VRM — después de posar los huesos
 
   renderer.render(scene, camera);
 }

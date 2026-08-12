@@ -116,25 +116,28 @@ pip install \
 ## 5. Instalar fairseq (shim parcheado para RVC)
 
 `infer_rvc_python` necesita fairseq pero la versión de PyPI falla con PyTorch moderno.
-Hay que instalar el shim incluido en el repo:
+Hay que instalar fairseq y luego aplicar el shim incluido en el repo:
 
 ```bash
 # Estando dentro del venv activado:
-pip install fairseq==0.12.2 --no-deps 2>/dev/null || true
+pip install fairseq==0.12.2
 
-# Luego sobreescribir el __init__.py con el shim del repo:
-FAIRSEQ_DIR="venv/lib/python3.10/site-packages/fairseq"
-
-cp fairseq_shim/__init__.py         "$FAIRSEQ_DIR/__init__.py"
-cp fairseq_shim/checkpoint_utils.py "$FAIRSEQ_DIR/checkpoint_utils.py"
+# Aplicar el shim (sobreescribe __init__.py y checkpoint_utils.py del fairseq instalado):
+python apply_shim.py
 ```
 
-> **Nota:** Los archivos del shim están en la carpeta `fairseq_shim/` del repo.
-> Si fairseq no instala nada, clona el repo original y copia manualmente:
+> **Nota:** `apply_shim.py` copia `fairseq_shim/__init__.py` y `fairseq_shim/checkpoint_utils.py`
+> del repo sobre el paquete fairseq instalado en `venv/`, validando que el destino exista antes de
+> sobreescribir. Hay que volver a ejecutarlo cada vez que se reinstale fairseq (venv nuevo,
+> `pip install fairseq` de nuevo, etc.) — ver `CLAUDE.md`.
+>
+> Si `pip install fairseq==0.12.2` no instala nada, clona el repo original y copia manualmente
+> antes de correr `apply_shim.py`:
 > ```bash
+> FAIRSEQ_DIR="venv/lib/python3.10/site-packages/fairseq"
 > git clone --depth 1 https://github.com/facebookresearch/fairseq /tmp/fairseq
 > cp -r /tmp/fairseq/fairseq/* "$FAIRSEQ_DIR/"
-> # Editar checkpoint_utils.py: cambiar torch.load(...) a torch.load(..., weights_only=False)
+> python apply_shim.py
 > ```
 
 ---

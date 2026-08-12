@@ -2,24 +2,27 @@
 .env
 
 # Memoria del chat (datos personales)
-memoria_rem.json
-memoria_larga.json
+memoria_*.json
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
 
-# Archivos temporales
+# Audio de pruebas / salidas de TTS-RVC
 *.mp3
+*.wav
+pruebas_voz/
 
-# Modelos ML muy grandes (>100MB, descargar de HuggingFace — ver INSTALL.md)
+# Modelos ML muy grandes (descargar de HuggingFace/Google Drive — ver INSTALL.md)
 rmvpe.pt
 hubert_base.pt
+models/**/*.pth
+models/**/*.index
+rem.vrm
 
 # Entorno virtual
 venv/
 
 # Archivos de prueba/debug
-test_*.py
 fix_pipeline.py

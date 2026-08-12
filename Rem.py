@@ -1388,13 +1388,13 @@ def set_estado(txt, color=CLR_OK):
     lbl_estado.config(fg=color)
 
 def responder(texto_usuario):
-    agregar_mensaje("Tú", texto_usuario)
-    set_estado("● Pensando...", "#ffcc44")
+    app.after(0, lambda t=texto_usuario: agregar_mensaje("Tú", t))
+    app.after(0, lambda: set_estado("● Pensando...", "#ffcc44"))
     set_rem_estado("thinking")
     try:
         raw = preguntar_groq(texto_usuario)
         resultado, _ = procesar_respuesta(raw)
-        agregar_mensaje("Rem", resultado)
+        app.after(0, lambda r=resultado: agregar_mensaje("Rem", r))
         # Detectar emoción y enviarla antes de hablar
         emoc = _detectar_emocion(resultado)
         if emoc:
@@ -1403,10 +1403,10 @@ def responder(texto_usuario):
             ).start()
         threading.Thread(target=hablar, args=(resultado,), daemon=True).start()
     except Exception as e:
-        agregar_mensaje("Rem", f"Algo salió mal: {e}")
+        app.after(0, lambda e=e: agregar_mensaje("Rem", f"Algo salió mal: {e}"))
         set_rem_estado("idle")
     finally:
-        set_estado("● En línea", CLR_OK)
+        app.after(0, lambda: set_estado("● En línea", CLR_OK))
         # idle lo restaura hablar() al terminar el audio
 
 def enviar():
@@ -1753,11 +1753,11 @@ def bienvenida():
     try:
         raw = preguntar_groq("Saluda al usuario brevemente, acabas de despertar.")
         res, _ = procesar_respuesta(raw)
-        agregar_mensaje("Rem", res)
+        app.after(0, lambda r=res: agregar_mensaje("Rem", r))
         threading.Thread(target=hablar, args=(res,), daemon=True).start()
     except Exception:
         msg = "¡Hola, mi señor! Aquí estoy, lista para ti~"
-        agregar_mensaje("Rem", msg)
+        app.after(0, lambda m=msg: agregar_mensaje("Rem", m))
         threading.Thread(target=hablar, args=(msg,), daemon=True).start()
 
 threading.Thread(target=bienvenida, daemon=True).start()
