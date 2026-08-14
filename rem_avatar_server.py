@@ -156,12 +156,50 @@ def _iniciar_http():
 
 
 # ── Servidor WebSocket ────────────────────────────────────────────────
+def _reproducir_fallback_local(url: str):
+    """Reproduce por sounddevice un WAV que el navegador no pudo tocar (AudioContext
+    bloqueado — típico en el overlay, que es click-through y nunca recibe un gesto
+    de usuario). Sin lipsync, pero al menos se oye la voz. Se llama desde el loop
+    de asyncio del WS, así que el playback bloqueante va en un thread aparte."""
+    nombre = os.path.basename(url)
+    raiz = os.path.realpath(TMP_AUDIO_DIR)
+    ruta = os.path.realpath(os.path.join(raiz, nombre))
+    if not ruta.startswith(raiz + os.sep):
+        logger.warning("[Avatar] fallback: ruta fuera de tmp_audio/ rechazada: %s", url)
+        return
+    if not os.path.isfile(ruta):
+        logger.warning("[Avatar] fallback pedido para %s pero el archivo ya no existe", ruta)
+        return
+
+    def _reproducir():
+        try:
+            import soundfile as sf
+            import sounddevice as sd
+            data, sr = sf.read(ruta)
+            sd.play(data, sr)
+            sd.wait()
+        except Exception as e:
+            logger.warning("[Avatar] fallback local de audio falló: %s", e)
+
+    threading.Thread(target=_reproducir, daemon=True, name="AudioFallbackLocal").start()
+
+
+def _procesar_mensaje_cliente(mensaje):
+    try:
+        datos = json.loads(mensaje)
+    except (json.JSONDecodeError, TypeError):
+        return
+    if datos.get("tipo") == "audio_bloqueado":
+        logger.warning("[Avatar] el navegador no pudo reproducir %s (AudioContext bloqueado) — fallback local", datos.get("url"))
+        _reproducir_fallback_local(datos.get("url", ""))
+
+
 async def _ws_handler(websocket):
     with _ws_lock:
         _ws_clients.add(websocket)
     try:
-        async for _ in websocket:
-            pass
+        async for mensaje in websocket:
+            _procesar_mensaje_cliente(mensaje)
     finally:
         with _ws_lock:
             _ws_clients.discard(websocket)

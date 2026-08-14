@@ -18,8 +18,15 @@ import { VRMLoaderPlugin, VRMUtils } from 'https://esm.sh/@pixiv/three-vrm@2';
 // CONFIGURACIÓN CENTRALIZADA
 // ═══════════════════════════════════════════════════
 const CONFIG = {
-  camera:  { fov: 28, z: 1.6, posY: 1.05, targetY: 1.0 },
-  pet:     { borderLeft: 0.32, borderRight: 0.68, velocity: 0.18, baseY: -0.85 },
+  // z/position.y del modelo ya no son constantes fijas: recalcularEncuadre() las
+  // deriva de la altura real medida del modelo (Box3) + estas anclas normalizadas.
+  camera:  { fov: 28 },
+  pet:     {
+    anchorX: 0.82, anchorY: 0.55,       // posición de reposo, fracción de pantalla (0=izq/arriba, 1=der/abajo)
+    walkLeft: 0.62, walkRight: 0.95,    // rango de caminata, misma fracción normalizada
+    alturaPantalla: 0.45,               // fracción del alto de pantalla que debe ocupar Rem
+    velocity: 0.18,                     // fracción de pantalla por segundo
+  },
   ws:      { port: 18766, retryDelay: 1500, maxRetries: 10 },
   lighting: {
     ambient: { color: 0xb0c0dd, intensity: 1.0 },
@@ -34,17 +41,19 @@ const CONFIG = {
 // ═══════════════════════════════════════════════════
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.setClearColor(0x000000, 0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 
-// Cámara tipo teleobjetivo — plano medio VTuber
+// Cámara tipo teleobjetivo — plano medio VTuber.
+// Posición/lookAt reales los fija recalcularEncuadre() una vez medido el modelo;
+// esto es solo un placeholder razonable para el primer frame antes de esa carga.
 const camera = new THREE.PerspectiveCamera(CONFIG.camera.fov, window.innerWidth / window.innerHeight, 0.1, 20);
-camera.position.set(0, CONFIG.camera.posY, CONFIG.camera.z);
-camera.lookAt(0, CONFIG.camera.targetY, 0);
+camera.position.set(0, 0, 1.6);
+camera.lookAt(0, 0, 0);
 
 // Iluminación tipo estudio de stream
 scene.add(new THREE.AmbientLight(CONFIG.lighting.ambient.color, CONFIG.lighting.ambient.intensity));
@@ -63,12 +72,50 @@ const lerp  = (a, b, t) => a + (b - a) * t;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // ═══════════════════════════════════════════════════
-// DESKTOP PET — CAMINATA (tercio derecho de pantalla)
-// FOV=28°, z=1.6, aspect=16/9 → ancho visible ≈ ±0.709 u
-// Píxeles 1400-1900 → world x ≈ 0.32-0.68
+// ENCUADRE RESPONSIVO — anclas normalizadas (0..1 de pantalla), no world units fijas
 // ═══════════════════════════════════════════════════
-const BORDE_IZQ = CONFIG.pet.borderLeft, BORDE_DER = CONFIG.pet.borderRight, VEL = CONFIG.pet.velocity;
-let charX = 0.50, charDir = -1;  // empieza en el centro-derecha
+// n: 0 = izquierda/arriba, 1 = derecha/abajo. worldX/anchoVisible/alturaVisible
+// se recalculan en recalcularEncuadre() y se usan para convertir fracciones a
+// coordenadas de mundo en el momento de escribir vrm.scene.position.
+let _anchoVisible = 0, _alturaVisible = 0;
+let _modeloAlturaLocal = 1.5, _modeloCentroLocal = 0.75; // fallback razonable antes de medir
+let _modeloPositionY = 0;
+
+const worldX = n => (n - 0.5) * _anchoVisible;
+
+function recalcularEncuadre() {
+  const fovRad = camera.fov * Math.PI / 180;
+
+  // 1) Distancia de cámara tal que el modelo (altura real medida) ocupe
+  //    CONFIG.pet.alturaPantalla del alto visible de pantalla.
+  const alturaVisibleObjetivo = _modeloAlturaLocal / CONFIG.pet.alturaPantalla;
+  camera.position.set(0, 0, alturaVisibleObjetivo / (2 * Math.tan(fovRad / 2)));
+  camera.lookAt(0, 0, 0);
+  camera.updateProjectionMatrix();
+
+  // 2) Alturas/anchos visibles reales a esa distancia (fórmulas pedidas).
+  _alturaVisible = 2 * camera.position.z * Math.tan(fovRad / 2);
+  _anchoVisible  = _alturaVisible * camera.aspect;
+
+  // 3) Y del modelo: el centro de su caja (medida) debe caer en anchorY de
+  //    pantalla, con la cámara siempre mirando al origen (paso 1).
+  const centroObjetivoMundo = _alturaVisible * (0.5 - CONFIG.pet.anchorY);
+  _modeloPositionY = centroObjetivoMundo - _modeloCentroLocal;
+
+  if (vrm) {
+    vrm.scene.position.y = _modeloPositionY;
+    vrm.scene.position.x = worldX(charX);
+  }
+
+  console.log(`[Encuadre] z=${camera.position.z.toFixed(3)} anchoVisible=${_anchoVisible.toFixed(3)} `
+            + `alturaVisible=${_alturaVisible.toFixed(3)} position.y=${_modeloPositionY.toFixed(3)}`);
+}
+
+// ═══════════════════════════════════════════════════
+// DESKTOP PET — CAMINATA (fracciones normalizadas de pantalla)
+// ═══════════════════════════════════════════════════
+const BORDE_IZQ = CONFIG.pet.walkLeft, BORDE_DER = CONFIG.pet.walkRight, VEL = CONFIG.pet.velocity;
+let charX = CONFIG.pet.anchorX, charDir = -1;  // empieza en la posición de reposo
 let petEstado = 'idle_anim', petTimer = 2 + Math.random() * 3;
 let walkBlend = 0, walkPhase = 0;
 
@@ -84,7 +131,7 @@ function tickPet(dt) {
     charX += charDir * VEL * dt;
     if (charX > BORDE_DER) { charX = BORDE_DER; charDir = -1; petEstado = 'idle_anim'; petTimer = 2 + Math.random() * 3; }
     if (charX < BORDE_IZQ) { charX = BORDE_IZQ; charDir =  1; petEstado = 'idle_anim'; petTimer = 2 + Math.random() * 3; }
-    if (vrm) vrm.scene.position.x = charX;
+    if (vrm) vrm.scene.position.x = worldX(charX);
   }
 }
 
@@ -100,10 +147,18 @@ loader.load('/rem.vrm',
     VRMUtils.removeUnnecessaryJoints(vrm.scene);
     vrm.scene.rotation.y = Math.PI;
     vrm.scene.scale.set(1, 1, 1);
-    // Plano medio VTuber: cabeza al ~15% superior, pies fuera de frame
-    vrm.scene.position.set(charX, -0.85, 0);
+    vrm.scene.position.set(0, 0, 0); // posición neutra: medir la caja sin offsets propios
     scene.add(vrm.scene);
-    camera.updateProjectionMatrix();
+
+    // Medir la altura REAL del modelo en vez de asumirla — cada VRM es distinto.
+    const caja = new THREE.Box3().setFromObject(vrm.scene);
+    _modeloAlturaLocal = caja.max.y - caja.min.y;
+    _modeloCentroLocal = (caja.max.y + caja.min.y) / 2;
+    console.log(`[Encuadre] altura medida del modelo: ${_modeloAlturaLocal.toFixed(3)} u`
+              + ` (min.y=${caja.min.y.toFixed(3)}, max.y=${caja.max.y.toFixed(3)})`);
+
+    recalcularEncuadre(); // fija camera.position.z, vrm.scene.position.y/x y el lookAt
+
     const names = vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? [];
     console.log('[VRM] OK | expressions:', names.join(', '));
     console.log('[VRM] springBones:', vrm.springBoneManager ? 'sí' : 'no');
@@ -216,7 +271,31 @@ function updateBlink(dt) {
 // ═══════════════════════════════════════════════════
 // LIPSYNC REAL — audio del backend + timeline de visemes (lipsync.py)
 // ═══════════════════════════════════════════════════
-const audioContext = new AudioContext();
+// AudioContext perezoso: crearlo antes de un gesto de usuario en un navegador
+// normal dispara el bloqueo de autoplay igual, así que no ganamos nada
+// adelantándonos — se crea recién cuando hace falta (primer intento de reproducir,
+// o primer gesto del usuario, lo que ocurra antes).
+let _audioContext = null;
+function obtenerAudioContext() {
+  if (!_audioContext) _audioContext = new AudioContext();
+  return _audioContext;
+}
+
+// En un navegador normal, cualquier gesto temprano ya deja el AudioContext
+// listo para cuando llegue el primer audio real. En el overlay GTK esto nunca
+// dispara (la ventana es click-through por diseño) — de ahí el fallback de
+// abajo en _reproducirSiguienteDeCola().
+function _intentarResumeAudioPorGesto() {
+  const ctx = obtenerAudioContext();
+  if (ctx.state === 'suspended') {
+    ctx.resume()
+      .then(() => console.log('[Lipsync] AudioContext resumido por gesto de usuario'))
+      .catch(err => console.warn('[Lipsync] no se pudo resumir AudioContext:', err));
+  }
+}
+document.addEventListener('click',     _intentarResumeAudioPorGesto, { once: true });
+document.addEventListener('keydown',   _intentarResumeAudioPorGesto, { once: true });
+document.addEventListener('touchstart', _intentarResumeAudioPorGesto, { once: true });
 
 // Morph targets vrc.* que puede tocar el timeline (ver lipsync.py FONEMA_A_VISEME)
 const VISEME_NAMES = [
@@ -228,7 +307,7 @@ const VISEME_NAMES = [
 const JAW_MAX_RAD        = 0.25;  // apertura máxima del hueso jaw, en radianes (eje X)
 const JAW_SMOOTH_SPEED   = 20;    // suavizado exponencial (lerp con dt)
 
-let _visemeMeshes  = [];   // meshes con morphTargetDictionary['vrc.v_aa']
+let _visemeIndex    = {};  // nombre canónico (VISEME_NAMES) -> [{mesh, idx}, ...]
 let _audioPlayQueue = [];  // cola FIFO: {url, timeline} — para no solapar frases
 let _audioPlaying  = false;
 let _audioSource   = null;
@@ -237,20 +316,76 @@ let _timeline       = [];
 let _timelineIdx     = 0;
 let _jawApertura     = 0;
 
+// Normaliza nombres de morph target para comparar sin depender de mayúsculas/
+// puntuación exacta (defensivo: GLTFLoader usa los nombres crudos de
+// extras.targetNames sin sanitizar, pero no cuesta nada ser tolerante).
+function _normalizarNombreMorph(s) {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 function localizarMallaFacial() {
-  _visemeMeshes = [];
+  _visemeIndex = {};
+  for (const nombre of VISEME_NAMES) _visemeIndex[nombre] = [];
+
+  const porNormalizado = {};
+  for (const nombre of VISEME_NAMES) porNormalizado[_normalizarNombreMorph(nombre)] = nombre;
+
+  let mallasConDiccionario = 0;
+  let mallasSinDiccionario = 0;
+
   vrm.scene.traverse(obj => {
-    if (obj.isMesh && obj.morphTargetDictionary && ('vrc.v_aa' in obj.morphTargetDictionary)) {
-      _visemeMeshes.push(obj);
+    if (!obj.isMesh) return;
+    const morphCount = obj.geometry?.morphAttributes?.position?.length ?? 0;
+
+    if (!obj.morphTargetDictionary) {
+      if (morphCount > 0) {
+        // GLTFLoader solo construye morphTargetDictionary si
+        // mesh.morphTargetInfluences.length === extras.targetNames.length.
+        // Si este primitive trae una cantidad de morph attributes distinta a
+        // los 59 de targetNames (común cuando el exportador reparte los
+        // morphs de forma desigual entre primitives), el diccionario NUNCA
+        // se crea — sin importar el nombre. Buscá en la consola el warning
+        // "THREE.GLTFLoader: Invalid extras.targetNames length" para confirmarlo.
+        mallasSinDiccionario++;
+        console.warn(`[Lipsync] malla "${obj.name}": ${morphCount} morph attributes en la geometría` +
+          ` pero SIN morphTargetDictionary (mismatch de longitud con extras.targetNames — ver warning de GLTFLoader arriba)`);
+      }
+      return;
+    }
+
+    mallasConDiccionario++;
+    const claves = Object.keys(obj.morphTargetDictionary);
+    console.log(`[Lipsync] malla "${obj.name}" — ${claves.length} morph targets:`, claves.join(', '));
+
+    for (const clave of claves) {
+      const canonico = porNormalizado[_normalizarNombreMorph(clave)];
+      if (canonico) {
+        _visemeIndex[canonico].push({ mesh: obj, idx: obj.morphTargetDictionary[clave] });
+      }
     }
   });
-  console.log('[Lipsync] mallas con visemes vrc.*:', _visemeMeshes.length);
+
+  const resueltos  = VISEME_NAMES.filter(n => _visemeIndex[n].length > 0);
+  const faltantes  = VISEME_NAMES.filter(n => _visemeIndex[n].length === 0);
+  console.log(`[Lipsync] visemes resueltos: ${resueltos.length}/${VISEME_NAMES.length} ->`, resueltos);
+  if (faltantes.length > 0) {
+    console.warn('[Lipsync] visemes NO encontrados en ninguna malla:', faltantes);
+  }
+  if (resueltos.length === 0) {
+    console.warn(
+      '[Lipsync] ningún morph target vrc.* resuelto.',
+      `Mallas con morphTargetDictionary: ${mallasConDiccionario}.`,
+      `Mallas con morph attributes pero SIN diccionario (mismatch de longitud): ${mallasSinDiccionario}.`,
+      'expressionManager expone:', vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? []
+    );
+  }
 }
 
 function setViseme(name, value) {
-  for (const mesh of _visemeMeshes) {
-    const idx = mesh.morphTargetDictionary[name];
-    if (idx !== undefined) mesh.morphTargetInfluences[idx] = value;
+  const entradas = _visemeIndex[name];
+  if (!entradas) return;
+  for (const { mesh, idx } of entradas) {
+    mesh.morphTargetInfluences[idx] = value;
   }
 }
 
@@ -265,19 +400,40 @@ async function _reproducirSiguienteDeCola() {
   if (!siguiente) { _audioPlaying = false; return; }
   _audioPlaying = true;
 
+  const ctx = obtenerAudioContext();
+
+  if (ctx.state === 'suspended') {
+    try { await ctx.resume(); } catch (err) { /* se revisa el estado real abajo */ }
+  }
+  console.log(`[Lipsync] AudioContext.state antes de reproducir ${siguiente.url}:`, ctx.state);
+
+  if (ctx.state === 'suspended') {
+    // El overlay GTK es click-through: nunca va a llegar un gesto de usuario que
+    // desbloquee el autoplay. Avisamos al backend para que reproduzca por
+    // sounddevice — sin lipsync, pero al menos se oye — y seguimos con la cola
+    // (esta reproducción no puede completarse acá, no hay onended que esperar).
+    console.warn('[Lipsync] AudioContext sigue suspendido tras resume() — pidiendo fallback local a Python:', siguiente.url);
+    _wsEnviar({ tipo: 'audio_bloqueado', url: siguiente.url });
+    if (_audioPlayQueue.length > 0) {
+      _reproducirSiguienteDeCola();
+    } else {
+      _audioPlaying = false;
+    }
+    return;
+  }
+
   try {
-    if (audioContext.state === 'suspended') await audioContext.resume();
     const resp = await fetch(siguiente.url);
     const arrayBuffer = await resp.arrayBuffer();
-    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
 
-    const source = audioContext.createBufferSource();
+    const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
-    source.connect(audioContext.destination);
+    source.connect(ctx.destination);
 
     _timeline       = siguiente.timeline || [];
     _timelineIdx     = 0;
-    _audioStartTime  = audioContext.currentTime;
+    _audioStartTime  = ctx.currentTime;
     _audioSource     = source;
     estado = 'talking';
 
@@ -308,7 +464,8 @@ function actualizarVisemes(dt) {
   let objetivoApertura = 0;
 
   if (_audioSource && _timeline.length > 0) {
-    const t = audioContext.currentTime - _audioStartTime;
+    // _audioContext ya existe siempre que _audioSource esté seteado (ver _reproducirSiguienteDeCola).
+    const t = _audioContext.currentTime - _audioStartTime;
 
     while (_timelineIdx < _timeline.length - 1 && _timeline[_timelineIdx + 1].t <= t) _timelineIdx++;
 
@@ -539,7 +696,7 @@ function updateWalking(dt) {
   // Caderas: bob vertical vía scene.position.y + rock lateral en hueso
   const hipBob  = -Math.abs(Math.sin(wt)) * 0.022 * wb;
   const hipRock =  Math.sin(wt) * 0.055 * wb;
-  if (vrm) vrm.scene.position.y = -0.85 + hipBob;   // bob: cuerpo baja al apoyar pie
+  if (vrm) vrm.scene.position.y = _modeloPositionY + hipBob;   // bob se SUMA sobre la Y del encuadre, no la reemplaza
   const hipB = getB('hips');
   if (hipB) { hipB.rotation.z = hipRock; hipB.rotation.x = Math.sin(wt * 0.5) * 0.015 * wb; }
 
@@ -646,26 +803,35 @@ animate();
 // ═══════════════════════════════════════════════════
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  // charX y anchorY son fracciones normalizadas — se preservan solas. Solo hay
+  // que recalcular a qué coordenada de mundo corresponden con el nuevo aspect.
+  recalcularEncuadre();
 });
 
 // ═══════════════════════════════════════════════════
 // WEBSOCKET — con límite de reintentos
 // ═══════════════════════════════════════════════════
 let _wsRetries = 0;
+let _ws = null;
+
+function _wsEnviar(obj) {
+  if (_ws && _ws.readyState === WebSocket.OPEN) {
+    _ws.send(JSON.stringify(obj));
+  }
+}
 
 (function conectar() {
   if (_wsRetries >= CONFIG.ws.maxRetries) {
     console.warn('[WS] Máximo de reintentos alcanzado, deteniendo reconexión');
     return;
   }
-  const ws = new WebSocket(`ws://localhost:${CONFIG.ws.port}`);
-  ws.onopen = () => {
+  _ws = new WebSocket(`ws://localhost:${CONFIG.ws.port}`);
+  _ws.onopen = () => {
     console.log('[WS] conectado');
     _wsRetries = 0;
   };
-  ws.onmessage = e => {
+  _ws.onmessage = e => {
     try {
       const d = JSON.parse(e.data);
       if (d.tipo === 'audio') {
@@ -677,11 +843,11 @@ let _wsRetries = 0;
       console.warn('[WS] JSON inválido:', err);
     }
   };
-  ws.onclose = () => {
+  _ws.onclose = () => {
     _wsRetries++;
     setTimeout(conectar, CONFIG.ws.retryDelay);
   };
-  ws.onerror = e => console.warn('[WS] Error de conexión:', e.type);
+  _ws.onerror = e => console.warn('[WS] Error de conexión:', e.type);
 })();
 
 window.setEstado = s => { estado = s; };

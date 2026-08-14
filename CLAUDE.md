@@ -44,7 +44,13 @@ CIUDAD=Yarumal
 MODELO_VISION=meta-llama/llama-4-scout-17b-16e-instruct
 VOZ_REM=es-VE-PaolaNeural
 TTS_RATE=-8%
+REM_LAYER=top
+REM_OVERLAY_W=520
+REM_OVERLAY_H=860
 ```
+`REM_LAYER` (`top`|`overlay`) y `REM_OVERLAY_W`/`REM_OVERLAY_H` los lee `rem_overlay.py`, no
+`Rem.py` — controlan la capa del compositor y el tamaño fijo de la layer surface (ver
+"Layer surface acotada" más abajo).
 Todas las variables tienen valores por defecto en el código. Solo `GROQ_API_KEY` es obligatoria.
 
 ## Archivos de datos (creados en runtime, ignorados por git)
@@ -175,6 +181,79 @@ Extraído con `dump_vrm.py`. `rem.vrm` es **VRM 0.x** (usa `extensions.VRM`, no 
     movimiento del hueso padre (drag/stiffness). Si se quiere que el pelo/ropa cuelgue con peso
     real, hay que subir `gravityPower` en el mismo editor.
 
+## Cómo three.js construye morphTargetDictionary (importante para el lipsync)
+Investigado leyendo el bundle real de `three@0.169.0` y su `GLTFLoader`, porque el diagnóstico
+inicial de "0 mallas con visemes" tenía una hipótesis que resultó **incorrecta**:
+
+- **`PropertyBinding.sanitizeNodeName()` NO interviene en `morphTargetDictionary`.** Esa función
+  (`t.replace(/\s/g,"_").replace(/[\[\].:\/]/g,"")`) se usa para nombres de *tracks* de animación,
+  no para construir el diccionario de morph targets. De hecho, si interviniera, el punto de
+  `vrc.v_aa` se **eliminaría** (`"vrcv_aa"`), no se reemplazaría por `_` (`"vrc_v_aa"`) — el propio
+  regex es `[\[\].:\/]`, que quita el carácter en vez de sustituirlo.
+- **`GLTFLoader` usa los nombres crudos de `extras.targetNames` tal cual**, sin sanitizar:
+  `mesh.morphTargetDictionary[targetNames[i]] = i`. Si el modelo trae `"vrc.v_aa"` en el glTF, la
+  clave en el diccionario es literalmente `"vrc.v_aa"`.
+- **La causa real y más probable de que el diccionario no aparezca**: `GLTFLoader` solo construye
+  `morphTargetDictionary` si `mesh.morphTargetInfluences.length === extras.targetNames.length`
+  *para ese primitive específico*. Si algún primitive de la malla tiene una cantidad de morph
+  attributes distinta a los 59 de `targetNames` (común cuando el exportador reparte los morphs de
+  forma desigual entre primitives de un mismo mesh con varios materiales), el diccionario **no se
+  crea en absoluto** para ese primitive — sin importar los nombres — y GLTFLoader tira
+  `console.warn("THREE.GLTFLoader: Invalid extras.targetNames length. Ignoring names.")`, que hasta
+  ahora nadie estaba mirando.
+- `VRMUtils.removeUnnecessaryJoints` (el único util de VRMUtils que se llama en `rem_avatar.html`)
+  solo rebindea el `Skeleton` de los `SkinnedMesh` — no toca geometría ni `morphTargetDictionary`.
+  Se descartó como causa.
+
+`localizarMallaFacial()` en `rem_avatar.html` ahora hace dos cosas para que esto no se vuelva a
+redescubrir a ciegas: (1) loguea el nombre de cada malla y todas sus claves de
+`morphTargetDictionary` tal como llegan, sin asumir formato; (2) para mallas SIN diccionario pero
+con `geometry.morphAttributes.position` no vacío, loguea explícitamente el mismatch de longitud
+como sospechoso. La comparación contra `VISEME_NAMES` es normalizada (minúsculas + solo
+alfanumérico) como defensa adicional, pero según lo de arriba probablemente no haga falta —
+`vrc.v_aa` debería llegar tal cual.
+
+**Pendiente de confirmar en un navegador real** (esta máquina de desarrollo no tiene
+`webkit2gtk-4.1` instalado, así que esto no se pudo verificar en vivo): correr `bench.py`, abrir
+`http://localhost:18765/rem_avatar.html` y pegar acá los nombres reales que imprima la consola —
+si son exactamente `vrc.v_aa` etc. confirma la hipótesis de arriba; si `mallasSinDiccionario > 0`,
+confirma el mismatch de longitud y hay que revisar cómo se exportaron los primitives del modelo.
+
+## AudioContext bloqueado en el overlay (autoplay policy)
+El overlay GTK es **click-through por diseño** (`_aplicar_click_through` en `rem_overlay.py`) — nunca
+va a recibir un click/keydown/touchstart real, así que el `AudioContext` del navegador nunca sale de
+`'suspended'` ahí dentro (los navegadores bloquean audio sin gesto de usuario). En un navegador normal
+sí funciona: `rem_avatar.html` engancha `click`/`keydown`/`touchstart` sobre `document` con
+`{ once: true }` para resumirlo apenas hay uno.
+
+Cuando `ctx.state` sigue `'suspended'` tras `resume()`, el frontend manda por WebSocket
+`{"tipo": "audio_bloqueado", "url": "..."}` de vuelta a Python (antes el `_ws_handler` descartaba
+todo lo que llegaba del cliente — ahora lo procesa). `rem_avatar_server.py` responde reproduciendo
+ese mismo WAV con `sounddevice` desde `tmp_audio/` (el archivo sigue ahí, se borra recién a los 5
+min) — sin lipsync, pero se oye. También se intentó `WebKitSettings.set_media_playback_requires_user_gesture(False)`
+en `rem_overlay.py` para desactivar la política de autoplay directamente en WebKit2, pero **no se
+pudo verificar en vivo** (esta máquina de desarrollo no tiene `webkit2gtk-4.1` instalado) — confirmar
+si existe en la versión real de WebKit2GTK instalada y si con eso ya alcanza sin necesitar el fallback.
+
+## Encuadre del avatar: anclas normalizadas, no world units fijas
+`rem_avatar.html` mide la altura real de `rem.vrm` con `new THREE.Box3().setFromObject(vrm.scene)`
+al cargar (antes las constantes de cámara/posición eran calibradas a mano para un modelo distinto, y
+por eso solo se veía la cabeza gigante y cortada). `recalcularEncuadre()` deriva `camera.position.z`
+para que el modelo ocupe `CONFIG.pet.alturaPantalla` del alto de pantalla, y `vrm.scene.position.y`
+para que el centro de su caja caiga en `CONFIG.pet.anchorY` (fracción 0=arriba..1=abajo). La cámara
+mira siempre a `(0,0,0)`; todo el trabajo de encuadre lo hace la posición del modelo, no la cámara.
+`CONFIG.pet.anchorX`/`walkLeft`/`walkRight` son fracciones de pantalla (0=izq..1=der) — `worldX(n)`
+las convierte a coordenadas de mundo recién al escribir `vrm.scene.position.x`, así que sobreviven a
+un resize sin que Rem salte de lugar. Se llama en la carga del VRM y en cada `resize`.
+
+## Layer surface acotada (rendimiento del overlay)
+`rem_overlay.py` ancla la layer surface solo a `RIGHT`+`BOTTOM` con tamaño fijo
+(`win.set_size_request`, default 520×860, configurable por `.env` con `REM_OVERLAY_W`/`REM_OVERLAY_H`)
+en vez de a los 4 bordes. Anclar a los 4 bordes hacía que el compositor estirara un canvas WebGL
+transparente del tamaño del monitor entero, renderizado a 60fps de forma permanente sobre todo el
+escritorio — con las ~103 cadenas de spring bones de este modelo, costo constante innecesario.
+`set_exclusive_zone(-1)` y el click-through se mantienen igual.
+
 
     # IMPORTANTE: 
-    CUANDO SI EL USUARIO TE PIDE HACER UN COMMIT A ESTE MISMO NO LE PONGAS QUE TU LO HACES, SOLO ESCRIBE LA INFORMACIÓN CORRESPONDIENTE AL COMMIT Y DILE AL USUARIO QUE HAGA PUSH
+    AL MOMENTO DE HACER COMMIT NO PONGAS TU AUDITORIA Claude/Anthropic DETRO DEL COMMIT

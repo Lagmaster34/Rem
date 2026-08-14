@@ -151,6 +151,9 @@ cat > .env << 'EOF'
 GROQ_API_KEY=tu_clave_aqui
 VOZ_REM=es-VE-PaolaNeural
 TTS_RATE=-8%
+REM_LAYER=top
+REM_OVERLAY_W=520
+REM_OVERLAY_H=860
 EOF
 ```
 
@@ -162,6 +165,10 @@ no la prosodia, así que la voz de origen se elige por su ritmo, no por cómo su
 lenta que el default) le da a RVC más margen por fonema para trackear el pitch con `rmvpe` y mejora
 la fidelidad de la conversión. Ver `CLAUDE.md` → "Configuración de voz ganadora" para más detalle,
 incluida la limitación conocida con la `rr` vibrante.
+
+`REM_LAYER`/`REM_OVERLAY_W`/`REM_OVERLAY_H` también son opcionales, los lee `rem_overlay.py`: capa
+del compositor (`top`|`overlay`) y tamaño fijo en píxeles de la layer surface (esquina
+inferior-derecha). Ver `CLAUDE.md` → "Layer surface acotada".
 
 ---
 

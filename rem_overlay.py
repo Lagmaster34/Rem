@@ -52,6 +52,20 @@ _layer_str = (
 if _layer_str not in ('top', 'overlay'):
     _layer_str = 'top'
 
+# Tamaño fijo de la layer surface (esquina inferior-derecha), configurable por .env.
+# Antes se anclaba a los 4 bordes: el compositor estiraba un canvas WebGL
+# transparente del tamaño del monitor entero, renderizando a 60fps sobre todo
+# el escritorio de forma permanente — con las ~103 cadenas de spring bones de
+# este modelo, un costo constante innecesario.
+def _leer_dimension_env(nombre, default):
+    try:
+        return int(os.environ.get(nombre, str(default)))
+    except ValueError:
+        return default
+
+ANCHO_OVERLAY = _leer_dimension_env('REM_OVERLAY_W', 520)
+ALTO_OVERLAY  = _leer_dimension_env('REM_OVERLAY_H', 860)
+
 if _LAYER_SHELL_OK:
     CAPA = GtkLayerShell.Layer.OVERLAY if _layer_str == 'overlay' else GtkLayerShell.Layer.TOP
     print(f"[Overlay] Capa: {_layer_str.upper()}")
@@ -93,10 +107,11 @@ def main():
 
         GtkLayerShell.set_layer(win, CAPA)
         GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.NONE)
-        # Anclar a las 4 esquinas → el compositor estira la ventana al monitor entero
-        for edge in (GtkLayerShell.Edge.LEFT,  GtkLayerShell.Edge.RIGHT,
-                     GtkLayerShell.Edge.TOP,   GtkLayerShell.Edge.BOTTOM):
+        # Anclar solo a RIGHT/BOTTOM: superficie acotada a una esquina, tamaño fijo
+        # (ver ANCHO_OVERLAY/ALTO_OVERLAY), no todo el monitor.
+        for edge in (GtkLayerShell.Edge.RIGHT, GtkLayerShell.Edge.BOTTOM):
             GtkLayerShell.set_anchor(win, edge, True)
+        win.set_size_request(ANCHO_OVERLAY, ALTO_OVERLAY)
         # -1: la superficie no respeta zonas exclusivas de paneles (se solapa con todo)
         GtkLayerShell.set_exclusive_zone(win, -1)
     else:
@@ -137,6 +152,17 @@ def main():
             WebKit2.HardwareAccelerationPolicy.ALWAYS)
     except Exception:
         pass
+
+    # El overlay es click-through por diseño (ver _aplicar_click_through): nunca va
+    # a llegar un gesto de usuario real que desbloquee el autoplay de WebKit. Sin
+    # esto, rem_avatar.html nunca puede arrancar el AudioContext dentro del overlay
+    # y cae siempre al fallback de sounddevice en Python (ver rem_avatar_server.py).
+    try:
+        settings.set_media_playback_requires_user_gesture(False)
+        print("[Overlay] media-playback-requires-user-gesture desactivado (autoplay permitido)")
+    except Exception as e:
+        print(f"[Overlay] set_media_playback_requires_user_gesture no disponible en esta WebKit2 ({e}) "
+              f"— el audio del overlay dependerá del fallback de sounddevice")
 
     webview.connect('context-menu', lambda *a: True)
     win.add(webview)
