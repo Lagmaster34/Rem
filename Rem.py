@@ -14,7 +14,6 @@ from PIL import Image, ImageTk, ImageFilter, ImageDraw, ImageEnhance
 import threading
 import subprocess
 import psutil
-import pyautogui
 import glob
 import webbrowser
 import sounddevice as sd
@@ -61,7 +60,10 @@ _cargar_dotenv()
 # ── CONFIGURACION ─────────────────────────────────────────────────────
 GROQ_API_KEY    = os.getenv("GROQ_API_KEY", "")
 IMAGEN_FONDO    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wallhaven-j5zopp_1920x1080.png")
-VOZ_REM         = "es-MX-DaliaNeural"
+# es-VE-PaolaNeural + rate -8%: salió de una comparación A/B (ver CLAUDE.md,
+# "Configuración de voz ganadora") — RVC transfiere timbre pero no prosodia.
+VOZ_REM         = os.getenv("VOZ_REM", "es-VE-PaolaNeural")
+TTS_RATE        = os.getenv("TTS_RATE", "-8%")
 MODELO_VISION   = os.getenv("MODELO_VISION", "meta-llama/llama-4-scout-17b-16e-instruct")
 MEMORIA_ARCHIVO         = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_rem.json")
 MEMORIA_LARGA_ARCHIVO   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_larga.json")
@@ -624,7 +626,7 @@ def _worker_audio():
         tmp_mp3  = os.path.join(os.path.expanduser("~"), f"rem_tts_{uid}.mp3")
         tmp_wav  = os.path.join(os.path.expanduser("~"), f"rem_tts_{uid}.wav")
         try:
-            audio_mp3, palabras = await lipsync.sintetizar_con_timings(texto, VOZ_REM)
+            audio_mp3, palabras = await lipsync.sintetizar_con_timings(texto, VOZ_REM, TTS_RATE)
             with open(tmp_mp3, "wb") as f:
                 f.write(audio_mp3)
             timeline = lipsync.construir_timeline(palabras)
@@ -851,6 +853,23 @@ def _cmd_permitido(comando):
     return True, primer_token
 
 
+_pyautogui_mod = None
+
+def _obtener_pyautogui():
+    """Import perezoso de pyautogui: es X11-only y no está instalado en este venv
+    (Wayland). Su ausencia no debe impedir que arranque el resto de la app."""
+    global _pyautogui_mod
+    if _pyautogui_mod is not None:
+        return _pyautogui_mod
+    try:
+        import pyautogui
+        _pyautogui_mod = pyautogui
+        return pyautogui
+    except Exception as e:
+        print(f"[pyautogui] no disponible ({e}) — 'escribir' no podrá pegar automáticamente")
+        return None
+
+
 def ejecutar_accion(datos):
     if not confirmar_accion(datos): return "Entendido, mi señor. No haré nada~"
     ac = datos.get("accion")
@@ -949,6 +968,9 @@ def ejecutar_accion(datos):
 
     elif ac == "escribir":
         texto = datos.get("texto","")
+        pag = _obtener_pyautogui()
+        if pag is None:
+            return "No puedo pegar el texto: pyautogui no está instalado (X11-only, no disponible en Wayland)."
         try:
             proc = subprocess.Popen(
                 ["xclip", "-selection", "clipboard"],
@@ -956,14 +978,14 @@ def ejecutar_accion(datos):
             )
             proc.communicate(input=texto.encode('utf-8'))
             time.sleep(0.4)
-            pyautogui.hotkey('ctrl', 'v')
+            pag.hotkey('ctrl', 'v')
             return "Texto escrito!"
         except FileNotFoundError:
             try:
                 import pyperclip
                 pyperclip.copy(texto)
                 time.sleep(0.4)
-                pyautogui.hotkey('ctrl', 'v')
+                pag.hotkey('ctrl', 'v')
                 return "Texto escrito! (vía pyperclip)"
             except Exception as e:
                 return f"Instala xclip: sudo apt install xclip. Error: {e}"

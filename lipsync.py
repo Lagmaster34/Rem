@@ -13,8 +13,10 @@ import edge_tts
 # (mismo formato que .NET TimeSpan): 10_000_000 ticks = 1 segundo.
 TICKS_POR_SEGUNDO = 10_000_000
 
-VOZ_DEFAULT = "es-MX-DaliaNeural"
-RATE_DEFAULT = "+0%"
+# es-VE-PaolaNeural + rate -8%: configuración ganadora de una comparación A/B
+# (ver CLAUDE.md, "Configuración de voz ganadora").
+VOZ_DEFAULT = "es-VE-PaolaNeural"
+RATE_DEFAULT = "-8%"
 
 
 async def sintetizar_con_timings(texto, voz=VOZ_DEFAULT, rate=RATE_DEFAULT):

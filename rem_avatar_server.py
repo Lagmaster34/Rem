@@ -14,6 +14,7 @@ import logging
 import glob
 import shutil
 import uuid
+from http import HTTPStatus
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
@@ -122,13 +123,31 @@ class _LocalHandler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=BASE_DIR, **kw)
 
+    def log_request(self, code='-', size='-'):
+        # code viene tipado desde send_response() — sin adivinar posiciones en *args.
+        if isinstance(code, HTTPStatus):
+            code = code.value
+        if str(code) not in ('200', '204', '304'):
+            logger.warning('HTTP %s "%s" %s', code, self.requestline, size)
+
     def log_message(self, fmt, *args):
-        if args and str(args[1]) not in ('200', '304'):
-            logger.warning("HTTP %s %s %s", *args)
+        # Robusto ante cualquier cantidad de args (log_error puede pasar menos que
+        # log_request) — antes esto asumía siempre 3 args y tiraba traceback en cada 404.
+        try:
+            logger.warning("HTTP %s", fmt % args)
+        except Exception:
+            logger.warning("HTTP %s", " ".join(str(a) for a in args))
 
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", f"http://localhost:{HTTP_PORT}")
         super().end_headers()
+
+    def do_GET(self):
+        if self.path == '/favicon.ico':
+            self.send_response(204)
+            self.end_headers()
+            return
+        super().do_GET()
 
 
 def _iniciar_http():

@@ -16,7 +16,7 @@ no basta con copiar la carpeta.
 | Capa | Tecnología |
 |------|-----------|
 | LLM | Groq API — `llama-3.3-70b-versatile` |
-| TTS | `edge-tts` (Microsoft Neural, voz `es-MX-DaliaNeural`) |
+| TTS | `edge-tts` (Microsoft Neural, voz `es-VE-PaolaNeural`, rate `-8%`) |
 | Voice conversion | `infer-rvc-python` + modelo `Rem_600e_6600s` |
 | STT | `speech_recognition` + Google |
 | GUI | Tkinter (Python 3.10 en venv) |
@@ -42,6 +42,8 @@ GROQ_API_KEY=tu_api_key_de_groq
 NOMBRE_USUARIO=Esteban
 CIUDAD=Yarumal
 MODELO_VISION=meta-llama/llama-4-scout-17b-16e-instruct
+VOZ_REM=es-VE-PaolaNeural
+TTS_RATE=-8%
 ```
 Todas las variables tienen valores por defecto en el código. Solo `GROQ_API_KEY` es obligatoria.
 
@@ -118,6 +120,29 @@ El overlay (`rem_overlay.py`) lo lanza Rem.py automáticamente usando `python3` 
 - **Error de audio**: verificar que PipeWire esté corriendo (`systemctl --user status pipewire`).
 - **Python dual**: `rem_overlay.py` DEBE usar el `python3` del sistema (≥3.12 con GTK), NO el venv 3.10.
 
+## Configuración de voz ganadora (comparación A/B)
+`VOZ_REM=es-VE-PaolaNeural`, `TTS_RATE=-8%`, `pitch_lvl=4`, `index_influence=0.75` — probado con
+`test_voz.py --voz ... --rate ...` contra varias voces de edge-tts y comparado el resultado tras
+pasar por RVC.
+
+**Por qué esta combinación**: RVC transfiere el timbre del modelo (`Rem_600e_6600s`) pero no la
+prosodia — el ritmo y la entonación de la voz de origen sobreviven la conversión casi intactos. Por
+eso la voz de origen se elige por su **ritmo**, no por lo bien que suene cruda (`es-MX-DaliaNeural`
+sonaba bien sin convertir, pero su cadencia no encajaba tan bien después de RVC). El `rate=-8%`
+(más lenta que el default) mejora la fidelidad de la conversión: RVC tiene más margen por fonema
+para trackear el pitch (`rmvpe`) correctamente cuando el audio de entrada no está acelerado.
+
+## Limitación conocida: la `rr` vibrante suena imperfecta
+El modelo RVC (`Rem_600e_6600s`) se entrenó con audio en japonés, un idioma sin el fonema vibrante
+múltiple `/r/` (rr) del español — el modelo nunca aprendió a reproducirlo con fidelidad, así que en
+palabras como "perro" o "corre" la conversión suena forzada/distorsionada.
+
+Se intentó compensar bajando `index_influence` a 0.5, 0.3 y 0 (menos guiado por el index, más
+libertad para el propio modelo) y no mejoró — a esos niveles se pierde timbre de Rem sin ganar
+fidelidad en la `rr`, porque el problema no es de mezcla index/modelo sino que el modelo mismo no
+tiene ese fonema en su espacio de entrenamiento. La solución real sería reentrenar el modelo con
+audio de doblaje latino (que sí tiene `rr` vibrante), no ajustar parámetros de inferencia.
+
 ## Rendimiento medido (agosto 2026)
 Medido en esta máquina (RTX 3050 Laptop, torch 2.3.1+cu121) con `test_voz.py`:
 - `edge-tts`: ~1,5s por frase larga
@@ -149,3 +174,7 @@ Extraído con `dump_vrm.py`. `rem.vrm` es **VRM 0.x** (usa `extensions.VRM`, no 
   - **`gravityPower` = 0 en los 7 grupos**: las cadenas no caen por gravedad, solo reaccionan al
     movimiento del hueso padre (drag/stiffness). Si se quiere que el pelo/ropa cuelgue con peso
     real, hay que subir `gravityPower` en el mismo editor.
+
+
+    # IMPORTANTE: 
+    CUANDO SI EL USUARIO TE PIDE HACER UN COMMIT A ESTE MISMO NO LE PONGAS QUE TU LO HACES, SOLO ESCRIBE LA INFORMACIÓN CORRESPONDIENTE AL COMMIT Y DILE AL USUARIO QUE HAGA PUSH

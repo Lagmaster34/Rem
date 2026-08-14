@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""bench.py — Prueba del lipsync real (fonemas -> visemes) sin Groq ni el chat.
+"""bench.py — REPL para probar el lipsync real (fonemas -> visemes) sin Groq ni el chat.
 
-Lanza el servidor del avatar (HTTP :18765, WS :18766, overlay GTK) y reproduce
-una frase fija por el pipeline completo: edge-tts con timings -> RVC -> enviar_audio().
-No importa Rem.py (arranca la GUI Tkinter, el cliente Groq y app.mainloop() a nivel
-de módulo) — es autocontenido, reusa solo lipsync.py y rem_avatar_server.py.
+Lanza el servidor del avatar (HTTP :18765, WS :18766, overlay GTK) UNA vez y lo
+mantiene vivo mientras escribís comandos. No importa Rem.py (arranca la GUI
+Tkinter, el cliente Groq y app.mainloop() a nivel de módulo) — es autocontenido,
+reusa solo lipsync.py y rem_avatar_server.py.
 
     venv/bin/python bench.py
-    venv/bin/python bench.py --texto "otra frase para probar"
-    venv/bin/python bench.py --no-rvc          # más rápido, sin conversión de voz
+    venv/bin/python bench.py --no-rvc      # 'say' más rápido, sin conversión de voz
+
+Comandos dentro del REPL:
+    say <texto>       — sintetiza, convierte con RVC y envía al avatar
+    state <estado>    — manda ese estado (idle/talking/thinking/happy/sad/angry/surprised)
+    quit               — cierra limpiamente (o Ctrl+D / Ctrl+C)
 """
 
 import argparse
@@ -23,25 +27,20 @@ import sounddevice as sd
 from scipy import signal as sps
 
 import lipsync
-from rem_avatar_server import iniciar_avatar, cerrar_avatar, enviar_audio
+from rem_avatar_server import (
+    HTTP_PORT, iniciar_avatar, cerrar_avatar, enviar_audio,
+    enviar_estado, ESTADOS_VALIDOS,
+)
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
-TEXTO_DEFAULT = "Hola, amo. Bienvenido de nuevo. ¿En qué puedo ayudarte hoy?"
-VOZ = "es-MX-DaliaNeural"
+ESPERA_CLIENTE_S = 8.0  # tiempo máximo para que un cliente WS conecte antes del fallback local
 
-ESPERA_CLIENTE_S = 8.0  # tiempo máximo para que el overlay conecte por WS
+_rvc_cache = None  # se carga una sola vez, en el primer 'say' que la necesite
 
 
 def log(msg):
     print(f"  {msg}", flush=True)
-
-
-def titulo(t):
-    print()
-    print("=" * 62)
-    print(t)
-    print("=" * 62)
 
 
 def cargar_rvc(pitch=4, index_influence=0.75):
@@ -63,15 +62,25 @@ def cargar_rvc(pitch=4, index_influence=0.75):
     return rvc
 
 
-async def main_async(args):
-    titulo("PASO 1 — TTS + timings (lipsync.sintetizar_con_timings)")
-    log(f'texto: "{args.texto}"')
-    audio_mp3, palabras = await lipsync.sintetizar_con_timings(args.texto, VOZ)
+def _obtener_rvc():
+    global _rvc_cache
+    if _rvc_cache is None:
+        log("cargando RVC (una sola vez, se reusa en los siguientes 'say')...")
+        t0 = time.perf_counter()
+        _rvc_cache = cargar_rvc()
+        log(f"RVC listo en {time.perf_counter() - t0:.1f}s")
+    return _rvc_cache
+
+
+async def _decir(texto, usar_rvc):
+    log(f'texto: "{texto}"')
+    audio_mp3, palabras = await lipsync.sintetizar_con_timings(texto)
     timeline = lipsync.construir_timeline(palabras)
     log(f"{len(palabras)} palabras, {len(timeline)} eventos de viseme")
 
-    tmp_mp3 = os.path.join(BASE, "bench_tmp.mp3")
-    tmp_wav = os.path.join(BASE, "bench_tmp.wav")
+    uid = int(time.time() * 1000)
+    tmp_mp3 = os.path.join(BASE, f"bench_tmp_{uid}.mp3")
+    tmp_wav = os.path.join(BASE, f"bench_tmp_{uid}.wav")
     with open(tmp_mp3, "wb") as f:
         f.write(audio_mp3)
 
@@ -84,19 +93,12 @@ async def main_async(args):
     sf.write(tmp_wav, audio.astype(np.float32), sr_)
 
     ruta_final = tmp_wav
-    if not args.no_rvc:
-        titulo("PASO 2 — CONVERSIÓN RVC")
-        t0 = time.perf_counter()
-        rvc = cargar_rvc()
-        log(f"RVC cargado en {time.perf_counter() - t0:.1f}s")
+    if usar_rvc:
+        rvc = _obtener_rvc()
         resultados = rvc(audio_files=[tmp_wav], type_output="wav")
         if resultados:
             ruta_final = resultados[0]
-        log(f"convertido -> {ruta_final}")
-    else:
-        titulo("PASO 2 — CONVERSIÓN RVC (saltada, --no-rvc)")
 
-    titulo("PASO 3 — ENVÍO AL AVATAR")
     log(f"esperando cliente WS conectado (máx {ESPERA_CLIENTE_S:.0f}s)...")
     enviado = False
     t_limite = time.time() + ESPERA_CLIENTE_S
@@ -107,9 +109,7 @@ async def main_async(args):
         time.sleep(0.3)
 
     if enviado:
-        log("audio + timeline enviados por WebSocket — mirá el overlay")
-        dur = timeline[-1]["t"] if timeline else 0
-        time.sleep(dur + 1.0)
+        log("enviado por WebSocket — el avatar reproduce por su cuenta, seguí escribiendo")
     else:
         log("nadie conectado al WS — reproduciendo localmente con sounddevice")
         data, sr2 = sf.read(ruta_final)
@@ -126,22 +126,74 @@ async def main_async(args):
             pass
 
 
+def _imprimir_ayuda():
+    print()
+    print(f"  Abrí http://localhost:{HTTP_PORT}/rem_avatar.html en un navegador normal")
+    print("  para ver el avatar sin depender del overlay GTK.")
+    print()
+    print("  Comandos:")
+    print("    say <texto>       — sintetiza, convierte con RVC y envía al avatar")
+    print(f"    state <estado>    — manda ese estado ({'/'.join(sorted(ESTADOS_VALIDOS))})")
+    print("    quit               — cierra limpiamente (o Ctrl+D / Ctrl+C)")
+    print()
+
+
+def repl(args):
+    _imprimir_ayuda()
+    while True:
+        try:
+            linea = input("bench> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+
+        if not linea:
+            continue
+
+        comando, _, resto = linea.partition(" ")
+        comando = comando.lower()
+        resto = resto.strip()
+
+        if comando == "quit":
+            break
+
+        elif comando == "say":
+            if not resto:
+                log("uso: say <texto>")
+                continue
+            try:
+                asyncio.run(_decir(resto, usar_rvc=not args.no_rvc))
+            except Exception as e:
+                log(f"error: {e}")
+
+        elif comando == "state":
+            estado = resto.lower()
+            if estado not in ESTADOS_VALIDOS:
+                log(f"estado inválido. usar uno de: {', '.join(sorted(ESTADOS_VALIDOS))}")
+                continue
+            enviar_estado(estado)
+            log(f"estado -> {estado}")
+
+        else:
+            log(f"comando desconocido: {comando!r} (usa say / state / quit)")
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--texto", type=str, default=TEXTO_DEFAULT)
-    p.add_argument("--no-rvc", action="store_true", help="saltar la conversión RVC (más rápido)")
+    p.add_argument("--no-rvc", action="store_true", help="'say' salta la conversión RVC (más rápido)")
     args = p.parse_args()
 
     if not sys.executable.replace("\\", "/").endswith("venv/bin/python"):
         log("ADVERTENCIA: ejecuta con venv/bin/python bench.py")
 
-    titulo("INICIANDO AVATAR (HTTP :18765, WS :18766, overlay GTK)")
+    print("Iniciando avatar (HTTP :18765, WS :18766, overlay GTK)...")
     iniciar_avatar()
 
     try:
-        asyncio.run(main_async(args))
+        repl(args)
     finally:
-        titulo("CERRANDO")
+        print()
+        print("Cerrando...")
         cerrar_avatar()
 
 

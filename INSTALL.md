@@ -149,10 +149,19 @@ Crea un archivo `.env` en la raíz del proyecto:
 ```bash
 cat > .env << 'EOF'
 GROQ_API_KEY=tu_clave_aqui
+VOZ_REM=es-VE-PaolaNeural
+TTS_RATE=-8%
 EOF
 ```
 
 Obtén tu clave gratis en [console.groq.com](https://console.groq.com).
+
+`VOZ_REM` y `TTS_RATE` son opcionales (tienen los mismos valores por defecto en el código) — salieron
+de una comparación A/B de voces de edge-tts pasadas por RVC. RVC transfiere el timbre del modelo pero
+no la prosodia, así que la voz de origen se elige por su ritmo, no por cómo suena cruda; `-8%` (más
+lenta que el default) le da a RVC más margen por fonema para trackear el pitch con `rmvpe` y mejora
+la fidelidad de la conversión. Ver `CLAUDE.md` → "Configuración de voz ganadora" para más detalle,
+incluida la limitación conocida con la `rr` vibrante.
 
 ---
 
@@ -235,7 +244,7 @@ python Rem.py
 ```
 Rem.py                  ← App principal (Tkinter UI, IA, voz, acciones)
   ├── Groq API          ← llama-3.3-70b-versatile (lenguaje)
-  ├── EdgeTTS           ← síntesis de voz (es-MX-DaliaNeural)
+  ├── EdgeTTS           ← síntesis de voz (es-VE-PaolaNeural, rate -8%)
   ├── RVC               ← conversión de voz al timbre de Rem
   ├── SpeechRecognition ← micrófono → texto
   └── rem_avatar_server.py

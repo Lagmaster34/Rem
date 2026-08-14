@@ -16,6 +16,7 @@ Parametros opcionales para experimentar:
     venv/bin/python test_voz.py --texto "otra frase distinta"
     venv/bin/python test_voz.py --voz es-ES-XimenaNeural
     venv/bin/python test_voz.py --rate "+15%"
+    venv/bin/python test_voz.py --envelope 0.5 --protect 0.2
     venv/bin/python test_voz.py --no-play        # solo genera los WAV
 """
 
@@ -128,7 +129,7 @@ def mp3_a_wav16k(origen_mp3, destino_wav):
     return sr
 
 
-def cargar_rvc(pitch, index_influence):
+def cargar_rvc(pitch, index_influence, envelope, protect):
     from infer_rvc_python import BaseLoader
 
     rmvpe = os.path.join(BASE, "rmvpe.pt")
@@ -141,8 +142,8 @@ def cargar_rvc(pitch, index_influence):
         file_index=os.path.join(BASE, "models", "Rem_600e_6600s", "Rem.index"),
         index_influence=index_influence,
         respiration_median_filtering=3,
-        envelope_ratio=0.25,
-        consonant_breath_protection=0.33,
+        envelope_ratio=envelope,
+        consonant_breath_protection=protect,
         resample_sr=0,
     )
     return rvc
@@ -170,6 +171,10 @@ def main():
                    help="voz de edge-tts (default: es-MX-DaliaNeural)")
     p.add_argument("--rate", type=str, default="+0%",
                    help="ajuste de velocidad de edge-tts, ej. +15%%, -10%%")
+    p.add_argument("--envelope", type=float, default=0.25,
+                   help="envelope_ratio de RVC, 0.0-1.0 (Rem.py usa 0.25)")
+    p.add_argument("--protect", type=float, default=0.33,
+                   help="consonant_breath_protection de RVC, 0.0-1.0 (Rem.py usa 0.33)")
     p.add_argument("--no-play", action="store_true")
     args = p.parse_args()
 
@@ -177,7 +182,7 @@ def main():
     os.makedirs(OUT, exist_ok=True)
 
     voz_rate = f"{args.voz}_{args.rate}"
-    sufijo = f"p{args.pitch}_i{args.index}_{voz_rate}"
+    sufijo = f"p{args.pitch}_i{args.index}_env{args.envelope}_prot{args.protect}_{voz_rate}"
     mp3       = os.path.join(OUT, f"01_crudo_{voz_rate}.mp3")
     wav_crudo = os.path.join(OUT, f"01_crudo_{voz_rate}.wav")
     wav_rvc   = os.path.join(OUT, f"02_rvc_{sufijo}.wav")
@@ -192,10 +197,11 @@ def main():
     log(f"listo en {t_tts:.2f}s  -> {wav_crudo}")
 
     titulo("PASO 2 — CARGA DEL MODELO RVC")
-    log(f"pitch_lvl={args.pitch}   index_influence={args.index}")
+    log(f"pitch_lvl={args.pitch}   index_influence={args.index}   "
+        f"envelope_ratio={args.envelope}   consonant_breath_protection={args.protect}")
     t0 = time.perf_counter()
     try:
-        rvc = cargar_rvc(args.pitch, args.index)
+        rvc = cargar_rvc(args.pitch, args.index, args.envelope, args.protect)
     except Exception as e:
         log(f"FALLO al cargar RVC: {type(e).__name__}: {e}")
         log("")
