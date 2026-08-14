@@ -13,6 +13,7 @@ __pycache__/
 *.mp3
 *.wav
 pruebas_voz/
+tmp_audio/
 
 # Modelos ML muy grandes (descargar de HuggingFace/Google Drive — ver INSTALL.md)
 rmvpe.pt

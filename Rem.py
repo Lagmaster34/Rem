@@ -2,7 +2,6 @@ import faulthandler
 faulthandler.enable()
 import time
 import asyncio
-import edge_tts
 import json
 import os
 import io
@@ -555,6 +554,7 @@ _rem_estado = "idle"   # idle | talking | thinking
 
 try:
     from rem_avatar_server import enviar_estado as _avatar_enviar_estado
+    from rem_avatar_server import enviar_audio as _avatar_enviar_audio
     _AVATAR_DISPONIBLE = True
 except Exception as _e:
     _AVATAR_DISPONIBLE = False
@@ -618,12 +618,16 @@ def _worker_audio():
     async def _sintetizar(texto):
         import numpy as np
         from scipy import signal as sps
+        import lipsync
 
         uid      = threading.get_ident()
         tmp_mp3  = os.path.join(os.path.expanduser("~"), f"rem_tts_{uid}.mp3")
         tmp_wav  = os.path.join(os.path.expanduser("~"), f"rem_tts_{uid}.wav")
         try:
-            await edge_tts.Communicate(texto, VOZ_REM).save(tmp_mp3)
+            audio_mp3, palabras = await lipsync.sintetizar_con_timings(texto, VOZ_REM)
+            with open(tmp_mp3, "wb") as f:
+                f.write(audio_mp3)
+            timeline = lipsync.construir_timeline(palabras)
 
             audio, sr_ = sf.read(tmp_mp3)
             if len(audio.shape) > 1:
@@ -636,24 +640,30 @@ def _worker_audio():
             if rvc:
                 set_rem_estado("thinking")
                 resultados = rvc(audio_files=[tmp_wav], type_output="wav")
-                data, sr2 = sf.read(resultados[0]) if resultados else sf.read(tmp_wav)
+                ruta_final = resultados[0] if resultados else tmp_wav
             else:
-                data, sr2 = sf.read(tmp_wav)
+                ruta_final = tmp_wav
 
-            set_rem_estado("talking")
-            sd.stop()
-            sd.play(data, sr2)
-            sd.wait()
+            enviado = _AVATAR_DISPONIBLE and _avatar_enviar_audio(ruta_final, timeline)
+            if not enviado:
+                # Sin cliente WS conectado (avatar no abierto): fallback local.
+                # Cuando sí hay avatar, el estado talking/idle lo maneja el navegador.
+                data, sr2 = sf.read(ruta_final)
+                set_rem_estado("talking")
+                sd.stop()
+                sd.play(data, sr2)
+                sd.wait()
+                set_rem_estado("idle")
 
         except Exception as e:
             print(f"[TTS] {e}")
+            set_rem_estado("idle")
         finally:
             for tmp in (tmp_mp3, tmp_wav):
                 try:
                     os.remove(tmp)
                 except OSError:
                     pass
-            set_rem_estado("idle")
 
     while True:
         texto = _audio_queue.get()

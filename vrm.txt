@@ -1,0 +1,156 @@
+
+============================================================
+CABECERA GLB
+============================================================
+archivo:     rem.vrm
+glb version: 2
+glb length:  23901436 bytes
+
+============================================================
+VERSIÓN VRM DETECTADA
+============================================================
+VRM 0.x  (extensions.VRM presente)
+
+============================================================
+BLEND SHAPE GROUPS (VRM 0.x)
+============================================================
+-- blendShapeGroups (18) --
+  name='A'  presetName='a'
+  name='I'  presetName='i'
+  name='U'  presetName='u'
+  name='E'  presetName='e'
+  name='O'  presetName='o'
+  name='Blink'  presetName='blink'
+  name='Joy'  presetName='joy'
+  name='Angry'  presetName='angry'
+  name='Sorrow'  presetName='sorrow'
+  name='Fun'  presetName='fun'
+  name='LookUp'  presetName='lookup'
+  name='LookDown'  presetName='lookdown'
+  name='LookLeft'  presetName='lookleft'
+  name='LookRight'  presetName='lookright'
+  name='Blink_L'  presetName='blink_l'
+  name='Blink_R'  presetName='blink_r'
+  name='Talk'  presetName='unknown'
+  name='Surprised'  presetName='unknown'
+
+============================================================
+MORPH TARGETS DEL MODELO (meshes[].primitives[].extras.targetNames)
+============================================================
+-- únicos (59) --
+  vrc.blink_left
+  vrc.blink_right
+  vrc.lowerlid_left
+  vrc.lowerlid_right
+  vrc.v_aa
+  vrc.v_ch
+  vrc.v_dd
+  vrc.v_e
+  vrc.v_ff
+  vrc.v_ih
+  vrc.v_kk
+  vrc.v_nn
+  vrc.v_oh
+  vrc.v_ou
+  vrc.v_pp
+  vrc.v_rr
+  vrc.v_sil
+  vrc.v_ss
+  vrc.v_th
+  Ah
+  a2
+  mouth
+  A
+  Wa 2
+  Cormorant
+  Huh
+  2
+  e3
+  There
+  2.001
+  Three
+  Good 4
+  Your
+  2.002
+  No
+  straightface
+  small
+  ∧
+  ∧２
+  To do it
+  Smile
+  To wipe
+  On 歯
+  Lower teeth
+  anger
+  Anger 2
+  Be troubled
+  on
+  under
+  Blink
+  A laugh
+  What?
+  Tooth and eyes
+  Nagomi
+  Wink 2 right
+  Wink 2
+  Wink right
+  Wink
+  cry
+
+============================================================
+HUESOS HUMANOIDES MAPEADOS (humanoid.humanBones)
+============================================================
+-- mapeados (52) --
+  hips
+  leftUpperLeg
+  rightUpperLeg
+  leftLowerLeg
+  rightLowerLeg
+  leftFoot
+  rightFoot
+  spine
+  chest
+  neck
+  head
+  leftShoulder
+  rightShoulder
+  leftUpperArm
+  rightUpperArm
+  leftLowerArm
+  rightLowerArm
+  leftHand
+  rightHand
+  leftEye
+  rightEye
+  jaw
+  leftThumbProximal
+  leftThumbIntermediate
+  leftThumbDistal
+  leftIndexProximal
+  leftIndexIntermediate
+  leftIndexDistal
+  leftMiddleProximal
+  leftMiddleIntermediate
+  leftMiddleDistal
+  leftRingProximal
+  leftRingIntermediate
+  leftRingDistal
+  leftLittleProximal
+  leftLittleIntermediate
+  leftLittleDistal
+  rightThumbProximal
+  rightThumbIntermediate
+  rightThumbDistal
+  rightIndexProximal
+  rightIndexIntermediate
+  rightIndexDistal
+  rightMiddleProximal
+  rightMiddleIntermediate
+  rightMiddleDistal
+  rightRingProximal
+  rightRingIntermediate
+  rightRingDistal
+  rightLittleProximal
+  rightLittleIntermediate
+  rightLittleDistal

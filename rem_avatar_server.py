@@ -11,11 +11,18 @@ import os
 import time
 import json
 import logging
+import glob
+import shutil
+import uuid
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 HTTP_PORT = 18765
 WS_PORT   = 18766
+
+TMP_AUDIO_DIR   = os.path.join(BASE_DIR, "tmp_audio")
+AUDIO_MAX_AGE_S = 5 * 60  # borrar audios servidos hace más de 5 minutos
+os.makedirs(TMP_AUDIO_DIR, exist_ok=True)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +49,63 @@ def enviar_estado(estado: str):
             except Exception:
                 pass
     asyncio.run_coroutine_threadsafe(_broadcast(), loop)
+
+
+def _limpiar_audio_viejo():
+    """Borra de tmp_audio/ los WAV servidos hace más de AUDIO_MAX_AGE_S."""
+    ahora = time.time()
+    for ruta in glob.glob(os.path.join(TMP_AUDIO_DIR, "*.wav")):
+        try:
+            if ahora - os.path.getmtime(ruta) > AUDIO_MAX_AGE_S:
+                os.remove(ruta)
+        except OSError:
+            pass
+
+
+def enviar_audio(ruta_wav: str, timeline: list) -> bool:
+    """Copia `ruta_wav` a tmp_audio/ con un id único y lo anuncia por WebSocket
+    junto al timeline de visemes, para que el navegador lo reproduzca y sincronice
+    la boca.
+
+    Devuelve True si había al menos un cliente WS conectado (y por tanto se envió).
+    Si no hay clientes, no copia nada y devuelve False — quien llama debe usar el
+    fallback de sounddevice en ese caso.
+    """
+    if not _ws_ready.is_set():
+        return False
+    loop = _ws_loop
+    if loop is None:
+        return False
+
+    with _ws_lock:
+        clientes = set(_ws_clients)
+    if not clientes:
+        return False
+
+    _limpiar_audio_viejo()
+
+    audio_id = uuid.uuid4().hex
+    nombre   = f"{audio_id}.wav"
+    destino  = os.path.join(TMP_AUDIO_DIR, nombre)
+    shutil.copyfile(ruta_wav, destino)
+
+    msg = json.dumps({
+        "tipo": "audio",
+        "url": f"/tmp_audio/{nombre}",
+        "timeline": timeline,
+    })
+
+    async def _broadcast():
+        with _ws_lock:
+            objetivo = set(_ws_clients)
+        for ws in objetivo:
+            try:
+                await ws.send(msg)
+            except Exception:
+                pass
+
+    asyncio.run_coroutine_threadsafe(_broadcast(), loop)
+    return True
 
 
 # Estados válidos para el avatar

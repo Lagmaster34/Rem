@@ -108,6 +108,7 @@ loader.load('/rem.vrm',
     console.log('[VRM] OK | expressions:', names.join(', '));
     console.log('[VRM] springBones:', vrm.springBoneManager ? 'sí' : 'no');
     _exprMap = buildExprMap(names);
+    localizarMallaFacial();
   },
   xhr => console.log('[VRM] cargando', Math.round(xhr.loaded / xhr.total * 100) + '%'),
   err => console.error('[VRM] error:', err)
@@ -123,11 +124,10 @@ const _exprCandidates = {
   happy:     ['happy', 'joy', 'blendshape.joy', 'preset.happy'],
   sad:       ['sad', 'sorrow', 'blendshape.sorrow', 'preset.sad'],
   angry:     ['angry', 'blendshape.angry', 'preset.angry'],
-  surprised: ['surprised', 'blendshape.surprised', 'preset.surprised'],
+  // En rem.vrm esta expresión no tiene presetName estándar (VRM 0.x, presetName='unknown'),
+  // three-vrm la expone por su nombre literal: 'Surprised' con mayúscula.
+  surprised: ['surprised', 'Surprised', 'blendshape.surprised', 'preset.surprised'],
   blink:     ['blink', 'blendshape.blink', 'blinkleft', 'blinkl'],
-  aa:        ['aa', 'a', 'blendshape.a'],
-  oh:        ['oh', 'o', 'blendshape.o'],
-  ih:        ['ih', 'i', 'blendshape.i'],
 };
 
 // Mapa clave lógica → nombre real de expresión en este VRM (null si no hay equivalente)
@@ -214,37 +214,125 @@ function updateBlink(dt) {
 }
 
 // ═══════════════════════════════════════════════════
-// SISTEMA DE BOCA — NOISE ORGÁNICO + MICRO-PAUSAS
+// LIPSYNC REAL — audio del backend + timeline de visemes (lipsync.py)
 // ═══════════════════════════════════════════════════
-let mouthSilenceActive = false;
-let mouthSilenceTimer  = 0;
-let mouthSilenceNext   = 1.8 + Math.random() * 1.2;
+const audioContext = new AudioContext();
 
-function updateMouth(dt, t) {
-  if (estado !== 'talking') {
-    trySetExpr('aa', 0);
-    trySetExpr('oh', 0);
-    mouthSilenceActive = false;
-    return;
+// Morph targets vrc.* que puede tocar el timeline (ver lipsync.py FONEMA_A_VISEME)
+const VISEME_NAMES = [
+  'vrc.v_aa', 'vrc.v_e', 'vrc.v_ih', 'vrc.v_oh', 'vrc.v_ou',
+  'vrc.v_pp', 'vrc.v_ff', 'vrc.v_ss', 'vrc.v_dd', 'vrc.v_kk',
+  'vrc.v_nn', 'vrc.v_rr', 'vrc.v_ch', 'vrc.v_sil',
+];
+
+const JAW_MAX_RAD        = 0.25;  // apertura máxima del hueso jaw, en radianes (eje X)
+const JAW_SMOOTH_SPEED   = 20;    // suavizado exponencial (lerp con dt)
+
+let _visemeMeshes  = [];   // meshes con morphTargetDictionary['vrc.v_aa']
+let _audioPlayQueue = [];  // cola FIFO: {url, timeline} — para no solapar frases
+let _audioPlaying  = false;
+let _audioSource   = null;
+let _audioStartTime = 0;
+let _timeline       = [];
+let _timelineIdx     = 0;
+let _jawApertura     = 0;
+
+function localizarMallaFacial() {
+  _visemeMeshes = [];
+  vrm.scene.traverse(obj => {
+    if (obj.isMesh && obj.morphTargetDictionary && ('vrc.v_aa' in obj.morphTargetDictionary)) {
+      _visemeMeshes.push(obj);
+    }
+  });
+  console.log('[Lipsync] mallas con visemes vrc.*:', _visemeMeshes.length);
+}
+
+function setViseme(name, value) {
+  for (const mesh of _visemeMeshes) {
+    const idx = mesh.morphTargetDictionary[name];
+    if (idx !== undefined) mesh.morphTargetInfluences[idx] = value;
+  }
+}
+
+// Encola audio+timeline recibidos por WS; reproduce en orden, nunca solapa frases.
+function encolarAudio(url, timeline) {
+  _audioPlayQueue.push({ url, timeline });
+  if (!_audioPlaying) _reproducirSiguienteDeCola();
+}
+
+async function _reproducirSiguienteDeCola() {
+  const siguiente = _audioPlayQueue.shift();
+  if (!siguiente) { _audioPlaying = false; return; }
+  _audioPlaying = true;
+
+  try {
+    if (audioContext.state === 'suspended') await audioContext.resume();
+    const resp = await fetch(siguiente.url);
+    const arrayBuffer = await resp.arrayBuffer();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+    const source = audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioContext.destination);
+
+    _timeline       = siguiente.timeline || [];
+    _timelineIdx     = 0;
+    _audioStartTime  = audioContext.currentTime;
+    _audioSource     = source;
+    estado = 'talking';
+
+    source.onended = () => {
+      if (_audioSource === source) {
+        _audioSource = null;
+        _timeline = [];
+      }
+      if (_audioPlayQueue.length > 0) {
+        _reproducirSiguienteDeCola();
+      } else {
+        _audioPlaying = false;
+        if (estado === 'talking') estado = 'idle';
+      }
+    };
+
+    source.start();
+  } catch (err) {
+    console.error('[Lipsync] error reproduciendo', siguiente.url, err);
+    _audioPlaying = false;
+    if (_audioPlayQueue.length > 0) _reproducirSiguienteDeCola();
+  }
+}
+
+// Por frame: interpola visemes entre el evento activo y el siguiente, y suaviza el jaw.
+// Se llama DESPUÉS de vrm.update(dt) — ver animate().
+function actualizarVisemes(dt) {
+  let objetivoApertura = 0;
+
+  if (_audioSource && _timeline.length > 0) {
+    const t = audioContext.currentTime - _audioStartTime;
+
+    while (_timelineIdx < _timeline.length - 1 && _timeline[_timelineIdx + 1].t <= t) _timelineIdx++;
+
+    const actual    = _timeline[_timelineIdx];
+    const siguiente = _timeline[_timelineIdx + 1] ?? actual;
+
+    let alpha = 0;
+    if (siguiente !== actual) {
+      const span = siguiente.t - actual.t;
+      alpha = span > 0 ? clamp((t - actual.t) / span, 0, 1) : 1;
+    }
+
+    for (const nombre of VISEME_NAMES) setViseme(nombre, 0);
+    setViseme(actual.viseme, 1 - alpha);
+    if (siguiente !== actual) setViseme(siguiente.viseme, alpha);
+
+    objetivoApertura = actual.apertura ?? 0;
+  } else {
+    for (const nombre of VISEME_NAMES) setViseme(nombre, 0);
   }
 
-  mouthSilenceNext -= dt;
-  if (!mouthSilenceActive && mouthSilenceNext <= 0) {
-    mouthSilenceActive = true;
-    mouthSilenceTimer  = 0.08 + Math.random() * 0.07; // 80-150ms pausa
-    mouthSilenceNext   = 1.8 + Math.random() * 1.2;
-  }
-  if (mouthSilenceActive) {
-    mouthSilenceTimer -= dt;
-    if (mouthSilenceTimer <= 0) mouthSilenceActive = false;
-    trySetExpr('aa', 0); trySetExpr('oh', 0);
-    return;
-  }
-
-  const intensity = clamp(0.3 + Math.sin(t * 8.5) * 0.25 + Math.sin(t * 13.7) * 0.15, 0, 1);
-  const aaW = clamp(0.5 + Math.sin(t * 3.7) * 0.35, 0, 1);
-  trySetExpr('aa', intensity * aaW);
-  trySetExpr('oh', intensity * (1 - aaW));
+  _jawApertura = lerp(_jawApertura, objetivoApertura, dt * JAW_SMOOTH_SPEED);
+  const jawB = vrm?.humanoid?.getRawBoneNode('jaw');
+  if (jawB) jawB.rotation.x = _jawApertura * JAW_MAX_RAD;
 }
 
 // ═══════════════════════════════════════════════════
@@ -499,10 +587,9 @@ function animate() {
   // Decaer snap de sorpresa
   if (surprisedSnap > 0) surprisedSnap = Math.max(0, surprisedSnap - dt * 1.8);
 
-  // ── Sistemas de expresión / boca / parpadeo / mirada / caminata ──
+  // ── Sistemas de expresión / parpadeo / mirada / caminata ──
   updateExpressions(dt);
   updateBlink(dt);
-  updateMouth(dt, t);
   updateLook(dt, t);
   tickPet(dt);
 
@@ -546,6 +633,10 @@ function animate() {
 
   vrm.update(dt); // spring bones + morphs internos del VRM — después de posar los huesos
 
+  // Visemes + jaw: DESPUÉS de vrm.update(), porque expressionManager escribe
+  // cero en los morphs de expresión en cada update() y borraría nuestros valores.
+  actualizarVisemes(dt);
+
   renderer.render(scene, camera);
 }
 animate();
@@ -577,7 +668,11 @@ let _wsRetries = 0;
   ws.onmessage = e => {
     try {
       const d = JSON.parse(e.data);
-      if (d.estado) estado = d.estado;
+      if (d.tipo === 'audio') {
+        encolarAudio(d.url, d.timeline);
+      } else if (d.estado) {
+        estado = d.estado;
+      }
     } catch (err) {
       console.warn('[WS] JSON inválido:', err);
     }
