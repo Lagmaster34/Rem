@@ -55,6 +55,9 @@ const camera = new THREE.PerspectiveCamera(CONFIG.camera.fov, window.innerWidth 
 camera.position.set(0, 0, 1.6);
 camera.lookAt(0, 0, 0);
 
+// Inspección manual desde la consola del navegador (window.__rem.vrm, .scene, .camera).
+window.__rem = { vrm: null, scene, camera };
+
 // Iluminación tipo estudio de stream
 scene.add(new THREE.AmbientLight(CONFIG.lighting.ambient.color, CONFIG.lighting.ambient.intensity));
 const keyLight  = new THREE.DirectionalLight(CONFIG.lighting.key.color,  CONFIG.lighting.key.intensity);  keyLight.position.set(...CONFIG.lighting.key.pos);   scene.add(keyLight);
@@ -144,6 +147,7 @@ loader.register(p => new VRMLoaderPlugin(p));
 loader.load('/rem.vrm',
   gltf => {
     vrm = gltf.userData.vrm;
+    window.__rem.vrm = vrm;
     VRMUtils.removeUnnecessaryJoints(vrm.scene);
     vrm.scene.rotation.y = Math.PI;
     vrm.scene.scale.set(1, 1, 1);
@@ -183,6 +187,14 @@ const _exprCandidates = {
   // three-vrm la expone por su nombre literal: 'Surprised' con mayúscula.
   surprised: ['surprised', 'Surprised', 'blendshape.surprised', 'preset.surprised'],
   blink:     ['blink', 'blendshape.blink', 'blinkleft', 'blinkl'],
+  // Presets estándar de VRM para los 5 visemes (vocales) — usados solo como
+  // fallback vía expressionManager cuando el modelo no expone morph targets
+  // vrc.* directos (ver localizarMallaFacial() / FONEMA_A_VISEME_VRM en lipsync.py).
+  aa: ['aa', 'a', 'blendshape.a'],
+  ee: ['ee', 'e', 'blendshape.e'],
+  ih: ['ih', 'i', 'blendshape.i'],
+  oh: ['oh', 'o', 'blendshape.o'],
+  ou: ['ou', 'u', 'blendshape.u'],
 };
 
 // Mapa clave lógica → nombre real de expresión en este VRM (null si no hay equivalente)
@@ -316,6 +328,11 @@ let _timeline       = [];
 let _timelineIdx     = 0;
 let _jawApertura     = 0;
 
+// Vía A: si ningún morph target vrc.* se resuelve, se cae a vrm.expressionManager
+// con los 5 presets estándar de VRM (aa/ee/ih/oh/ou) en vez de bloquear el lipsync.
+let _usarExpressionManagerFallback = false;
+const VRM_VISEME_KEYS = ['aa', 'ee', 'ih', 'oh', 'ou'];
+
 // Normaliza nombres de morph target para comparar sin depender de mayúsculas/
 // puntuación exacta (defensivo: GLTFLoader usa los nombres crudos de
 // extras.targetNames sin sanitizar, pero no cuesta nada ser tolerante).
@@ -332,6 +349,8 @@ function localizarMallaFacial() {
 
   let mallasConDiccionario = 0;
   let mallasSinDiccionario = 0;
+  const clavesUnicas = new Set();   // vía B: unión de TODAS las claves reales vistas
+  const mallasGrandes = [];         // vía B: mallas con > 40 claves (candidatas a "la" malla facial)
 
   vrm.scene.traverse(obj => {
     if (!obj.isMesh) return;
@@ -356,6 +375,8 @@ function localizarMallaFacial() {
     mallasConDiccionario++;
     const claves = Object.keys(obj.morphTargetDictionary);
     console.log(`[Lipsync] malla "${obj.name}" — ${claves.length} morph targets:`, claves.join(', '));
+    for (const c of claves) clavesUnicas.add(c);
+    if (claves.length > 40) mallasGrandes.push(obj.name);
 
     for (const clave of claves) {
       const canonico = porNormalizado[_normalizarNombreMorph(clave)];
@@ -371,6 +392,12 @@ function localizarMallaFacial() {
   if (faltantes.length > 0) {
     console.warn('[Lipsync] visemes NO encontrados en ninguna malla:', faltantes);
   }
+
+  // Vía B — diagnóstico agregado: qué nombres hay REALMENTE en los diccionarios,
+  // de un vistazo, sin tener que revisar los logs por-malla de arriba uno a uno.
+  console.log(`[Lipsync][diag] claves únicas en los ${mallasConDiccionario} diccionarios `
+            + `(${clavesUnicas.size} distintas):`, [...clavesUnicas].sort());
+  console.log('[Lipsync][diag] mallas con más de 40 claves:', mallasGrandes);
   if (resueltos.length === 0) {
     console.warn(
       '[Lipsync] ningún morph target vrc.* resuelto.',
@@ -378,6 +405,15 @@ function localizarMallaFacial() {
       `Mallas con morph attributes pero SIN diccionario (mismatch de longitud): ${mallasSinDiccionario}.`,
       'expressionManager expone:', vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? []
     );
+  }
+
+  // Vía A — decidir qué vía de lipsync usar.
+  _usarExpressionManagerFallback = resueltos.length === 0;
+  if (_usarExpressionManagerFallback) {
+    console.warn('[Lipsync] VÍA ACTIVA: fallback a vrm.expressionManager (aa/ee/ih/oh/ou) — '
+               + 'no se resolvió ningún morph target vrc.*');
+  } else {
+    console.log('[Lipsync] VÍA ACTIVA: morph targets vrc.* directos');
   }
 }
 
@@ -458,34 +494,67 @@ async function _reproducirSiguienteDeCola() {
   }
 }
 
-// Por frame: interpola visemes entre el evento activo y el siguiente, y suaviza el jaw.
-// Se llama DESPUÉS de vrm.update(dt) — ver animate().
-function actualizarVisemes(dt) {
+// Estado del viseme activo, calculado una vez por frame y reusado por las dos
+// fases de abajo (pre/post vrm.update). null si no hay audio sonando.
+let _estadoVisemeFrame = null;
+
+function _calcularEstadoViseme() {
+  if (!(_audioSource && _timeline.length > 0)) return null;
+  // _audioContext ya existe siempre que _audioSource esté seteado (ver _reproducirSiguienteDeCola).
+  const t = _audioContext.currentTime - _audioStartTime;
+
+  while (_timelineIdx < _timeline.length - 1 && _timeline[_timelineIdx + 1].t <= t) _timelineIdx++;
+
+  const actual    = _timeline[_timelineIdx];
+  const siguiente = _timeline[_timelineIdx + 1] ?? actual;
+
+  let alpha = 0;
+  if (siguiente !== actual) {
+    const span = siguiente.t - actual.t;
+    alpha = span > 0 ? clamp((t - actual.t) / span, 0, 1) : 1;
+  }
+  return { actual, siguiente, alpha };
+}
+
+// FASE 1 — ANTES de vrm.update(dt). Necesaria solo para la vía de fallback:
+// expressionManager.update() (llamado dentro de vrm.update()) es lo que consume
+// los pesos puestos por setValue() y escribe los morphs reales — si los
+// seteamos después, vrm.update() ya pasó y no hacen efecto hasta el frame
+// siguiente (mismo motivo por el que updateExpressions()/updateBlink() ya
+// corrían antes de vrm.update(), más arriba en animate()).
+function aplicarVisemesPreUpdate() {
+  _estadoVisemeFrame = _calcularEstadoViseme();
+  if (!_usarExpressionManagerFallback) return;
+
+  const pesos = { aa: 0, ee: 0, ih: 0, oh: 0, ou: 0 };
+  if (_estadoVisemeFrame) {
+    const { actual, siguiente, alpha } = _estadoVisemeFrame;
+    if (actual.viseme_vrm) pesos[actual.viseme_vrm] += actual.peso_vrm * (1 - alpha);
+    if (siguiente !== actual && siguiente.viseme_vrm) pesos[siguiente.viseme_vrm] += siguiente.peso_vrm * alpha;
+  }
+  for (const key of VRM_VISEME_KEYS) trySetExpr(key, pesos[key]);
+}
+
+// FASE 2 — DESPUÉS de vrm.update(dt). Los morph targets vrc.* van acá porque
+// expressionManager escribe cero en SUS morphs en cada update() (no toca los
+// vrc.* directos, así que a esos sí hay que aplicarlos después). El jaw
+// siempre va acá, en ambas vías, vía getRawBoneNode (hueso real, no el
+// proxy normalizado — ver CLAUDE.md).
+function aplicarVisemesPostUpdate(dt) {
   let objetivoApertura = 0;
 
-  if (_audioSource && _timeline.length > 0) {
-    // _audioContext ya existe siempre que _audioSource esté seteado (ver _reproducirSiguienteDeCola).
-    const t = _audioContext.currentTime - _audioStartTime;
-
-    while (_timelineIdx < _timeline.length - 1 && _timeline[_timelineIdx + 1].t <= t) _timelineIdx++;
-
-    const actual    = _timeline[_timelineIdx];
-    const siguiente = _timeline[_timelineIdx + 1] ?? actual;
-
-    let alpha = 0;
-    if (siguiente !== actual) {
-      const span = siguiente.t - actual.t;
-      alpha = span > 0 ? clamp((t - actual.t) / span, 0, 1) : 1;
+  if (!_usarExpressionManagerFallback) {
+    if (_estadoVisemeFrame) {
+      const { actual, siguiente, alpha } = _estadoVisemeFrame;
+      for (const nombre of VISEME_NAMES) setViseme(nombre, 0);
+      setViseme(actual.viseme, 1 - alpha);
+      if (siguiente !== actual) setViseme(siguiente.viseme, alpha);
+    } else {
+      for (const nombre of VISEME_NAMES) setViseme(nombre, 0);
     }
-
-    for (const nombre of VISEME_NAMES) setViseme(nombre, 0);
-    setViseme(actual.viseme, 1 - alpha);
-    if (siguiente !== actual) setViseme(siguiente.viseme, alpha);
-
-    objetivoApertura = actual.apertura ?? 0;
-  } else {
-    for (const nombre of VISEME_NAMES) setViseme(nombre, 0);
   }
+
+  if (_estadoVisemeFrame) objetivoApertura = _estadoVisemeFrame.actual.apertura ?? 0;
 
   _jawApertura = lerp(_jawApertura, objetivoApertura, dt * JAW_SMOOTH_SPEED);
   const jawB = vrm?.humanoid?.getRawBoneNode('jaw');
@@ -747,6 +816,7 @@ function animate() {
   // ── Sistemas de expresión / parpadeo / mirada / caminata ──
   updateExpressions(dt);
   updateBlink(dt);
+  aplicarVisemesPreUpdate(); // vía fallback: expressionManager necesita el valor ANTES de vrm.update()
   updateLook(dt, t);
   tickPet(dt);
 
@@ -790,9 +860,10 @@ function animate() {
 
   vrm.update(dt); // spring bones + morphs internos del VRM — después de posar los huesos
 
-  // Visemes + jaw: DESPUÉS de vrm.update(), porque expressionManager escribe
-  // cero en los morphs de expresión en cada update() y borraría nuestros valores.
-  actualizarVisemes(dt);
+  // Visemes (vía vrc.*) + jaw: DESPUÉS de vrm.update(), porque expressionManager
+  // escribe cero en SUS morphs en cada update() y borraría lo que hubiéramos
+  // puesto ahí (por eso la vía de fallback se aplica ANTES, ver aplicarVisemesPreUpdate).
+  aplicarVisemesPostUpdate(dt);
 
   renderer.render(scene, camera);
 }

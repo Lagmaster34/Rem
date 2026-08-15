@@ -135,12 +135,46 @@ _APERTURA_VOCALES = {"a": 1.0, "e": 0.7, "o": 0.7, "i": 0.4, "u": 0.4}
 _APERTURA_CONSONANTE = 0.15
 _APERTURA_SILENCIO = 0.0
 
+# ── Fonema → viseme estándar de VRM (fallback: 5 visemes aa/ee/ih/oh/ou vía
+# expressionManager, para cuando el modelo no expone morph targets vrc.* ──
+# Las consonantes sin viseme propio se aproximan con un peso parcial sobre el
+# viseme más cercano en vez de dejar la boca completamente inerte.
+FONEMA_A_VISEME_VRM = {
+    "a": ("aa", 1.0), "e": ("ee", 1.0), "i": ("ih", 1.0), "o": ("oh", 1.0), "u": ("ou", 1.0),
+    "p": (None, 0.0), "b": (None, 0.0), "m": (None, 0.0),
+    "f": ("ih", 0.3), "s": ("ih", 0.3), "z": ("ih", 0.3),
+    "n": ("ih", 0.2), "l": ("ih", 0.2), "t": ("ih", 0.2), "d": ("ih", 0.2),
+    "k": ("aa", 0.3), "g": ("aa", 0.3), "x": ("aa", 0.3),
+    "r": ("ih", 0.25),
+    "ch": ("ih", 0.4), "y": ("ih", 0.4),
+    "silencio": (None, 0.0),
+}
+_VISEME_VRM_DEFAULT = (None, 0.0)
+
+
+def _construir_evento(t, fonema):
+    viseme_vrm, peso_vrm = FONEMA_A_VISEME_VRM.get(fonema, _VISEME_VRM_DEFAULT)
+    apertura = _APERTURA_SILENCIO if fonema == "silencio" else _APERTURA_VOCALES.get(fonema, _APERTURA_CONSONANTE)
+    return {
+        "t": t,
+        "viseme": FONEMA_A_VISEME.get(fonema, _VISEME_DEFAULT),
+        "apertura": apertura,
+        "viseme_vrm": viseme_vrm,
+        "peso_vrm": peso_vrm,
+    }
+
 
 def construir_timeline(palabras_con_timings):
     """Reparte los fonemas de cada palabra uniformemente en su intervalo de tiempo
     e inserta silencios en los huecos entre palabras.
 
-    Devuelve [{"t": float, "viseme": str, "apertura": float}, ...] ordenado por t.
+    Cada evento trae dos mapeos en paralelo, para que el frontend elija cuál usar
+    según lo que exponga el modelo cargado:
+      - "viseme"/"apertura": morph targets vrc.* (VRChat/Oculus, 15 visemes) + jaw.
+      - "viseme_vrm"/"peso_vrm": preset estándar de VRM (aa/ee/ih/oh/ou vía
+        expressionManager), con peso parcial para consonantes sin viseme propio.
+
+    Devuelve una lista ordenada por "t".
     """
     timeline = []
     t_cursor = 0.0
@@ -150,29 +184,17 @@ def construir_timeline(palabras_con_timings):
         fin = palabra_info["fin"]
 
         if inicio > t_cursor:
-            timeline.append({
-                "t": t_cursor,
-                "viseme": FONEMA_A_VISEME["silencio"],
-                "apertura": _APERTURA_SILENCIO,
-            })
+            timeline.append(_construir_evento(t_cursor, "silencio"))
 
         fonemas = texto_a_fonemas(palabra_info["palabra"])
         if fonemas:
             duracion = (fin - inicio) / len(fonemas)
             for idx, fonema in enumerate(fonemas):
-                timeline.append({
-                    "t": inicio + idx * duracion,
-                    "viseme": FONEMA_A_VISEME.get(fonema, _VISEME_DEFAULT),
-                    "apertura": _APERTURA_VOCALES.get(fonema, _APERTURA_CONSONANTE),
-                })
+                timeline.append(_construir_evento(inicio + idx * duracion, fonema))
 
         t_cursor = fin
 
-    timeline.append({
-        "t": t_cursor,
-        "viseme": FONEMA_A_VISEME["silencio"],
-        "apertura": _APERTURA_SILENCIO,
-    })
+    timeline.append(_construir_evento(t_cursor, "silencio"))
     return timeline
 
 
@@ -194,6 +216,7 @@ if __name__ == "__main__":
         print()
         print(f"-- timeline de visemes ({len(timeline)} eventos) --")
         for ev in timeline:
-            print(f'  t={ev["t"]:.3f}s  viseme={ev["viseme"]:<12}  apertura={ev["apertura"]:.2f}')
+            print(f'  t={ev["t"]:.3f}s  viseme={ev["viseme"]:<12}  apertura={ev["apertura"]:.2f}'
+                  f'  | vrm={str(ev["viseme_vrm"]):<5} peso_vrm={ev["peso_vrm"]:.2f}')
 
     asyncio.run(_prueba())
