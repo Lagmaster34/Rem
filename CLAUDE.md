@@ -233,19 +233,34 @@ pero para el lipsync no importa, porque hay un camino mejor que no depende del n
   primitive 0 (representativa de las 72): `vrc.v_aa`=4, `v_ch`=5, `v_dd`=6, `v_e`=7, `v_ff`=8,
   `v_ih`=9, `v_kk`=10, `v_nn`=11, `v_oh`=12, `v_ou`=13, `v_pp`=14, `v_rr`=15, `v_sil`=16, `v_ss`=17,
   `v_th`=18. También `vrc.blink_left`=0, `vrc.blink_right`=1.
-- **Hallazgo colateral, afecta a la vía de fallback actual (5 visemes VRM)**: los `blendShapeGroups`
-  A/I/U/E/O del modelo **no** corresponden 1:1 a `aa/ih/ou/ee/oh`. Confirmado con los binds crudos:
-  `A`→`vrc.v_aa` (bien), `E`→`vrc.v_e` (bien), `O`→`vrc.v_oh` (bien), pero **`I`→`vrc.v_ff`** (el
-  bind apunta a la fricativa F, no a una forma de "i") y **`U` no tiene ningún bind** (lista vacía —
-  seleccionar el preset "ou" no mueve nada). Esto es una imperfección de cómo se exportó/riggeó el
-  modelo original, no un bug de este proyecto — pero significa que la vía de fallback actual
-  (`FONEMA_A_VISEME_VRM` en `lipsync.py`, vía `expressionManager`) reproduce mal los fonemas "i" y
-  "u" en este modelo específico.
-- **Camino real para recuperar los 15 visemes vrc.\* con fidelidad completa** (no implementado
-  todavía, a propósito): en vez de `mesh.morphTargetDictionary[nombre]`, aplicar
-  `mesh.morphTargetInfluences[índice]` directo usando la tabla de arriba — funciona sobre las 72
-  primitives por igual porque comparten el mismo orden, y evita tanto el problema del nombre como el
-  de los binds A/I/U/E/O incompletos del modelo.
+- **Hallazgo colateral, afecta al último fallback (`expressionManager`, 5 visemes VRM)**: los
+  `blendShapeGroups` A/I/U/E/O del modelo **no** corresponden 1:1 a `aa/ih/ou/ee/oh`. Confirmado con
+  los binds crudos: `A`→`vrc.v_aa` (bien), `E`→`vrc.v_e` (bien), `O`→`vrc.v_oh` (bien), pero
+  **`I`→`vrc.v_ff`** (el bind apunta a la fricativa F, no a una forma de "i") y **`U` no tiene ningún
+  bind** (lista vacía — seleccionar el preset "ou" no mueve nada). Esto es una imperfección de cómo
+  se exportó/riggeó el modelo original, no un bug de este proyecto — pero significa que si algún día
+  `_viaLipsync` cae hasta ese último fallback (`FONEMA_A_VISEME_VRM` en `lipsync.py`, vía
+  `expressionManager`), reproduce mal los fonemas "i" y "u" en este modelo específico. Con la vía por
+  índice implementada más abajo, ese fallback ya no se usa para `rem.vrm`.
+- **Implementado**: `rem_avatar.html` aplica `mesh.morphTargetInfluences[índice]` directo con la
+  tabla de arriba (`VISEME_INDEX`), en vez de `morphTargetDictionary[nombre]` — evita tanto el
+  problema del nombre como el de los binds A/I/U/E/O incompletos del modelo. `localizarMallaFacial()`
+  registra en `_visemeMeshesPorIndice` **todas** las mallas con `morphTargetInfluences.length > 18`
+  (las 72 primitives de `Body.baked` en este modelo) y `setViseme()` escribe en todas ellas a la vez
+  — escribir en una sola movería la cara a trozos, porque three.js las carga como 72 `Mesh`
+  independientes que comparten geometría pero no el array de influences.
+  - Tres vías con prioridad `indice > nombre > expressionManager` (`_viaLipsync`), decidida una vez
+    al cargar el modelo. La vía "nombre" (`morphTargetDictionary`) y la de `expressionManager` (5
+    visemes estándar de VRM) quedan como fallback para si algún día se carga un modelo distinto sin
+    estos morphs vrc.\* por índice.
+  - Orden crítico igual que antes: la vía por índice/nombre escribe **después** de `vrm.update(dt)`
+    (expressionManager no las toca, así que no hay pisado); la vía `expressionManager` escribe
+    **antes**, porque `vrm.update()` es lo que consume `setValue()` y aplica los morphs reales.
+  - `updateExpressions()` suprime el peso de la expresión `surprised` mientras hay audio de lipsync
+    activo (`_audioSource` truthy): sus binds incluyen el morph `"Huh"` (índice 25, fuera del rango
+    4-18 de los visemes, pero igual un gesto de boca) que si no competiría visualmente con el viseme
+    activo. `Talk` bindea `"Ah"` (índice 19, también boca) pero nunca se llama desde ningún lado del
+    código — no hizo falta suprimirla aparte.
 
 ## AudioContext bloqueado en el overlay (autoplay policy)
 El overlay GTK es **click-through por diseño** (`_aplicar_click_through` en `rem_overlay.py`) — nunca

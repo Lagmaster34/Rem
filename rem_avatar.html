@@ -267,9 +267,14 @@ const curExpr = { happy: 0, sad: 0, angry: 0, surprised: 0 };
 
 function updateExpressions(dt) {
   const profile = EXPR_PROFILES[estado] ?? EXPR_PROFILES.idle;
+  // "Surprised" bindea (entre otros) el morph "Huh" — un gesto de boca. Con
+  // lipsync activo lo suprimimos para que no compita con los visemes (ver
+  // diagnosticarExpressionBinds() / CLAUDE.md). "Talk" nunca se llama desde
+  // este sistema, así que no hace falta suprimirla aparte.
+  const suprimirBocaExpr = !!_audioSource;
   for (const [k, target] of Object.entries(profile)) {
     curExpr[k] = lerp(curExpr[k], target, dt * 2.5);
-    trySetExpr(k, curExpr[k]);
+    trySetExpr(k, (k === 'surprised' && suprimirBocaExpr) ? 0 : curExpr[k]);
   }
 }
 
@@ -351,10 +356,23 @@ const VISEME_NAMES = [
   'vrc.v_nn', 'vrc.v_rr', 'vrc.v_ch', 'vrc.v_sil',
 ];
 
+// Índices confirmados por inspección directa del glTF (ver CLAUDE.md, "Cómo
+// three.js construye morphTargetDictionary"): las 72 primitives de Body.baked
+// comparten el mismo extras.targetNames, en el mismo orden, así que un índice
+// es válido en las 72 por igual — no depende del nombre que le asigne three-vrm
+// en runtime (que en este modelo es genérico, tipo "Bodybaked_NN").
+const VISEME_INDEX = {
+  'vrc.v_aa': 4,  'vrc.v_ch': 5,  'vrc.v_dd': 6,  'vrc.v_e': 7,   'vrc.v_ff': 8,
+  'vrc.v_ih': 9,  'vrc.v_kk': 10, 'vrc.v_nn': 11, 'vrc.v_oh': 12, 'vrc.v_ou': 13,
+  'vrc.v_pp': 14, 'vrc.v_rr': 15, 'vrc.v_sil': 16, 'vrc.v_ss': 17, 'vrc.v_th': 18,
+};
+const VISEME_INDEX_MAX = 18; // índice más alto de la tabla — una malla necesita al menos esto+1 influences
+
 const JAW_MAX_RAD        = 0.25;  // apertura máxima del hueso jaw, en radianes (eje X)
 const JAW_SMOOTH_SPEED   = 20;    // suavizado exponencial (lerp con dt)
 
-let _visemeIndex    = {};  // nombre canónico (VISEME_NAMES) -> [{mesh, idx}, ...]
+let _visemeIndex    = {};  // nombre canónico (VISEME_NAMES) -> [{mesh, idx}, ...]  (vía "nombre")
+let _visemeMeshesPorIndice = []; // mallas con morphTargetInfluences.length > VISEME_INDEX_MAX (vía "indice")
 let _audioPlayQueue = [];  // cola FIFO: {url, timeline} — para no solapar frases
 let _audioPlaying  = false;
 let _audioSource   = null;
@@ -363,9 +381,15 @@ let _timeline       = [];
 let _timelineIdx     = 0;
 let _jawApertura     = 0;
 
-// Vía A: si ningún morph target vrc.* se resuelve, se cae a vrm.expressionManager
-// con los 5 presets estándar de VRM (aa/ee/ih/oh/ou) en vez de bloquear el lipsync.
-let _usarExpressionManagerFallback = false;
+// Tres vías de lipsync, en orden de preferencia:
+//   'indice'           — escribe morphTargetInfluences[índice] directo en TODAS las
+//                         mallas que lo tengan (72 primitives en este modelo). Preferida:
+//                         los 15 visemes completos, no depende de nombres.
+//   'nombre'           — busca los 15 nombres vrc.* en morphTargetDictionary. Portable a
+//                         otros modelos que sí expongan esos nombres.
+//   'expressionManager' — último recurso: 5 presets estándar de VRM (aa/ee/ih/oh/ou) vía
+//                         setValue(), para modelos sin ninguno de los morphs vrc.*.
+let _viaLipsync = 'expressionManager';
 const VRM_VISEME_KEYS = ['aa', 'ee', 'ih', 'oh', 'ou'];
 
 // Normaliza nombres de morph target para comparar sin depender de mayúsculas/
@@ -378,6 +402,7 @@ function _normalizarNombreMorph(s) {
 function localizarMallaFacial() {
   _visemeIndex = {};
   for (const nombre of VISEME_NAMES) _visemeIndex[nombre] = [];
+  _visemeMeshesPorIndice = [];
 
   const porNormalizado = {};
   for (const nombre of VISEME_NAMES) porNormalizado[_normalizarNombreMorph(nombre)] = nombre;
@@ -389,6 +414,16 @@ function localizarMallaFacial() {
 
   vrm.scene.traverse(obj => {
     if (!obj.isMesh) return;
+
+    // Vía "índice": cualquier malla con espacio suficiente en morphTargetInfluences
+    // para cubrir el índice más alto de la tabla (18), sin importar el nombre.
+    // Body.baked se carga como 72 Mesh separadas (una por primitive/material) —
+    // TODAS comparten el mismo orden de morph targets, así que hay que registrarlas
+    // todas: escribir el índice en una sola movería la cara a trozos.
+    if (Array.isArray(obj.morphTargetInfluences) && obj.morphTargetInfluences.length > VISEME_INDEX_MAX) {
+      _visemeMeshesPorIndice.push(obj);
+    }
+
     const morphCount = obj.geometry?.morphAttributes?.position?.length ?? 0;
 
     if (!obj.morphTargetDictionary) {
@@ -421,34 +456,31 @@ function localizarMallaFacial() {
     }
   });
 
-  const resueltos  = VISEME_NAMES.filter(n => _visemeIndex[n].length > 0);
-  const faltantes  = VISEME_NAMES.filter(n => _visemeIndex[n].length === 0);
-  console.log(`[Lipsync] visemes resueltos: ${resueltos.length}/${VISEME_NAMES.length} ->`, resueltos);
-  if (faltantes.length > 0) {
-    console.warn('[Lipsync] visemes NO encontrados en ninguna malla:', faltantes);
-  }
+  const resueltosPorNombre = VISEME_NAMES.filter(n => _visemeIndex[n].length > 0);
+  console.log(`[Lipsync] mallas registradas para índice directo: ${_visemeMeshesPorIndice.length}`);
+  console.log(`[Lipsync] visemes resueltos por nombre: ${resueltosPorNombre.length}/${VISEME_NAMES.length} ->`, resueltosPorNombre);
 
   // Vía B — diagnóstico agregado: qué nombres hay REALMENTE en los diccionarios,
   // de un vistazo, sin tener que revisar los logs por-malla de arriba uno a uno.
   console.log(`[Lipsync][diag] claves únicas en los ${mallasConDiccionario} diccionarios `
             + `(${clavesUnicas.size} distintas):`, [...clavesUnicas].sort());
   console.log('[Lipsync][diag] mallas con más de 40 claves:', mallasGrandes);
-  if (resueltos.length === 0) {
-    console.warn(
-      '[Lipsync] ningún morph target vrc.* resuelto.',
-      `Mallas con morphTargetDictionary: ${mallasConDiccionario}.`,
-      `Mallas con morph attributes pero SIN diccionario (mismatch de longitud): ${mallasSinDiccionario}.`,
-      'expressionManager expone:', vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? []
-    );
-  }
 
-  // Vía A — decidir qué vía de lipsync usar.
-  _usarExpressionManagerFallback = resueltos.length === 0;
-  if (_usarExpressionManagerFallback) {
-    console.warn('[Lipsync] VÍA ACTIVA: fallback a vrm.expressionManager (aa/ee/ih/oh/ou) — '
-               + 'no se resolvió ningún morph target vrc.*');
+  // Decidir qué vía de lipsync usar, en orden de preferencia: índice > nombre > expressionManager.
+  if (_visemeMeshesPorIndice.length > 0) {
+    _viaLipsync = 'indice';
+    console.log(`[Lipsync] VÍA ACTIVA: índice directo — 15/15 visemes, `
+              + `${_visemeMeshesPorIndice.length} malla(s) registrada(s)`);
+  } else if (resueltosPorNombre.length > 0) {
+    _viaLipsync = 'nombre';
+    console.log(`[Lipsync] VÍA ACTIVA: nombre (morphTargetDictionary) — `
+              + `${resueltosPorNombre.length}/${VISEME_NAMES.length} visemes resueltos`);
   } else {
-    console.log('[Lipsync] VÍA ACTIVA: morph targets vrc.* directos');
+    _viaLipsync = 'expressionManager';
+    console.warn(`[Lipsync] VÍA ACTIVA: fallback a vrm.expressionManager (aa/ee/ih/oh/ou) — `
+               + `${VRM_VISEME_KEYS.length}/${VISEME_NAMES.length} visemes (parciales), `
+               + `sin morph targets vrc.* ni por índice ni por nombre.`,
+               'expressionManager expone:', vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? []);
   }
 
   diagnosticarExpressionBinds();
@@ -477,7 +509,21 @@ function diagnosticarExpressionBinds() {
   }
 }
 
+// Aplica un viseme vrc.* (por su nombre canónico) según la vía activa.
+// 'indice': escribe el índice fijo de VISEME_INDEX en TODAS las mallas
+// registradas (72 primitives comparten el mismo orden — hay que escribir en
+// todas, si no la cara se movería a trozos). 'nombre': usa el índice resuelto
+// por morphTargetDictionary en localizarMallaFacial().
 function setViseme(name, value) {
+  if (_viaLipsync === 'indice') {
+    const idx = VISEME_INDEX[name];
+    if (idx === undefined) return;
+    for (const mesh of _visemeMeshesPorIndice) {
+      mesh.morphTargetInfluences[idx] = value;
+    }
+    return;
+  }
+
   const entradas = _visemeIndex[name];
   if (!entradas) return;
   for (const { mesh, idx } of entradas) {
@@ -584,7 +630,7 @@ function _calcularEstadoViseme() {
 // corrían antes de vrm.update(), más arriba en animate()).
 function aplicarVisemesPreUpdate() {
   _estadoVisemeFrame = _calcularEstadoViseme();
-  if (!_usarExpressionManagerFallback) return;
+  if (_viaLipsync !== 'expressionManager') return;
 
   const pesos = { aa: 0, ee: 0, ih: 0, oh: 0, ou: 0 };
   if (_estadoVisemeFrame) {
@@ -603,7 +649,7 @@ function aplicarVisemesPreUpdate() {
 function aplicarVisemesPostUpdate(dt) {
   let objetivoApertura = 0;
 
-  if (!_usarExpressionManagerFallback) {
+  if (_viaLipsync !== 'expressionManager') {
     if (_estadoVisemeFrame) {
       const { actual, siguiente, alpha } = _estadoVisemeFrame;
       for (const nombre of VISEME_NAMES) setViseme(nombre, 0);
