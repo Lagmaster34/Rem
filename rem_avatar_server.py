@@ -195,11 +195,17 @@ def _procesar_mensaje_cliente(mensaje):
 
 
 async def _ws_handler(websocket):
+    from websockets.exceptions import ConnectionClosed
+
     with _ws_lock:
         _ws_clients.add(websocket)
     try:
         async for mensaje in websocket:
             _procesar_mensaje_cliente(mensaje)
+    except ConnectionClosed as e:
+        # Cierre normal (pestaña cerrada, recargada, etc.) — no es un error real,
+        # no hace falta el traceback completo de ConnectionClosedError/OK.
+        logger.info("[Avatar] cliente WS desconectado (%s)", type(e).__name__)
     finally:
         with _ws_lock:
             _ws_clients.discard(websocket)

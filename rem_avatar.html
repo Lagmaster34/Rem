@@ -82,9 +82,40 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // coordenadas de mundo en el momento de escribir vrm.scene.position.
 let _anchoVisible = 0, _alturaVisible = 0;
 let _modeloAlturaLocal = 1.5, _modeloCentroLocal = 0.75; // fallback razonable antes de medir
+let _modeloAlturaBox3 = 0;        // guardada solo para el log comparativo
+let _medirHuesosPendiente = false; // se remide con huesos en el frame siguiente a la carga
 let _modeloPositionY = 0;
 
 const worldX = n => (n - 0.5) * _anchoVisible;
+
+// Box3.setFromObject() sobre un VRM con SkinnedMesh da la caja de la geometría
+// SIN aplicar el skinning (el shader deforma los vértices en GPU, no en los
+// datos de la geometría en CPU) — en este modelo eso da ~la mitad de la altura
+// real. Medimos altura real con huesos: head - min(leftFoot, rightFoot), con
+// +18% arriba para cubrir pelo/adornos que no tienen hueso propio. Usa
+// getRawBoneNode (el hueso real posado), no el proxy normalizado.
+function medirAlturaHuesos() {
+  const headB  = vrm?.humanoid?.getRawBoneNode('head');
+  const lFootB = vrm?.humanoid?.getRawBoneNode('leftFoot');
+  const rFootB = vrm?.humanoid?.getRawBoneNode('rightFoot');
+  if (!headB || !lFootB || !rFootB) {
+    console.warn('[Encuadre] faltan huesos head/leftFoot/rightFoot — se mantiene la medición por Box3');
+    return null;
+  }
+
+  const headPos = new THREE.Vector3(), lFootPos = new THREE.Vector3(), rFootPos = new THREE.Vector3();
+  headB.getWorldPosition(headPos);
+  lFootB.getWorldPosition(lFootPos);
+  rFootB.getWorldPosition(rFootPos);
+
+  const pieY = Math.min(lFootPos.y, rFootPos.y);
+  const alturaCruda = headPos.y - pieY;   // hueso head al pie más bajo, sin margen
+  const altura = alturaCruda * 1.18;      // +18% para pelo/adornos por encima de la cabeza
+  const tope = headPos.y + (altura - alturaCruda);
+  const centro = (tope + pieY) / 2;
+
+  return { altura, centro };
+}
 
 function recalcularEncuadre() {
   const fovRad = camera.fov * Math.PI / 180;
@@ -154,14 +185,18 @@ loader.load('/rem.vrm',
     vrm.scene.position.set(0, 0, 0); // posición neutra: medir la caja sin offsets propios
     scene.add(vrm.scene);
 
-    // Medir la altura REAL del modelo en vez de asumirla — cada VRM es distinto.
+    // Medición inicial por Box3 — placeholder para el primer frame o dos, hasta
+    // que la remedición por huesos (más abajo, en animate()) la corrija. Se
+    // guarda en _modeloAlturaBox3 solo para el log comparativo.
     const caja = new THREE.Box3().setFromObject(vrm.scene);
-    _modeloAlturaLocal = caja.max.y - caja.min.y;
+    _modeloAlturaBox3 = caja.max.y - caja.min.y;
+    _modeloAlturaLocal = _modeloAlturaBox3;
     _modeloCentroLocal = (caja.max.y + caja.min.y) / 2;
-    console.log(`[Encuadre] altura medida del modelo: ${_modeloAlturaLocal.toFixed(3)} u`
+    console.log(`[Encuadre] altura por Box3 (provisoria): ${_modeloAlturaBox3.toFixed(3)} u`
               + ` (min.y=${caja.min.y.toFixed(3)}, max.y=${caja.max.y.toFixed(3)})`);
 
-    recalcularEncuadre(); // fija camera.position.z, vrm.scene.position.y/x y el lookAt
+    recalcularEncuadre(); // fija camera.position.z, vrm.scene.position.y/x y el lookAt (provisorio)
+    _medirHuesosPendiente = true; // remedir con huesos en el próximo frame, una vez posado (ver animate())
 
     const names = vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? [];
     console.log('[VRM] OK | expressions:', names.join(', '));
@@ -414,6 +449,31 @@ function localizarMallaFacial() {
                + 'no se resolvió ningún morph target vrc.*');
   } else {
     console.log('[Lipsync] VÍA ACTIVA: morph targets vrc.* directos');
+  }
+
+  diagnosticarExpressionBinds();
+}
+
+// Investigación (no toca el sistema de lipsync): para cada expresión de
+// expressionManager, qué (malla, índice de morph) apunta realmente cada bind.
+// Sirve para recuperar el mapeo real cuando morphTargetDictionary trae nombres
+// genéricos (ej. "Bodybaked_NN") en vez de los vrc.* originales del glTF —
+// los binds del VRM apuntan a (malla, índice) directo, sin pasar por el nombre.
+function diagnosticarExpressionBinds() {
+  if (!vrm?.expressionManager) return;
+  const expresiones = vrm.expressionManager.expressions ?? [];
+  console.log(`[Diag] expressionManager: ${expresiones.length} expresiones`);
+  for (const expr of expresiones) {
+    const binds = expr._binds ?? [];
+    if (binds.length === 0) {
+      console.log(`[Diag] expresión "${expr.expressionName}" — sin binds de morph target`);
+      continue;
+    }
+    console.log(`[Diag] expresión "${expr.expressionName}" — ${binds.length} bind(s):`);
+    for (const bind of binds) {
+      const mallas = (bind.primitives ?? []).map(p => p.name || '<sin name>').join(', ');
+      console.log(`    -> malla(s)=[${mallas}]  morph_index=${bind.index}  weight=${bind.weight}`);
+    }
   }
 }
 
@@ -859,6 +919,22 @@ function animate() {
   updateWalking(dt);
 
   vrm.update(dt); // spring bones + morphs internos del VRM — después de posar los huesos
+
+  // Remedir con huesos ahora que el modelo ya se posó al menos un frame
+  // (no en el mismo frame de la carga, donde el esqueleto podía no reflejar
+  // la pose real todavía).
+  if (_medirHuesosPendiente) {
+    _medirHuesosPendiente = false;
+    vrm.scene.updateMatrixWorld(true); // asegurar matrices de mundo frescas para getWorldPosition
+    const medida = medirAlturaHuesos();
+    if (medida) {
+      console.log(`[Encuadre] altura Box3=${_modeloAlturaBox3.toFixed(3)}u  `
+                + `altura huesos=${medida.altura.toFixed(3)}u`);
+      _modeloAlturaLocal = medida.altura;
+      _modeloCentroLocal = medida.centro;
+      recalcularEncuadre(); // vuelve a fijar z/position.y — su propio log muestra el z resultante
+    }
+  }
 
   // Visemes (vía vrc.*) + jaw: DESPUÉS de vrm.update(), porque expressionManager
   // escribe cero en SUS morphs en cada update() y borraría lo que hubiéramos

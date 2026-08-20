@@ -8,10 +8,12 @@ reusa solo lipsync.py y rem_avatar_server.py.
 
     venv/bin/python bench.py
     venv/bin/python bench.py --no-rvc      # 'say' más rápido, sin conversión de voz
+    venv/bin/python bench.py --open        # abre el navegador automáticamente al arrancar
 
 Comandos dentro del REPL:
     say <texto>       — sintetiza, convierte con RVC y envía al avatar
     state <estado>    — manda ese estado (idle/talking/thinking/happy/sad/angry/surprised)
+    open               — abre http://localhost:18765/rem_avatar.html en el navegador por defecto
     quit               — cierra limpiamente (o Ctrl+D / Ctrl+C)
 """
 
@@ -20,6 +22,9 @@ import asyncio
 import os
 import sys
 import time
+import urllib.error
+import urllib.request
+import webbrowser
 
 import numpy as np
 import soundfile as sf
@@ -28,13 +33,15 @@ from scipy import signal as sps
 
 import lipsync
 from rem_avatar_server import (
-    HTTP_PORT, iniciar_avatar, cerrar_avatar, enviar_audio,
+    HTTP_PORT, TMP_AUDIO_DIR, iniciar_avatar, cerrar_avatar, enviar_audio,
     enviar_estado, ESTADOS_VALIDOS,
 )
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+URL_AVATAR = f"http://localhost:{HTTP_PORT}/rem_avatar.html"
 
 ESPERA_CLIENTE_S = 8.0  # tiempo máximo para que un cliente WS conecte antes del fallback local
+ESPERA_HTTP_S = 5.0     # tiempo máximo para que el servidor HTTP responda antes de --open
 
 _rvc_cache = None  # se carga una sola vez, en el primer 'say' que la necesite
 
@@ -78,62 +85,86 @@ async def _decir(texto, usar_rvc):
     timeline = lipsync.construir_timeline(palabras)
     log(f"{len(palabras)} palabras, {len(timeline)} eventos de viseme")
 
+    # Temporales en tmp_audio/ (no en la raíz del proyecto) — RVC escribe su
+    # salida "<tmp_wav>_edited.wav" junto a la entrada, así que también cae ahí.
     uid = int(time.time() * 1000)
-    tmp_mp3 = os.path.join(BASE, f"bench_tmp_{uid}.mp3")
-    tmp_wav = os.path.join(BASE, f"bench_tmp_{uid}.wav")
-    with open(tmp_mp3, "wb") as f:
-        f.write(audio_mp3)
-
-    audio, sr_ = sf.read(tmp_mp3)
-    if audio.ndim > 1:
-        audio = audio.mean(axis=1)
-    if sr_ != 16000:
-        audio = sps.resample(audio, int(round(len(audio) * 16000 / sr_)))
-        sr_ = 16000
-    sf.write(tmp_wav, audio.astype(np.float32), sr_)
-
+    tmp_mp3 = os.path.join(TMP_AUDIO_DIR, f"bench_tmp_{uid}.mp3")
+    tmp_wav = os.path.join(TMP_AUDIO_DIR, f"bench_tmp_{uid}.wav")
     ruta_final = tmp_wav
-    if usar_rvc:
-        rvc = _obtener_rvc()
-        resultados = rvc(audio_files=[tmp_wav], type_output="wav")
-        if resultados:
-            ruta_final = resultados[0]
 
-    log(f"esperando cliente WS conectado (máx {ESPERA_CLIENTE_S:.0f}s)...")
-    enviado = False
-    t_limite = time.time() + ESPERA_CLIENTE_S
+    try:
+        with open(tmp_mp3, "wb") as f:
+            f.write(audio_mp3)
+
+        audio, sr_ = sf.read(tmp_mp3)
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+        if sr_ != 16000:
+            audio = sps.resample(audio, int(round(len(audio) * 16000 / sr_)))
+            sr_ = 16000
+        sf.write(tmp_wav, audio.astype(np.float32), sr_)
+
+        if usar_rvc:
+            rvc = _obtener_rvc()
+            resultados = rvc(audio_files=[tmp_wav], type_output="wav")
+            if resultados:
+                ruta_final = resultados[0]
+
+        enviado = enviar_audio(ruta_final, timeline)
+        if not enviado:
+            log(f"esperando cliente WS conectado (máx {ESPERA_CLIENTE_S:.0f}s)...")
+            t_limite = time.time() + ESPERA_CLIENTE_S
+            while time.time() < t_limite and not enviado:
+                time.sleep(0.3)
+                enviado = enviar_audio(ruta_final, timeline)
+
+        if enviado:
+            log("enviado por WebSocket — el avatar reproduce por su cuenta, seguí escribiendo")
+        else:
+            log("nadie conectado al WS — reproduciendo localmente con sounddevice")
+            data, sr2 = sf.read(ruta_final)
+            try:
+                sd.play(data, sr2)
+                sd.wait()
+            except sd.PortAudioError as e:
+                log(f"no se pudo reproducir localmente ({e}) — revisa el dispositivo de audio por defecto")
+    finally:
+        for tmp in {tmp_mp3, tmp_wav, ruta_final}:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _esperar_http(timeout=ESPERA_HTTP_S):
+    """Sondea el servidor HTTP hasta que responda o se acabe el tiempo. Devuelve
+    True si respondió."""
+    t_limite = time.time() + timeout
     while time.time() < t_limite:
-        if enviar_audio(ruta_final, timeline):
-            enviado = True
-            break
-        time.sleep(0.3)
-
-    if enviado:
-        log("enviado por WebSocket — el avatar reproduce por su cuenta, seguí escribiendo")
-    else:
-        log("nadie conectado al WS — reproduciendo localmente con sounddevice")
-        data, sr2 = sf.read(ruta_final)
         try:
-            sd.play(data, sr2)
-            sd.wait()
-        except sd.PortAudioError as e:
-            log(f"no se pudo reproducir localmente ({e}) — revisa el dispositivo de audio por defecto")
+            urllib.request.urlopen(URL_AVATAR, timeout=1.0)
+            return True
+        except urllib.error.URLError:
+            time.sleep(0.2)
+    return False
 
-    for tmp in (tmp_mp3, tmp_wav):
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
+
+def _abrir_navegador():
+    if not _esperar_http():
+        log(f"el servidor HTTP no respondió a tiempo — igual intento abrir {URL_AVATAR}")
+    webbrowser.open(URL_AVATAR)
+    log(f"abriendo {URL_AVATAR} en el navegador por defecto")
 
 
 def _imprimir_ayuda():
     print()
-    print(f"  Abrí http://localhost:{HTTP_PORT}/rem_avatar.html en un navegador normal")
-    print("  para ver el avatar sin depender del overlay GTK.")
+    print(f"  Abrí {URL_AVATAR} en un navegador normal")
+    print("  para ver el avatar sin depender del overlay GTK (o usá el comando 'open').")
     print()
     print("  Comandos:")
     print("    say <texto>       — sintetiza, convierte con RVC y envía al avatar")
     print(f"    state <estado>    — manda ese estado ({'/'.join(sorted(ESTADOS_VALIDOS))})")
+    print("    open               — abre el avatar en el navegador por defecto")
     print("    quit               — cierra limpiamente (o Ctrl+D / Ctrl+C)")
     print()
 
@@ -174,6 +205,9 @@ def repl(args):
             enviar_estado(estado)
             log(f"estado -> {estado}")
 
+        elif comando == "open":
+            _abrir_navegador()
+
         else:
             log(f"comando desconocido: {comando!r} (usa say / state / quit)")
 
@@ -181,6 +215,7 @@ def repl(args):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--no-rvc", action="store_true", help="'say' salta la conversión RVC (más rápido)")
+    p.add_argument("--open", action="store_true", help="abre el navegador automáticamente al arrancar")
     args = p.parse_args()
 
     if not sys.executable.replace("\\", "/").endswith("venv/bin/python"):
@@ -188,6 +223,9 @@ def main():
 
     print("Iniciando avatar (HTTP :18765, WS :18766, overlay GTK)...")
     iniciar_avatar()
+
+    if args.open:
+        _abrir_navegador()
 
     try:
         repl(args)

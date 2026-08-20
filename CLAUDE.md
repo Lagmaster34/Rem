@@ -213,11 +213,39 @@ como sospechoso. La comparación contra `VISEME_NAMES` es normalizada (minúscul
 alfanumérico) como defensa adicional, pero según lo de arriba probablemente no haga falta —
 `vrc.v_aa` debería llegar tal cual.
 
-**Pendiente de confirmar en un navegador real** (esta máquina de desarrollo no tiene
-`webkit2gtk-4.1` instalado, así que esto no se pudo verificar en vivo): correr `bench.py`, abrir
-`http://localhost:18765/rem_avatar.html` y pegar acá los nombres reales que imprima la consola —
-si son exactamente `vrc.v_aa` etc. confirma la hipótesis de arriba; si `mallasSinDiccionario > 0`,
-confirma el mismatch de longitud y hay que revisar cómo se exportaron los primitives del modelo.
+**Confirmado en vivo — ninguna de las dos hipótesis de arriba era la causa.** El navegador real
+reporta 72 mallas con `morphTargetDictionary` construido y 0 con mismatch de longitud, pero ninguna
+con claves `vrc.*`: los nombres reales son genéricos tipo `Bodybaked_NN` (numéricos). El mecanismo
+exacto por el que three-vrm termina asignando esos nombres en vez de los de `extras.targetNames`
+sigue sin confirmarse (no es `GLTFLoader`, que ya probamos que usa los nombres crudos tal cual) —
+pero para el lipsync no importa, porque hay un camino mejor que no depende del nombre en absoluto:
+
+- El archivo tiene **un solo mesh** (`Body.baked`, índice 0) con **72 primitives**, uno por grupo de
+  material. Confirmado con Python directo sobre el JSON crudo del glTF (sin depender del navegador):
+  las 72 primitives comparten **exactamente la misma lista de 59 `targetNames`, en el mismo orden**.
+  Eso significa que un **índice** de morph target es válido universalmente en las 72 — no hace falta
+  el nombre para nada, ni siquiera el que asigna three-vrm en runtime.
+- Los `binds` de `blendShapeMaster.blendShapeGroups` en VRM 0.x apuntan a `{mesh: <índice en
+  gltf.meshes[]>, index: <índice de morph target>}` directo — por eso `expressionManager` resuelve
+  bien sin pasar por el nombre. `bind.mesh` **no** es un índice de `gltf.nodes[]` (fue el primer error
+  al investigar esto): con un solo mesh en el archivo, `bind.mesh` es siempre `0`.
+- Tabla de índices de los 15 visemes VRChat/Oculus, extraída de `extras.targetNames` de la
+  primitive 0 (representativa de las 72): `vrc.v_aa`=4, `v_ch`=5, `v_dd`=6, `v_e`=7, `v_ff`=8,
+  `v_ih`=9, `v_kk`=10, `v_nn`=11, `v_oh`=12, `v_ou`=13, `v_pp`=14, `v_rr`=15, `v_sil`=16, `v_ss`=17,
+  `v_th`=18. También `vrc.blink_left`=0, `vrc.blink_right`=1.
+- **Hallazgo colateral, afecta a la vía de fallback actual (5 visemes VRM)**: los `blendShapeGroups`
+  A/I/U/E/O del modelo **no** corresponden 1:1 a `aa/ih/ou/ee/oh`. Confirmado con los binds crudos:
+  `A`→`vrc.v_aa` (bien), `E`→`vrc.v_e` (bien), `O`→`vrc.v_oh` (bien), pero **`I`→`vrc.v_ff`** (el
+  bind apunta a la fricativa F, no a una forma de "i") y **`U` no tiene ningún bind** (lista vacía —
+  seleccionar el preset "ou" no mueve nada). Esto es una imperfección de cómo se exportó/riggeó el
+  modelo original, no un bug de este proyecto — pero significa que la vía de fallback actual
+  (`FONEMA_A_VISEME_VRM` en `lipsync.py`, vía `expressionManager`) reproduce mal los fonemas "i" y
+  "u" en este modelo específico.
+- **Camino real para recuperar los 15 visemes vrc.\* con fidelidad completa** (no implementado
+  todavía, a propósito): en vez de `mesh.morphTargetDictionary[nombre]`, aplicar
+  `mesh.morphTargetInfluences[índice]` directo usando la tabla de arriba — funciona sobre las 72
+  primitives por igual porque comparten el mismo orden, y evita tanto el problema del nombre como el
+  de los binds A/I/U/E/O incompletos del modelo.
 
 ## AudioContext bloqueado en el overlay (autoplay policy)
 El overlay GTK es **click-through por diseño** (`_aplicar_click_through` en `rem_overlay.py`) — nunca
@@ -236,15 +264,32 @@ pudo verificar en vivo** (esta máquina de desarrollo no tiene `webkit2gtk-4.1` 
 si existe en la versión real de WebKit2GTK instalada y si con eso ya alcanza sin necesitar el fallback.
 
 ## Encuadre del avatar: anclas normalizadas, no world units fijas
-`rem_avatar.html` mide la altura real de `rem.vrm` con `new THREE.Box3().setFromObject(vrm.scene)`
-al cargar (antes las constantes de cámara/posición eran calibradas a mano para un modelo distinto, y
-por eso solo se veía la cabeza gigante y cortada). `recalcularEncuadre()` deriva `camera.position.z`
-para que el modelo ocupe `CONFIG.pet.alturaPantalla` del alto de pantalla, y `vrm.scene.position.y`
-para que el centro de su caja caiga en `CONFIG.pet.anchorY` (fracción 0=arriba..1=abajo). La cámara
-mira siempre a `(0,0,0)`; todo el trabajo de encuadre lo hace la posición del modelo, no la cámara.
-`CONFIG.pet.anchorX`/`walkLeft`/`walkRight` son fracciones de pantalla (0=izq..1=der) — `worldX(n)`
-las convierte a coordenadas de mundo recién al escribir `vrm.scene.position.x`, así que sobreviven a
-un resize sin que Rem salte de lugar. Se llama en la carga del VRM y en cada `resize`.
+`recalcularEncuadre()` deriva `camera.position.z` para que el modelo ocupe `CONFIG.pet.alturaPantalla`
+del alto de pantalla, y `vrm.scene.position.y` para que su centro caiga en `CONFIG.pet.anchorY`
+(fracción 0=arriba..1=abajo). La cámara mira siempre a `(0,0,0)`; todo el trabajo de encuadre lo hace
+la posición del modelo, no la cámara. `CONFIG.pet.anchorX`/`walkLeft`/`walkRight` son fracciones de
+pantalla (0=izq..1=der) — `worldX(n)` las convierte a coordenadas de mundo recién al escribir
+`vrm.scene.position.x`, así que sobreviven a un resize sin que Rem salte de lugar. Se llama en la
+carga del VRM y en cada `resize`.
+
+**La altura del modelo se mide con huesos, no con `Box3`.** El primer intento usaba
+`new THREE.Box3().setFromObject(vrm.scene)`, que para un VRM con `SkinnedMesh` da la caja de la
+geometría **sin aplicar el skinning** — el shader deforma los vértices en la GPU, no en los datos de
+`geometry.attributes.position` en CPU, así que `Box3` mide aproximadamente la mitad de la altura real
+(medido en este modelo: Box3 ≈ 0,80u vs. huesos ≈ 1,55u). La fórmula de encuadre en sí es correcta
+para *cualquier* altura que se le pase (normaliza a `alturaPantalla`/`anchorY` por construcción) — el
+bug no estaba ahí, sino en que `Box3` alimentaba un dato de altura equivocado: la cámara terminaba
+demasiado cerca para el tamaño *real* renderizado (más grande que el medido), así que la cabeza se
+salía del cuadro aunque los números de `recalcularEncuadre()` parecieran consistentes.
+
+La medición real: `vrm.humanoid.getRawBoneNode('head'|'leftFoot'|'rightFoot')` +
+`getWorldPosition()`, altura = `head.y - min(leftFoot.y, rightFoot.y)`, con **+18%** extra arriba
+para cubrir pelo/adornos que no tienen hueso propio. Se hace con `getRawBoneNode` (huesos reales ya
+posados), no el proxy normalizado. Y se hace **un frame después** de la carga (flag
+`_medirHuesosPendiente`, consumido en `animate()` tras el primer `vrm.update(dt)`), no en el mismo
+frame del `gltf.load()` callback, porque recién ahí el esqueleto refleja la pose real (antes puede
+seguir en un estado intermedio del importador). La medición inicial por `Box3` se conserva como
+placeholder para el primer frame o dos, y ambas cifras (Box3 y huesos) quedan logueadas para comparar.
 
 ## Layer surface acotada (rendimiento del overlay)
 `rem_overlay.py` ancla la layer surface solo a `RIGHT`+`BOTTOM` con tamaño fijo
