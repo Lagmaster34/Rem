@@ -314,6 +314,25 @@ transparente del tamaño del monitor entero, renderizado a 60fps de forma perman
 escritorio — con las ~103 cadenas de spring bones de este modelo, costo constante innecesario.
 `set_exclusive_zone(-1)` y el click-through se mantienen igual.
 
+**Dos regresiones que introdujo ese cambio, ya arregladas:**
+
+- **Click-through roto**: `_aplicar_click_through()` (input region vacía vía
+  `input_shape_combine_region`) solo se aplicaba en `realize`. Con anclaje a los 4 bordes eso
+  alcanzaba porque la superficie no se reasignaba después; con `RIGHT+BOTTOM` + tamaño fijo, el
+  compositor puede reasignar/redimensionar la superficie después de `realize`, y la input region
+  vacía no sobrevive a eso — el overlay volvía a capturar clics en su esquina. Se refuerza también
+  tras `show_all()` y en cada señal `size-allocate`.
+- **Rem no se veía en el overlay** (pero sí en un navegador normal, con lipsync funcionando — o sea
+  no era un bug de JS): la superficie de 520×860 tiene aspect ~0,60 (vertical), no 16:9 como un
+  monitor. `CONFIG.pet.anchorX=0.82` está pensado para un monitor ancho donde Rem camina por un
+  tercio de pantalla; en una superficie angosta dedicada solo al avatar, ese offset cae fuera (o casi
+  fuera) del recuadro visible, porque `anchoVisible` en `recalcularEncuadre()` es mucho más chico en
+  vertical. `_ajustarAnclasPorAspect()` en `rem_avatar.html` colapsa `anchorX`/`walkLeft`/`walkRight`
+  a `0.5` (centrado, sin caminata lateral) cuando `camera.aspect < 1`, reevaluado en cada
+  `recalcularEncuadre()` (carga + resize) — así que si algún día la superficie vuelve a ser ancha,
+  vuelve a las anclas originales solo. `BORDE_IZQ`/`BORDE_DER` en `tickPet()` pasaron de `const`
+  cacheadas a leer `CONFIG.pet.walkLeft`/`walkRight` en vivo, si no el ajuste no tenía efecto ahí.
+
 
     # IMPORTANTE: 
     AL MOMENTO DE HACER COMMIT NO PONGAS TU AUDITORIA Claude/Anthropic DETRO DEL COMMIT

@@ -71,8 +71,16 @@ if _LAYER_SHELL_OK:
     print(f"[Overlay] Capa: {_layer_str.upper()}")
 
 
-def _aplicar_click_through(win):
-    """Establece una input region vacía: ningún punto del overlay captura clics."""
+def _aplicar_click_through(win, *_args):
+    """Establece una input region vacía: ningún punto del overlay captura clics.
+
+    Se conecta a 'realize', 'size-allocate' y se vuelve a llamar tras show_all():
+    con el anclaje RIGHT+BOTTOM + set_size_request() nuevos, el compositor puede
+    reasignar/redimensionar la superficie después de realizarse, y la input
+    region vacía no sobrevive a esa reasignación — sin este refuerzo el overlay
+    deja de ser click-through y bloquea los clics en su esquina de pantalla.
+    *_args absorbe el argumento allocation que manda la señal 'size-allocate'.
+    """
     gdk_win = win.get_window()
     if gdk_win:
         gdk_win.input_shape_combine_region(cairo.Region(), 0, 0)
@@ -167,8 +175,11 @@ def main():
     webview.connect('context-menu', lambda *a: True)
     win.add(webview)
 
-    # ── Click-through total — se aplica al realizarse la ventana ─────
+    # ── Click-through total — reforzado en varios momentos (ver docstring
+    #    de _aplicar_click_through) porque el anclaje RIGHT+BOTTOM con tamaño
+    #    fijo puede reasignar la superficie después de realizarse ──────────
     win.connect('realize', _aplicar_click_through)
+    win.connect('size-allocate', _aplicar_click_through)
 
     # ── Carga del avatar con retry exponencial ────────────────────────
     _intentos = [0]
@@ -207,6 +218,7 @@ def main():
 
     win.connect('destroy', Gtk.main_quit)
     win.show_all()
+    _aplicar_click_through(win)
     Gtk.main()
 
 

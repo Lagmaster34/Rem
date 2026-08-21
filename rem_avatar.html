@@ -36,6 +36,13 @@ const CONFIG = {
   },
 };
 
+// Valores originales de las anclas horizontales, antes de cualquier ajuste por
+// aspect — se preservan para poder volver a ellos si la superficie es ancha
+// (navegador normal) después de haber sido angosta, o viceversa.
+const _anchorXOriginal   = CONFIG.pet.anchorX;
+const _walkLeftOriginal  = CONFIG.pet.walkLeft;
+const _walkRightOriginal = CONFIG.pet.walkRight;
+
 // ═══════════════════════════════════════════════════
 // RENDERER + ESCENA
 // ═══════════════════════════════════════════════════
@@ -57,6 +64,25 @@ camera.lookAt(0, 0, 0);
 
 // Inspección manual desde la consola del navegador (window.__rem.vrm, .scene, .camera).
 window.__rem = { vrm: null, scene, camera };
+
+// El overlay es una superficie de 520x860 (aspect ~0,60, vertical) dedicada
+// solo al avatar — no un monitor de 16:9. Las anclas horizontales (anchorX/
+// walkLeft/walkRight) están pensadas para un monitor ancho donde Rem camina
+// por un tercio de pantalla; en una superficie angosta, anchorX=0.82 cae
+// FUERA del recuadro visible. Si el ancho es menor que el alto, se colapsan
+// a 0.5 (centrado, sin caminata lateral). Se reevalúa en cada
+// recalcularEncuadre() (carga + resize) por si la superficie cambia de forma.
+function _ajustarAnclasPorAspect() {
+  const esVertical = camera.aspect < 1;
+  CONFIG.pet.anchorX   = esVertical ? 0.5 : _anchorXOriginal;
+  CONFIG.pet.walkLeft  = esVertical ? 0.5 : _walkLeftOriginal;
+  CONFIG.pet.walkRight = esVertical ? 0.5 : _walkRightOriginal;
+  console.log(`[Encuadre] aspect=${camera.aspect.toFixed(3)} `
+            + `(${esVertical ? 'vertical: overlay' : 'horizontal'}) -> `
+            + `anchorX=${CONFIG.pet.anchorX} walkLeft=${CONFIG.pet.walkLeft} walkRight=${CONFIG.pet.walkRight}`);
+  return esVertical;
+}
+_ajustarAnclasPorAspect(); // antes de que charX se inicialice más abajo, con el valor ya correcto
 
 // Iluminación tipo estudio de stream
 scene.add(new THREE.AmbientLight(CONFIG.lighting.ambient.color, CONFIG.lighting.ambient.intensity));
@@ -120,6 +146,11 @@ function medirAlturaHuesos() {
 function recalcularEncuadre() {
   const fovRad = camera.fov * Math.PI / 180;
 
+  // 0) Reevaluar anclas horizontales por si el aspect cambió (resize) —
+  //    también colapsa charX al centro si se volvió vertical.
+  const esVertical = _ajustarAnclasPorAspect();
+  if (esVertical) charX = 0.5;
+
   // 1) Distancia de cámara tal que el modelo (altura real medida) ocupe
   //    CONFIG.pet.alturaPantalla del alto visible de pantalla.
   const alturaVisibleObjetivo = _modeloAlturaLocal / CONFIG.pet.alturaPantalla;
@@ -136,19 +167,21 @@ function recalcularEncuadre() {
   const centroObjetivoMundo = _alturaVisible * (0.5 - CONFIG.pet.anchorY);
   _modeloPositionY = centroObjetivoMundo - _modeloCentroLocal;
 
+  const posX = worldX(charX);
   if (vrm) {
     vrm.scene.position.y = _modeloPositionY;
-    vrm.scene.position.x = worldX(charX);
+    vrm.scene.position.x = posX;
   }
 
   console.log(`[Encuadre] z=${camera.position.z.toFixed(3)} anchoVisible=${_anchoVisible.toFixed(3)} `
-            + `alturaVisible=${_alturaVisible.toFixed(3)} position.y=${_modeloPositionY.toFixed(3)}`);
+            + `alturaVisible=${_alturaVisible.toFixed(3)} position.y=${_modeloPositionY.toFixed(3)} `
+            + `position.x=${posX.toFixed(3)} (charX=${charX})`);
 }
 
 // ═══════════════════════════════════════════════════
 // DESKTOP PET — CAMINATA (fracciones normalizadas de pantalla)
 // ═══════════════════════════════════════════════════
-const BORDE_IZQ = CONFIG.pet.walkLeft, BORDE_DER = CONFIG.pet.walkRight, VEL = CONFIG.pet.velocity;
+const VEL = CONFIG.pet.velocity;
 let charX = CONFIG.pet.anchorX, charDir = -1;  // empieza en la posición de reposo
 let petEstado = 'idle_anim', petTimer = 2 + Math.random() * 3;
 let walkBlend = 0, walkPhase = 0;
@@ -162,9 +195,12 @@ function tickPet(dt) {
     if (petEstado === 'walking' && Math.random() < 0.3) charDir *= -1;
   }
   if (petEstado === 'walking') {
+    // Se leen en vivo (no cacheadas): _ajustarAnclasPorAspect() puede haberlas
+    // colapsado a 0.5 si la superficie es vertical (overlay).
+    const bordeIzq = CONFIG.pet.walkLeft, bordeDer = CONFIG.pet.walkRight;
     charX += charDir * VEL * dt;
-    if (charX > BORDE_DER) { charX = BORDE_DER; charDir = -1; petEstado = 'idle_anim'; petTimer = 2 + Math.random() * 3; }
-    if (charX < BORDE_IZQ) { charX = BORDE_IZQ; charDir =  1; petEstado = 'idle_anim'; petTimer = 2 + Math.random() * 3; }
+    if (charX > bordeDer) { charX = bordeDer; charDir = -1; petEstado = 'idle_anim'; petTimer = 2 + Math.random() * 3; }
+    if (charX < bordeIzq) { charX = bordeIzq; charDir =  1; petEstado = 'idle_anim'; petTimer = 2 + Math.random() * 3; }
     if (vrm) vrm.scene.position.x = worldX(charX);
   }
 }
