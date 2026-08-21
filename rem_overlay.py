@@ -153,6 +153,18 @@ def main():
     webview.set_background_color(Gdk.RGBA(0, 0, 0, 0))
 
     settings = webview.get_settings()
+
+    # El overlay es click-through por diseño (ver _aplicar_click_through): nunca va
+    # a llegar un gesto de usuario real. Se aplica ANTES que cualquier otra
+    # configuración y antes de la primera llamada a load_uri (más abajo, recién
+    # a los 1200ms vía GLib.timeout_add) — por si WebKit fija esta política al
+    # navegar y no la reevalúa luego para el documento ya cargado.
+    try:
+        settings.set_media_playback_requires_user_gesture(False)
+        print("[Overlay] media-playback-requires-user-gesture desactivado (autoplay permitido)")
+    except Exception as e:
+        print(f"[Overlay] set_media_playback_requires_user_gesture no disponible en esta WebKit2 ({e})")
+
     settings.set_enable_webgl(True)
     settings.set_enable_javascript(True)
     try:
@@ -161,16 +173,15 @@ def main():
     except Exception:
         pass
 
-    # El overlay es click-through por diseño (ver _aplicar_click_through): nunca va
-    # a llegar un gesto de usuario real que desbloquee el autoplay de WebKit. Sin
-    # esto, rem_avatar.html nunca puede arrancar el AudioContext dentro del overlay
-    # y cae siempre al fallback de sounddevice en Python (ver rem_avatar_server.py).
+    # Diagnóstico: volcar los console.log/warn/error de rem_avatar.html a stdout
+    # (y de ahí a rem_overlay.log) — hasta ahora no había forma de ver la consola
+    # del overlay real, solo se podía inferir desde un navegador aparte.
     try:
-        settings.set_media_playback_requires_user_gesture(False)
-        print("[Overlay] media-playback-requires-user-gesture desactivado (autoplay permitido)")
+        settings.set_enable_write_console_messages_to_stdout(True)
+        settings.set_enable_developer_extras(True)
+        print("[Overlay] console.* del frontend -> stdout, developer extras habilitados")
     except Exception as e:
-        print(f"[Overlay] set_media_playback_requires_user_gesture no disponible en esta WebKit2 ({e}) "
-              f"— el audio del overlay dependerá del fallback de sounddevice")
+        print(f"[Overlay] no se pudo habilitar el volcado de consola ({e})")
 
     webview.connect('context-menu', lambda *a: True)
     win.add(webview)

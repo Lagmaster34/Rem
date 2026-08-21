@@ -381,14 +381,31 @@ function _avanzarCola() {
   }
 }
 
+// Logs de diagnóstico explícitos alrededor de toda la reproducción — hasta
+// tener el volcado de consola del overlay a rem_overlay.log (ver rem_overlay.py),
+// esto era la única forma indirecta de sospechar qué estaba pasando.
 _audioEl.addEventListener('playing', () => {
+  console.log('[Lipsync] evento "playing" ->', _audioEl.src);
   _audioActivo = true;
   estado = 'talking';
 });
 _audioEl.addEventListener('ended', _avanzarCola);
+// MediaError.code: 1=ABORTED 2=NETWORK 3=DECODE 4=SRC_NOT_SUPPORTED.
+// code=3 confirmaría que WebKit no puede decodificar el WAV (RVC produce
+// 40000 Hz, un sample rate inusual) — distinto de un NotAllowedError de
+// play(), que sería la política de autoplay todavía activa.
+const _MEDIA_ERROR_NOMBRES = { 1: 'ABORTED', 2: 'NETWORK', 3: 'DECODE', 4: 'SRC_NOT_SUPPORTED' };
 _audioEl.addEventListener('error', () => {
-  console.error('[Lipsync] error de reproducción para', _audioEl.src, _audioEl.error);
+  const err = _audioEl.error;
+  console.error('[Lipsync] evento "error" para', _audioEl.src,
+    '| code:', err?.code, `(${_MEDIA_ERROR_NOMBRES[err?.code] ?? '?'})`,
+    '| message:', err?.message,
+    '| readyState:', _audioEl.readyState, '| networkState:', _audioEl.networkState);
   _avanzarCola();
+});
+_audioEl.addEventListener('stalled', () => {
+  console.warn('[Lipsync] evento "stalled" para', _audioEl.src,
+    '| readyState:', _audioEl.readyState, '| networkState:', _audioEl.networkState);
 });
 
 // Morph targets vrc.* que puede tocar el timeline (ver lipsync.py FONEMA_A_VISEME)
@@ -586,9 +603,13 @@ function _reproducirSiguienteDeCola() {
   _timelineIdx = 0;
   _audioEl.src = siguiente.url;
 
+  console.log('[Lipsync] llamando a play() para', siguiente.url);
   const promesa = _audioEl.play();
-  if (promesa?.catch) {
-    promesa.catch(err => console.error('[Lipsync] play() rechazado para', siguiente.url, '-', err));
+  if (promesa?.then) {
+    promesa
+      .then(() => console.log('[Lipsync] play() resuelto (promesa) para', siguiente.url))
+      .catch(err => console.error('[Lipsync] play() rechazado para', siguiente.url,
+        '- name:', err?.name, '| message:', err?.message));
   }
 }
 
@@ -1016,6 +1037,7 @@ let _ws = null;
     try {
       const d = JSON.parse(e.data);
       if (d.tipo === 'audio') {
+        console.log('[Lipsync] mensaje de audio recibido, url=', d.url, '| eventos de timeline:', d.timeline?.length);
         encolarAudio(d.url, d.timeline);
       } else if (d.estado) {
         estado = d.estado;

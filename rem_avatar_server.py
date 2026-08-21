@@ -200,6 +200,9 @@ def _lanzar_overlay(layer: str = 'top'):
         _overlay_log = open(LOG_OVERLAY, 'w', buffering=1, encoding='utf-8')
         env = os.environ.copy()
         env['GDK_BACKEND'] = 'wayland'   # belt-and-suspenders junto al setenv interno
+        # Diagnóstico: inspector remoto de WebKit — abrir http://127.0.0.1:9222
+        # en un navegador normal para depurar el overlay como cualquier página.
+        env['WEBKIT_INSPECTOR_SERVER'] = '127.0.0.1:9222'
         proc = subprocess.Popen(
             ["/usr/bin/python3", overlay_script, "--layer", layer],
             stdout=_overlay_log,
