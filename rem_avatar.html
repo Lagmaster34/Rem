@@ -307,7 +307,7 @@ function updateExpressions(dt) {
   // lipsync activo lo suprimimos para que no compita con los visemes (ver
   // diagnosticarExpressionBinds() / CLAUDE.md). "Talk" nunca se llama desde
   // este sistema, así que no hace falta suprimirla aparte.
-  const suprimirBocaExpr = !!_audioSource;
+  const suprimirBocaExpr = _audioActivo;
   for (const [k, target] of Object.entries(profile)) {
     curExpr[k] = lerp(curExpr[k], target, dt * 2.5);
     trySetExpr(k, (k === 'surprised' && suprimirBocaExpr) ? 0 : curExpr[k]);
@@ -359,31 +359,37 @@ function updateBlink(dt) {
 // ═══════════════════════════════════════════════════
 // LIPSYNC REAL — audio del backend + timeline de visemes (lipsync.py)
 // ═══════════════════════════════════════════════════
-// AudioContext perezoso: crearlo antes de un gesto de usuario en un navegador
-// normal dispara el bloqueo de autoplay igual, así que no ganamos nada
-// adelantándonos — se crea recién cuando hace falta (primer intento de reproducir,
-// o primer gesto del usuario, lo que ocurra antes).
-let _audioContext = null;
-function obtenerAudioContext() {
-  if (!_audioContext) _audioContext = new AudioContext();
-  return _audioContext;
-}
+// Un <audio> de HTML en vez de Web Audio API: el overlay GTK es click-through
+// por diseño (_aplicar_click_through en rem_overlay.py), así que nunca puede
+// recibir un gesto de usuario real — un AudioContext se queda 'suspended'
+// para siempre ahí adentro, y set_media_playback_requires_user_gesture(False)
+// en WebKit2 no lo destrababa porque esa política es solo para elementos de
+// medios, no para la Web Audio API. HTMLMediaElement.play() no tiene esa
+// restricción de gesto en este WebView, así que elimina el problema de raíz
+// en vez de trabajar alrededor de él.
+const _audioEl = new Audio();
+let _audioActivo = false; // true entre 'playing' y 'ended'/'error'
 
-// En un navegador normal, cualquier gesto temprano ya deja el AudioContext
-// listo para cuando llegue el primer audio real. En el overlay GTK esto nunca
-// dispara (la ventana es click-through por diseño) — de ahí el fallback de
-// abajo en _reproducirSiguienteDeCola().
-function _intentarResumeAudioPorGesto() {
-  const ctx = obtenerAudioContext();
-  if (ctx.state === 'suspended') {
-    ctx.resume()
-      .then(() => console.log('[Lipsync] AudioContext resumido por gesto de usuario'))
-      .catch(err => console.warn('[Lipsync] no se pudo resumir AudioContext:', err));
+function _avanzarCola() {
+  _audioActivo = false;
+  _timeline = [];
+  if (_audioPlayQueue.length > 0) {
+    _reproducirSiguienteDeCola();
+  } else {
+    _audioPlaying = false;
+    if (estado === 'talking') estado = 'idle';
   }
 }
-document.addEventListener('click',     _intentarResumeAudioPorGesto, { once: true });
-document.addEventListener('keydown',   _intentarResumeAudioPorGesto, { once: true });
-document.addEventListener('touchstart', _intentarResumeAudioPorGesto, { once: true });
+
+_audioEl.addEventListener('playing', () => {
+  _audioActivo = true;
+  estado = 'talking';
+});
+_audioEl.addEventListener('ended', _avanzarCola);
+_audioEl.addEventListener('error', () => {
+  console.error('[Lipsync] error de reproducción para', _audioEl.src, _audioEl.error);
+  _avanzarCola();
+});
 
 // Morph targets vrc.* que puede tocar el timeline (ver lipsync.py FONEMA_A_VISEME)
 const VISEME_NAMES = [
@@ -411,8 +417,6 @@ let _visemeIndex    = {};  // nombre canónico (VISEME_NAMES) -> [{mesh, idx}, .
 let _visemeMeshesPorIndice = []; // mallas con morphTargetInfluences.length > VISEME_INDEX_MAX (vía "indice")
 let _audioPlayQueue = [];  // cola FIFO: {url, timeline} — para no solapar frases
 let _audioPlaying  = false;
-let _audioSource   = null;
-let _audioStartTime = 0;
 let _timeline       = [];
 let _timelineIdx     = 0;
 let _jawApertura     = 0;
@@ -573,66 +577,18 @@ function encolarAudio(url, timeline) {
   if (!_audioPlaying) _reproducirSiguienteDeCola();
 }
 
-async function _reproducirSiguienteDeCola() {
+function _reproducirSiguienteDeCola() {
   const siguiente = _audioPlayQueue.shift();
   if (!siguiente) { _audioPlaying = false; return; }
   _audioPlaying = true;
 
-  const ctx = obtenerAudioContext();
+  _timeline    = siguiente.timeline || [];
+  _timelineIdx = 0;
+  _audioEl.src = siguiente.url;
 
-  if (ctx.state === 'suspended') {
-    try { await ctx.resume(); } catch (err) { /* se revisa el estado real abajo */ }
-  }
-  console.log(`[Lipsync] AudioContext.state antes de reproducir ${siguiente.url}:`, ctx.state);
-
-  if (ctx.state === 'suspended') {
-    // El overlay GTK es click-through: nunca va a llegar un gesto de usuario que
-    // desbloquee el autoplay. Avisamos al backend para que reproduzca por
-    // sounddevice — sin lipsync, pero al menos se oye — y seguimos con la cola
-    // (esta reproducción no puede completarse acá, no hay onended que esperar).
-    console.warn('[Lipsync] AudioContext sigue suspendido tras resume() — pidiendo fallback local a Python:', siguiente.url);
-    _wsEnviar({ tipo: 'audio_bloqueado', url: siguiente.url });
-    if (_audioPlayQueue.length > 0) {
-      _reproducirSiguienteDeCola();
-    } else {
-      _audioPlaying = false;
-    }
-    return;
-  }
-
-  try {
-    const resp = await fetch(siguiente.url);
-    const arrayBuffer = await resp.arrayBuffer();
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-
-    const source = ctx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(ctx.destination);
-
-    _timeline       = siguiente.timeline || [];
-    _timelineIdx     = 0;
-    _audioStartTime  = ctx.currentTime;
-    _audioSource     = source;
-    estado = 'talking';
-
-    source.onended = () => {
-      if (_audioSource === source) {
-        _audioSource = null;
-        _timeline = [];
-      }
-      if (_audioPlayQueue.length > 0) {
-        _reproducirSiguienteDeCola();
-      } else {
-        _audioPlaying = false;
-        if (estado === 'talking') estado = 'idle';
-      }
-    };
-
-    source.start();
-  } catch (err) {
-    console.error('[Lipsync] error reproduciendo', siguiente.url, err);
-    _audioPlaying = false;
-    if (_audioPlayQueue.length > 0) _reproducirSiguienteDeCola();
+  const promesa = _audioEl.play();
+  if (promesa?.catch) {
+    promesa.catch(err => console.error('[Lipsync] play() rechazado para', siguiente.url, '-', err));
   }
 }
 
@@ -641,9 +597,11 @@ async function _reproducirSiguienteDeCola() {
 let _estadoVisemeFrame = null;
 
 function _calcularEstadoViseme() {
-  if (!(_audioSource && _timeline.length > 0)) return null;
-  // _audioContext ya existe siempre que _audioSource esté seteado (ver _reproducirSiguienteDeCola).
-  const t = _audioContext.currentTime - _audioStartTime;
+  if (!_audioActivo || _timeline.length === 0) return null;
+  // audio.currentTime ya es la posición dentro del archivo actual — no hace
+  // falta llevar un start time aparte como con Web Audio API. A 60fps sobra
+  // de precisión para el lipsync.
+  const t = _audioEl.currentTime;
 
   while (_timelineIdx < _timeline.length - 1 && _timeline[_timelineIdx + 1].t <= t) _timelineIdx++;
 
@@ -1043,12 +1001,6 @@ window.addEventListener('resize', () => {
 // ═══════════════════════════════════════════════════
 let _wsRetries = 0;
 let _ws = null;
-
-function _wsEnviar(obj) {
-  if (_ws && _ws.readyState === WebSocket.OPEN) {
-    _ws.send(JSON.stringify(obj));
-  }
-}
 
 (function conectar() {
   if (_wsRetries >= CONFIG.ws.maxRetries) {

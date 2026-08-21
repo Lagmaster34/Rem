@@ -262,21 +262,31 @@ pero para el lipsync no importa, porque hay un camino mejor que no depende del n
     activo. `Talk` bindea `"Ah"` (índice 19, también boca) pero nunca se llama desde ningún lado del
     código — no hizo falta suprimirla aparte.
 
-## AudioContext bloqueado en el overlay (autoplay policy)
-El overlay GTK es **click-through por diseño** (`_aplicar_click_through` en `rem_overlay.py`) — nunca
-va a recibir un click/keydown/touchstart real, así que el `AudioContext` del navegador nunca sale de
-`'suspended'` ahí dentro (los navegadores bloquean audio sin gesto de usuario). En un navegador normal
-sí funciona: `rem_avatar.html` engancha `click`/`keydown`/`touchstart` sobre `document` con
-`{ once: true }` para resumirlo apenas hay uno.
+## Reproducción de audio: `<audio>` de HTML, no Web Audio API
+Se intentó primero con `AudioContext` (Web Audio API), con `resume()` en gestos de usuario
+(`click`/`keydown`/`touchstart`) para desbloquear el autoplay. **No funcionaba en el overlay**: es
+**click-through por diseño** (`_aplicar_click_through` en `rem_overlay.py`) — nunca va a recibir un
+gesto real, así que el `AudioContext` quedaba `'suspended'` para siempre ahí adentro.
+`WebKitSettings.set_media_playback_requires_user_gesture(False)` (probado en `rem_overlay.py`) **no
+resolvía esto**: esa política de WebKit2 solo aplica a elementos de medios (`<audio>`/`<video>`), no a
+la Web Audio API — por eso `AudioContext` seguía bloqueado pese a desactivarla.
 
-Cuando `ctx.state` sigue `'suspended'` tras `resume()`, el frontend manda por WebSocket
-`{"tipo": "audio_bloqueado", "url": "..."}` de vuelta a Python (antes el `_ws_handler` descartaba
-todo lo que llegaba del cliente — ahora lo procesa). `rem_avatar_server.py` responde reproduciendo
-ese mismo WAV con `sounddevice` desde `tmp_audio/` (el archivo sigue ahí, se borra recién a los 5
-min) — sin lipsync, pero se oye. También se intentó `WebKitSettings.set_media_playback_requires_user_gesture(False)`
-en `rem_overlay.py` para desactivar la política de autoplay directamente en WebKit2, pero **no se
-pudo verificar en vivo** (esta máquina de desarrollo no tiene `webkit2gtk-4.1` instalado) — confirmar
-si existe en la versión real de WebKit2GTK instalada y si con eso ya alcanza sin necesitar el fallback.
+La solución fue eliminar el problema de raíz: `rem_avatar.html` reproduce con un `HTMLAudioElement`
+(`new Audio()`) en vez de `AudioContext`/`AudioBufferSourceNode`. `HTMLMediaElement.play()` no tiene
+la misma restricción de gesto de usuario en este WebView, así que no hace falta ningún workaround.
+Se creó **una sola vez** y se reutiliza para toda la cola (no una instancia por frase): a cada turno
+de la cola se le asigna `.src` y se llama `.play()` de nuevo.
+
+- El lipsync ya no necesita `audioContext.currentTime - startTime`: `audio.currentTime` ya es la
+  posición dentro del archivo actual, leída directo en cada frame — sobra de precisión a 60fps.
+- `estado = 'talking'` se activa en el evento `playing` y se desactiva en `ended` (que también
+  encadena la siguiente reproducción de la cola, igual que antes con `source.onended`).
+- Si `play()` devuelve una promesa rechazada, se loguea el motivo (`console.error`) para poder
+  diagnosticar si alguna otra política de autoplay llegara a bloquear en el futuro.
+- Se eliminó el mensaje `{"tipo": "audio_bloqueado"}` que el frontend mandaba de vuelta por
+  WebSocket y el fallback a `sounddevice` en `rem_avatar_server.py` que dependía de él — ya no hace
+  falta, `_ws_handler` volvió a descartar todo lo que llega del cliente (solo le importa el cierre
+  de conexión, para el log breve en vez de traceback).
 
 ## Encuadre del avatar: anclas normalizadas, no world units fijas
 `recalcularEncuadre()` deriva `camera.position.z` para que el modelo ocupe `CONFIG.pet.alturaPantalla`
