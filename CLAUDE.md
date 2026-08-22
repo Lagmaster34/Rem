@@ -41,17 +41,56 @@ no basta con copiar la carpeta.
 GROQ_API_KEY=tu_api_key_de_groq
 NOMBRE_USUARIO=Esteban
 CIUDAD=Yarumal
-MODELO_VISION=meta-llama/llama-4-scout-17b-16e-instruct
 VOZ_REM=es-VE-PaolaNeural
 TTS_RATE=-8%
 REM_LAYER=top
 REM_OVERLAY_W=520
 REM_OVERLAY_H=860
+RECORDATORIOS_ACTIVOS=false
+MEMORIA_EXTRACCION_ACTIVA=true
+MEMORIA_EXTRACCION_MODELO=llama-3.3-70b-versatile
+MEMORIA_EXTRACCION_BASE_URL=
+MEMORIA_EXTRACCION_API_KEY=
 ```
 `REM_LAYER` (`top`|`overlay`) y `REM_OVERLAY_W`/`REM_OVERLAY_H` los lee `rem_overlay.py`, no
 `Rem.py` — controlan la capa del compositor y el tamaño fijo de la layer surface (ver
 "Layer surface acotada" más abajo).
+`RECORDATORIOS_ACTIVOS` (default `false`): dispara 5 llamadas al LLM al día (08:00, 14:00, 18:00,
+22:00, 00:30) sin que el usuario haga nada — apagado por defecto porque la regla del proyecto es
+que la API solo se usa cuando el usuario escribe o habla (ver "Nada volátil en el system prompt /
+sin llamadas al LLM sin intervención del usuario" más abajo).
+`MEMORIA_EXTRACCION_*`: `extraer_memoria_importante()` es una tarea de extracción (no de
+conversación) que corre cada 8 mensajes — candidata natural para un modelo local en el futuro.
+`MEMORIA_EXTRACCION_ACTIVA=false` la desactiva del todo; `MEMORIA_EXTRACCION_BASE_URL` (vacío por
+defecto) apunta el cliente a un servidor OpenAI-compatible distinto del Groq principal (p.ej. uno
+local) sin tocar el resto del código, y `MEMORIA_EXTRACCION_API_KEY` es su API key si hace falta una
+distinta de `GROQ_API_KEY`.
 Todas las variables tienen valores por defecto en el código. Solo `GROQ_API_KEY` es obligatoria.
+
+## Nada volátil en el system prompt (para que el prompt caching funcione)
+El caching de prompts en los proveedores de inferencia (Groq incluido) exige que el prefijo sea
+idéntico byte a byte entre llamadas para reusar el cache — cualquier cambio en el system prompt
+(fecha, hora, estado de la PC, etc.) rompe el cache en cada turno y obliga a pagar el prompt
+completo siempre. Por eso:
+- `construir_prompt_sistema()` (usado como mensaje `system`) contiene **solo** contenido estable:
+  personalidad, reglas y catálogo de acciones, con la memoria larga (`memoria_larga`) al final del
+  bloque — así un cambio en la memoria no invalida la parte de arriba, que es la que más vale la
+  pena mantener idéntica entre llamadas.
+- Todo lo volátil (fecha/hora, estado de la PC vía `obtener_info_pc()`, memoria del sistema de
+  archivos/carpetas conocidas) va en `construir_contexto_dinamico()`, que se antepone al **mensaje
+  del usuario** en cada turno (dentro de `preguntar_groq()`), nunca al system prompt.
+- Regla para futuros cambios: si algo cambia en cada turno (timestamps, métricas en vivo, conteos),
+  no va en `construir_prompt_sistema()`.
+
+## Ninguna llamada al LLM sin intervención del usuario
+Requisito firme del proyecto: la API (Groq) solo se usa cuando el usuario escribe o habla.
+- `bienvenida()` (saludo al arrancar la app) usa una frase estática elegida al azar de
+  `_SALUDOS_BIENVENIDA`, no llama al LLM.
+- `RECORDATORIOS` (recordatorios automáticos por hora) está detrás de `RECORDATORIOS_ACTIVOS`,
+  desactivado por defecto — ver más arriba.
+- `extraer_memoria_importante()` sí llama al LLM sin intervención directa en ese instante, pero solo
+  se dispara como consecuencia de turnos de conversación ya iniciados por el usuario (cada 8
+  mensajes), nunca por un timer independiente — y es configurable vía `MEMORIA_EXTRACCION_ACTIVA`.
 
 ## Archivos de datos (creados en runtime, ignorados por git)
 | Archivo | Contenido |
@@ -79,8 +118,7 @@ Rem.py — hilo principal (Tkinter mainloop)
 ├── responder() (daemon thread)         — LLM → respuesta → hablar()
 ├── extraer_memoria_importante()        — daemon thread, cada 8 msgs
 ├── _loop_monitor_pc (daemon thread)    — alerta CPU/RAM cada 60s
-├── _loop_vision_pantalla (app.after)   — análisis pantalla cada 45s
-└── _loop_recordatorios (app.after)     — recordatorios cada 30s
+└── _loop_recordatorios (app.after)     — recordatorios cada 30s, si RECORDATORIOS_ACTIVOS
 
 rem_avatar_server.py (daemon thread desde Rem.py)
 ├── AvatarHTTP (daemon thread)          — sirve archivos en :18765

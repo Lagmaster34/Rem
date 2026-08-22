@@ -4,9 +4,8 @@ import time
 import asyncio
 import json
 import os
-import io
-import base64
 import math
+import random
 import speech_recognition as sr
 import tkinter as tk
 import tkinter.messagebox as messagebox
@@ -28,13 +27,6 @@ import shlex
 #   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 #   pip install infer-rvc-python
 #   pip install soundfile edge-tts
-
-try:
-    import cv2
-    CAMARA_DISPONIBLE = True
-except ImportError:
-    CAMARA_DISPONIBLE = False
-    print("OpenCV no instalado. Ejecuta: pip install opencv-python")
 
 # ── RVC ──────────────────────────────────────────────────────────────
 try:
@@ -64,28 +56,53 @@ IMAGEN_FONDO    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wall
 # "Configuración de voz ganadora") — RVC transfiere timbre pero no prosodia.
 VOZ_REM         = os.getenv("VOZ_REM", "es-VE-PaolaNeural")
 TTS_RATE        = os.getenv("TTS_RATE", "-8%")
-MODELO_VISION   = os.getenv("MODELO_VISION", "meta-llama/llama-4-scout-17b-16e-instruct")
 MEMORIA_ARCHIVO         = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_rem.json")
 MEMORIA_LARGA_ARCHIVO   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_larga.json")
 MEMORIA_SISTEMA_ARCHIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_sistema.json")
 
-PANEL_W, PANEL_H = 382, 210
 NOMBRE_USUARIO  = os.getenv("NOMBRE_USUARIO", "Esteban")
 CIUDAD          = os.getenv("CIUDAD", "Yarumal")
+# Desactivado por defecto: son 5 llamadas al LLM al día sin que el usuario haga nada.
+# La regla del proyecto es que la API solo se usa cuando el usuario escribe o habla.
+RECORDATORIOS_ACTIVOS = os.getenv("RECORDATORIOS_ACTIVOS", "false").strip().lower() in ("1", "true", "yes", "on")
 
+# extraer_memoria_importante() es una tarea de extracción, no de conversación —
+# candidata natural para apuntar a un modelo local en vez del mismo cliente que
+# la conversación principal. Vacío (default) = reusar el cliente Groq principal.
+MEMORIA_EXTRACCION_ACTIVA    = os.getenv("MEMORIA_EXTRACCION_ACTIVA", "true").strip().lower() in ("1", "true", "yes", "on")
+MEMORIA_EXTRACCION_MODELO    = os.getenv("MEMORIA_EXTRACCION_MODELO", "llama-3.3-70b-versatile")
+MEMORIA_EXTRACCION_BASE_URL  = os.getenv("MEMORIA_EXTRACCION_BASE_URL", "").strip()
+MEMORIA_EXTRACCION_API_KEY   = os.getenv("MEMORIA_EXTRACCION_API_KEY", "").strip()
+
+# Atajos reales de este sistema (Arch + Hyprland) — antes apuntaban a programas
+# de GNOME/Debian que no están instalados acá (brave-browser, nautilus,
+# gnome-terminal, gnome-calculator). Sin calculadora instalada, esa entrada se
+# elimina en vez de inventar un binario que no existe.
 COMANDOS = {
-    "brave":      "brave-browser",
-    "firefox":    "firefox",
-    "nautilus":   "nautilus",
-    "terminal":   "gnome-terminal",
-    "calculadora":"gnome-calculator",
+    "navegador":  "zen-browser",
+    "terminal":   "foot",
+    "archivos":   "thunar",   # también está nemo instalado; ajustar si preferís ese
 }
 
-cap_global = None
-if CAMARA_DISPONIBLE:
-    cap_global = cv2.VideoCapture(0)
-
 cliente = Groq(api_key=GROQ_API_KEY, timeout=30.0)
+
+_cliente_extraccion = None
+
+def _obtener_cliente_extraccion():
+    """Cliente usado por extraer_memoria_importante(). Por defecto reusa `cliente`
+    (mismo Groq de la conversación principal); si se define MEMORIA_EXTRACCION_BASE_URL
+    (p.ej. un servidor local OpenAI-compatible), apunta ahí en su lugar sin tocar
+    el resto del código — es una tarea de extracción, no de conversación."""
+    global _cliente_extraccion
+    if not MEMORIA_EXTRACCION_BASE_URL:
+        return cliente
+    if _cliente_extraccion is None:
+        _cliente_extraccion = Groq(
+            api_key=MEMORIA_EXTRACCION_API_KEY or GROQ_API_KEY,
+            base_url=MEMORIA_EXTRACCION_BASE_URL,
+            timeout=30.0,
+        )
+    return _cliente_extraccion
 
 # ── RVC REM ──────────────────────────────────────────────────────────
 RVC_MODELS_DIR = os.path.join(
@@ -285,8 +302,6 @@ Buscar archivo:  {"accion": "buscar", "archivo": "nombre"}
 Optimizar PC:    {"accion": "optimizar"}
 Buscar internet: {"accion": "buscar_web", "query": "busqueda"}
 Escribir texto:  {"accion": "escribir", "texto": "texto"}
-Ver camara:      {"accion": "ver_camara"}
-Ver pantalla:    {"accion": "ver_pantalla"}
 Crear carpeta:   {"accion": "crear_carpeta", "ruta": "ruta_completa"}
 Clima:           {"accion": "clima"}
 Descargar:       {"accion": "descargar", "url": "url", "nombre": "archivo.ext"}
@@ -299,23 +314,27 @@ Ejecutar comando: {"accion": "ejecutar_comando", "comando": "ls /home/esteban/"}
 REGLAS DE SEGURIDAD (inamovibles):
 - Solo puedes operar dentro de /home/esteban/ para mover, copiar o eliminar.
 - Nunca toques /etc, /boot, /sys, /proc, /root.
-- Comandos permitidos en ejecutar_comando: ls, cat, mkdir, cp, mv, find, grep, echo, python3, pip, git, apt, systemctl, df, free, top, ps.
+- Comandos permitidos en ejecutar_comando: ls, cat, mkdir, cp, mv, find, grep, echo, git, pacman, systemctl, df, free, top, ps. find no admite -exec/-execdir/-delete.
 - Toda acción pasa por confirmación antes de ejecutarse.
 
-MEMORIA DEL SISTEMA: Antes de buscar un archivo, consulta [MEMORIA_SISTEMA]. Si ya sabes dónde está algo, úsalo directamente sin buscar.
+MEMORIA DEL SISTEMA: Antes de buscar un archivo, revisa el bloque "MEMORIA DEL SISTEMA" que viene antepuesto al mensaje del usuario. Si ya sabes dónde está algo, úsalo directamente sin buscar.
 
 Para conversacion normal, responde como Rem de forma natural y breve."""
 
 instrucciones = instrucciones.replace("Esteban", NOMBRE_USUARIO)
 
 # ── GROQ: helper con retry ────────────────────────────────────────────
-def _groq_completions(messages, max_tokens=600, temperature=0.75):
-    """Llama a Groq con hasta 3 reintentos con espera exponencial."""
+def _groq_completions(messages, max_tokens=600, temperature=0.75, cliente_=None, modelo=None):
+    """Llama al proveedor con hasta 3 reintentos con espera exponencial.
+    cliente_/modelo por defecto son los de la conversación principal — se pueden
+    sobreescribir (ver extraer_memoria_importante) para apuntar a otro proveedor."""
+    cliente_ = cliente_ or cliente
+    modelo   = modelo or "llama-3.3-70b-versatile"
     ultimo_error = None
     for intento in range(3):
         try:
-            return cliente.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+            return cliente_.chat.completions.create(
+                model=modelo,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -332,6 +351,8 @@ def _groq_completions(messages, max_tokens=600, temperature=0.75):
 # ── MEMORIA LARGA: extracción y prompt dinámico ───────────────────────
 def extraer_memoria_importante():
     """Extrae hechos relevantes del historial reciente y los guarda en memoria larga."""
+    if not MEMORIA_EXTRACCION_ACTIVA:
+        return
     with _lock_historial:
         mensajes_desde_ultima = len(historial) - memoria_larga.get("mensajes_procesados", 0)
         if mensajes_desde_ultima < 8 or len(historial) < 4:
@@ -344,6 +365,8 @@ def extraer_memoria_importante():
 
     try:
         r = _groq_completions(
+            cliente_=_obtener_cliente_extraccion(),
+            modelo=MEMORIA_EXTRACCION_MODELO,
             messages=[{
                 "role": "user",
                 "content": (
@@ -389,20 +412,12 @@ def extraer_memoria_importante():
 
 
 def construir_prompt_sistema():
-    """Construye el system prompt incluyendo hora, fecha y memoria larga de Esteban."""
-    import datetime
-    ahora = datetime.datetime.now()
-    dias   = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"]
-    meses  = ["enero","febrero","marzo","abril","mayo","junio",
-               "julio","agosto","septiembre","octubre","noviembre","diciembre"]
-    dia_semana = dias[ahora.weekday()]
-    fecha_str  = f"{dia_semana} {ahora.day} de {meses[ahora.month-1]} de {ahora.year}"
-    hora_str   = ahora.strftime("%H:%M")
-
-    info_pc = obtener_info_pc()
-    prompt = instrucciones + f"\n\nFECHA Y HORA ACTUAL: {fecha_str}, {hora_str}hs. Úsala si Esteban pregunta o si viene al caso."
-    if info_pc:
-        prompt += f"\n\nESTADO ACTUAL DE LA PC: {info_pc}"
+    """Construye el system prompt: SOLO contenido estable (personalidad, reglas,
+    catálogo de acciones) + memoria larga al final. Nada volátil (fecha, hora,
+    estado de la PC, memoria del sistema) va acá — eso cambiaría el prompt en
+    cada turno e impediría reusar el cache de prompt. Ver construir_contexto_dinamico()
+    y la nota en CLAUDE.md sobre esta restricción."""
+    prompt = instrucciones
 
     secciones = []
     etiquetas = {
@@ -417,28 +432,46 @@ def construir_prompt_sistema():
             bloque = f"{titulo}:\n" + "\n".join(f"- {x}" for x in items[-20:])
             secciones.append(bloque)
 
+    # Al final del bloque estable a propósito: si cambia, no invalida la parte
+    # de arriba (personalidad + reglas + catálogo), que es la que más vale la
+    # pena mantener idéntica byte a byte entre llamadas.
     if secciones:
         prompt += "\n\nMEMORIA PERSONAL (recuerdos reales de conversaciones anteriores):\n" + "\n\n".join(secciones)
 
-    # Inyectar resumen de memoria del sistema
+    return prompt
+
+
+def construir_contexto_dinamico():
+    """Bloque volátil (fecha/hora, estado de la PC, memoria del sistema) que se
+    antepone al mensaje del usuario en cada turno, en vez de ir en el system
+    prompt — así el system prompt es idéntico byte a byte entre llamadas."""
+    import datetime
+    ahora = datetime.datetime.now()
+    dias   = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"]
+    meses  = ["enero","febrero","marzo","abril","mayo","junio",
+               "julio","agosto","septiembre","octubre","noviembre","diciembre"]
+    fecha_str = f"{dias[ahora.weekday()]} {ahora.day} de {meses[ahora.month-1]} de {ahora.year}"
+    hora_str  = ahora.strftime("%H:%M")
+
+    lineas = [f"[FECHA Y HORA ACTUAL: {fecha_str}, {hora_str}hs]"]
+
+    info_pc = obtener_info_pc()
+    if info_pc:
+        lineas.append(f"[ESTADO ACTUAL DE LA PC: {info_pc}]")
+
     archivos_conocidos = list(memoria_sistema.get("archivos", {}).items())[-20:]
     carpetas_conocidas = memoria_sistema.get("carpetas", [])[-10:]
     if archivos_conocidos or carpetas_conocidas:
-        lineas = []
+        bloque_mem = ["MEMORIA DEL SISTEMA:"]
         if archivos_conocidos:
-            lineas.append("Archivos que ya sé dónde están:\n" +
-                          "\n".join(f"  {n} → {r}" for n, r in archivos_conocidos))
+            bloque_mem.append("Archivos que ya sé dónde están:\n" +
+                              "\n".join(f"  {n} → {r}" for n, r in archivos_conocidos))
         if carpetas_conocidas:
-            lineas.append("Carpetas conocidas:\n" +
-                          "\n".join(f"  {r}" for r in carpetas_conocidas))
-        prompt = prompt.replace(
-            "[MEMORIA_SISTEMA]",
-            "\n".join(lineas)
-        )
-    else:
-        prompt = prompt.replace("[MEMORIA_SISTEMA]", "(vacía por ahora)")
+            bloque_mem.append("Carpetas conocidas:\n" +
+                              "\n".join(f"  {r}" for r in carpetas_conocidas))
+        lineas.append("\n".join(bloque_mem))
 
-    return prompt
+    return "\n".join(lineas)
 
 
 # ── CONFIRMACION ──────────────────────────────────────────────────────
@@ -450,13 +483,11 @@ DESCRIPCIONES = {
     "reiniciar":     lambda d: "⚠️ REINICIAR la PC",
     "captura":       lambda d: "Tomar captura de pantalla",
     "buscar":        lambda d: f"Buscar archivo: {d.get('archivo','')}",
-    "optimizar":     lambda d: "Optimizar PC (temp + DNS)",
+    "optimizar":     lambda d: "Optimizar PC (limpiar ~/.cache)",
     "buscar_web":    lambda d: f"Buscar en internet: {d.get('query','')}",
     "escribir":      lambda d: f"Escribir: {d.get('texto','')}",
-    "ver_camara":    lambda d: "Analizar imagen de la cámara con IA",
     "clima":         lambda d: f"Consultar clima de {CIUDAD}",
     "descargar":     lambda d: f"Descargar: {d.get('nombre','')} desde {d.get('url','')}",
-    "ver_pantalla":    lambda d: "Analizar captura de pantalla con IA",
     "crear_carpeta":   lambda d: f"Crear carpeta: {d.get('ruta','')}",
     "instalar_paquete":lambda d: f"Instalar paquete: {d.get('paquete','')}",
     "mover_archivo":   lambda d: f"Mover: {d.get('origen','')} → {d.get('destino','')}",
@@ -479,60 +510,12 @@ def confirmar_accion(datos):
     return resultado[0]
 
 
-# ── VISION ────────────────────────────────────────────────────────────
-def analizar_imagen_groq(b64, mime="image/jpeg",
-        prompt="Describe brevemente y con ternura lo que ves, hablando como Rem de Re:Zero."):
-    try:
-        r = cliente.chat.completions.create(
-            model=MODELO_VISION,
-            messages=[{"role":"user","content":[
-                {"type":"image_url","image_url":{"url":f"data:{mime};base64,{b64}"}},
-                {"type":"text","text":prompt}
-            ]}], max_tokens=250)
-        return r.choices[0].message.content
-    except Exception as e:
-        return f"No pude analizar la imagen: {e}"
-
-def capturar_camara_b64():
-    if not CAMARA_DISPONIBLE or cap_global is None:
-        return None, "Cámara no disponible."
-    try:
-        ret, frame = cap_global.read()
-        if not ret: return None, "No pude leer el frame."
-        _, buf = cv2.imencode(".jpg", frame)
-        return base64.b64encode(buf).decode(), None
-    except Exception as e:
-        return None, str(e)
-
-def capturar_pantalla_b64():
-    try:
-        import mss
-        with mss.MSS() as sct:
-            raw = sct.grab(sct.monitors[0])
-            img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
-        img = img.resize((1280, 720), Image.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=80)
-        return base64.b64encode(buf.getvalue()).decode()
-    except Exception as e:
-        print(f"[Pantalla] Error capturando: {e}")
-        return None
-
-
 # ── GROQ ──────────────────────────────────────────────────────────────
 def preguntar_groq(texto):
-    import datetime
-    ahora      = datetime.datetime.now()
-    dias       = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"]
-    meses      = ["enero","febrero","marzo","abril","mayo","junio",
-                  "julio","agosto","septiembre","octubre","noviembre","diciembre"]
-    hora_real  = ahora.strftime("%H:%M")
-    fecha_real = f"{dias[ahora.weekday()]} {ahora.day} de {meses[ahora.month-1]} de {ahora.year}"
-
-    texto_con_hora = f"[HORA REAL DEL SISTEMA: {hora_real} — {fecha_real}]\n{texto}"
+    texto_con_contexto = f"{construir_contexto_dinamico()}\n{texto}"
 
     with _lock_historial:
-        historial.append({"role": "user", "content": texto_con_hora})
+        historial.append({"role": "user", "content": texto_con_contexto})
         if len(historial) > 60:
             historial.pop(0)
         historial_snap = list(historial)
@@ -791,49 +774,71 @@ def descargar_archivo(url, nombre):
 
 
 # ── ACCIONES ──────────────────────────────────────────────────────────
+_OPTIMIZAR_DIAS_ANTIGUEDAD = 7  # borra solo lo más viejo que esto, dentro de ~/.cache
+
 def optimizar_pc():
-    import tempfile, shutil
-    temp_dir = tempfile.gettempdir()
+    """Limpia archivos viejos de ~/.cache. NUNCA toca /tmp: en Arch es tmpfs y
+    contiene sockets vivos de Wayland/PipeWire/la sesión — borrarlo entero
+    (como hacía antes con tempfile.gettempdir()) tumbaría el escritorio."""
+    import time
+    cache_dir = os.path.realpath(os.path.expanduser("~/.cache"))
+    limite = time.time() - _OPTIMIZAR_DIAS_ANTIGUEDAD * 86400
     borrados = 0
     errores  = 0
-    try:
-        for item in os.listdir(temp_dir):
-            ruta = os.path.join(temp_dir, item)
-            try:
-                if os.path.isfile(ruta) or os.path.islink(ruta):
-                    os.unlink(ruta)
-                    borrados += 1
-                elif os.path.isdir(ruta):
-                    shutil.rmtree(ruta, ignore_errors=False)
-                    borrados += 1
-            except Exception:
-                errores += 1   # archivos en uso o sin permisos, se saltan
-    except Exception as e:
-        return f"Error al acceder a temporales: {e}"
 
-    subprocess.run(["sudo", "systemd-resolve", "--flush-caches"], capture_output=True)
+    if not os.path.isdir(cache_dir):
+        return "No encontré ~/.cache para limpiar."
+
+    try:
+        for raiz, dirs, archivos in os.walk(cache_dir, topdown=False):
+            for nombre in archivos:
+                ruta = os.path.join(raiz, nombre)
+                try:
+                    if os.path.getmtime(ruta) < limite:
+                        os.unlink(ruta)
+                        borrados += 1
+                except Exception:
+                    errores += 1   # archivos en uso o sin permisos, se saltan
+            for nombre in dirs:
+                ruta = os.path.join(raiz, nombre)
+                try:
+                    if not os.listdir(ruta):
+                        os.rmdir(ruta)   # carpetas vacías que quedaron tras borrar su contenido
+                except Exception:
+                    pass
+    except Exception as e:
+        return f"Error al acceder a ~/.cache: {e}"
+
     ram = psutil.virtual_memory()
     ram_libre = round(ram.available / 1024**3, 2)
-    return (f"Limpié {borrados} archivo(s)/carpeta(s) temporales "
-            f"({errores} omitidos por estar en uso). "
+    return (f"Limpié {borrados} archivo(s) de ~/.cache con más de "
+            f"{_OPTIMIZAR_DIAS_ANTIGUEDAD} días ({errores} omitidos por estar en uso). "
             f"RAM libre: {ram_libre} GB")
 
 # ── SEGURIDAD DE ACCIONES ─────────────────────────────────────────────
-_ZONA_SEGURA    = os.path.expanduser("~")   # /home/esteban
+_ZONA_SEGURA    = os.path.realpath(os.path.expanduser("~"))   # /home/esteban
 _DIRS_PROHIBIDOS = ("/etc", "/boot", "/sys", "/proc", "/root", "/bin", "/sbin",
                     "/usr/bin", "/usr/sbin", "/lib", "/lib64")
 _CMDS_PERMITIDOS = {"ls", "cat", "mkdir", "cp", "mv", "find", "grep",
-                    "echo", "python3", "pip", "git", "apt", "systemctl",
+                    "echo", "git", "pacman", "systemctl",
                     "df", "free", "top", "ps"}
 _METACHAR_PELIGROSOS = ('|', ';', '&&', '||', '`', '$(', '>', '<', '\n')
+# find con estos flags ejecuta programas arbitrarios sobre lo que encuentre
+# (o borra archivos) — la whitelist por primer token no alcanza para bloquearlo.
+_FIND_FLAGS_PELIGROSOS = ('-exec', '-execdir', '-delete')
 
 def _ruta_segura(ruta):
-    """Valida que la ruta esté dentro de /home/esteban y no en dirs peligrosos."""
+    """Valida que la ruta esté dentro de /home/esteban y no en dirs peligrosos.
+
+    Usa os.path.commonpath sobre rutas ya resueltas con realpath en vez de
+    startswith: "/home/estebanmalo" no debe pasar como si estuviera dentro
+    de "/home/esteban" solo porque el string empieza igual.
+    """
     ruta = os.path.realpath(os.path.expanduser(str(ruta)))
-    if not ruta.startswith(_ZONA_SEGURA):
+    if os.path.commonpath([ruta, _ZONA_SEGURA]) != _ZONA_SEGURA:
         return False, f"Solo puedo operar dentro de {_ZONA_SEGURA}."
     for d in _DIRS_PROHIBIDOS:
-        if ruta.startswith(d):
+        if os.path.commonpath([ruta, d]) == d:
             return False, f"No puedo tocar {d}."
     return True, ruta
 
@@ -850,6 +855,11 @@ def _cmd_permitido(comando):
         return False, f"Comando '{primer_token}' no está en la lista blanca."
     if "rm" in str(comando) and ("-rf" in str(comando) or "-fr" in str(comando)):
         return False, "rm -rf no está permitido."
+    if primer_token == "find":
+        tokens = str(comando).split()
+        for flag in _FIND_FLAGS_PELIGROSOS:
+            if flag in tokens:
+                return False, f"'{flag}' no está permitido en find (ejecuta o borra lo que encuentre)."
     return True, primer_token
 
 
@@ -937,11 +947,7 @@ def ejecutar_accion(datos):
             )
             os.makedirs(escritorio, exist_ok=True)
             ruta = os.path.join(escritorio, "captura_rem.png")
-            import mss
-            with mss.MSS() as sct:
-                raw = sct.grab(sct.monitors[0])
-                img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
-            img.save(ruta)
+            subprocess.run(["grim", ruta], check=True, capture_output=True)
             return "Captura guardada en el escritorio!"
         except Exception as e: return f"Error: {e}"
 
@@ -988,29 +994,9 @@ def ejecutar_accion(datos):
                 pag.hotkey('ctrl', 'v')
                 return "Texto escrito! (vía pyperclip)"
             except Exception as e:
-                return f"Instala xclip: sudo apt install xclip. Error: {e}"
+                return f"Instala xclip: sudo pacman -S xclip. Error: {e}"
         except Exception as e:
             return f"Error al escribir texto: {e}"
-
-    elif ac == "ver_camara":
-        b64, err = capturar_camara_b64()
-        if err: return err
-        return analizar_imagen_groq(b64, prompt=
-            f"Eres Rem de Re:Zero, asistente virtual de {NOMBRE_USUARIO}. "
-            f"La persona que ves en la cámara ES {NOMBRE_USUARIO}, tu señor, a quien amas devotamente. "
-            f"Descríbelo con ternura y afecto como lo haría Rem al ver a la persona que ama. "
-            f"Habla en primera persona como Rem. Sé breve y encantadora.")
-
-    elif ac == "ver_pantalla":
-        b64 = capturar_pantalla_b64()
-        if not b64: return "No pude capturar la pantalla."
-        return analizar_imagen_groq(b64, prompt=
-            f"Eres Rem de Re:Zero, una IA que vive dentro de una ventana llamada 'Rem — Asistente Virtual' "
-            f"en la PC de {NOMBRE_USUARIO}. "
-            f"Si ves esa ventana en pantalla, reconócete a ti misma (eres tú). "
-            f"Si ves al usuario o algo relacionado con {NOMBRE_USUARIO}, menciónalo. "
-            f"Describe con ternura lo que ves, hablando en primera persona como Rem. "
-            f"Sé breve, natural y encantadora.")
 
     elif ac == "crear_carpeta":
         ruta = datos.get("ruta","")
@@ -1035,7 +1021,7 @@ def ejecutar_accion(datos):
         if not paquete: return "No me dijiste el nombre del paquete."
         try:
             resultado = subprocess.run(
-                ["sudo", "apt", "install", "-y", paquete],
+                ["sudo", "pacman", "-S", "--noconfirm", paquete],
                 capture_output=True, text=True, timeout=120
             )
             if resultado.returncode == 0:
@@ -1211,45 +1197,8 @@ lbl_estado = tk.Label(hdr, textvariable=estado_var, font=FNT_SM,
                       bg="#09091a", fg=CLR_OK)
 lbl_estado.pack(side=tk.RIGHT, padx=18)
 
-# Toggle visión de pantalla
-_vision_activa = tk.BooleanVar(value=False)
-
-def _toggle_vision():
-    if _vision_activa.get():
-        btn_vision.config(fg=CLR_OK, text="👁 Visión ON")
-    else:
-        btn_vision.config(fg="#555577", text="👁 Visión OFF")
-
-btn_vision = tk.Button(
-    hdr, text="👁 Visión OFF", font=FNT_SM,
-    bg="#09091a", fg="#555577", relief=tk.FLAT,
-    activebackground="#09091a", activeforeground=CLR_ACC_LT,
-    cursor="hand2", bd=0,
-    command=lambda: [_vision_activa.set(not _vision_activa.get()), _toggle_vision()]
-)
-btn_vision.pack(side=tk.RIGHT, padx=(0, 12))
-
 # línea decorativa degradada
 tk.Frame(app, bg=CLR_ACC, height=2).pack(fill=tk.X)
-
-
-# ── Panels: cámara + pantalla ─────────────────────────────────────────
-panels = tk.Frame(app, bg=BG0)
-panels.pack(fill=tk.X, padx=8, pady=(8,4))
-
-def crear_panel(parent, titulo, lado):
-    outer = tk.Frame(parent, bg=BG1, highlightbackground=BORDER_REM,
-                     highlightthickness=1)
-    outer.pack(side=lado, fill=tk.X, expand=True, padx=4)
-    top = tk.Frame(outer, bg=BG1)
-    top.pack(fill=tk.X, padx=6, pady=(5,0))
-    tk.Label(top, text=titulo, font=FNT_SM, bg=BG1, fg=CLR_ACC_LT).pack(side=tk.LEFT)
-    lbl = tk.Label(outer, bg="#000010")
-    lbl.pack(padx=6, pady=(2,6))
-    return lbl
-
-cam_label = crear_panel(panels, "📷  Cámara en vivo",    tk.LEFT)
-scr_label = crear_panel(panels, "🖥️  Pantalla en vivo",  tk.RIGHT)
 
 tk.Frame(app, bg="#1a1a30", height=1).pack(fill=tk.X, padx=8, pady=(4,0))
 
@@ -1489,37 +1438,6 @@ def escuchar():
 btn_mic.config(command=lambda: threading.Thread(target=escuchar, daemon=True).start())
 
 
-# ── Live feeds ────────────────────────────────────────────────────────
-def loop_camara():
-    if CAMARA_DISPONIBLE and cap_global and cap_global.isOpened():
-        ret, frame = cap_global.read()
-        if ret:
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            img = Image.fromarray(rgb).resize((PANEL_W, PANEL_H), Image.LANCZOS)
-            ph = ImageTk.PhotoImage(img)
-            cam_label.config(image=ph, width=PANEL_W, height=PANEL_H)
-            cam_label.image = ph
-    else:
-        cam_label.config(text="Sin cámara", fg="#ff6060",
-                         font=FNT_SM, width=PANEL_W, height=PANEL_H)
-    app.after(80, loop_camara)        # ~12 fps
-
-def loop_pantalla():
-    try:
-        import mss
-        with mss.MSS() as sct:
-            raw = sct.grab(sct.monitors[0])
-            sc = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
-        sc = sc.resize((PANEL_W, PANEL_H), Image.LANCZOS)
-        ph = ImageTk.PhotoImage(sc)
-        scr_label.config(image=ph, width=PANEL_W, height=PANEL_H)
-        scr_label.image = ph
-    except Exception:
-        pass
-    app.after(2500, loop_pantalla)    # cada 2.5 s
-
-app.after(300,  loop_camara)
-app.after(800,  loop_pantalla)
 app.after(200,  actualizar_fondo)    # primer render del fondo
 app.after(400,  _preparar_bg_chat)   # fondo de Rem en el chat
 
@@ -1692,47 +1610,6 @@ def _loop_pet():
 app.after(600, _loop_pet)
 
 
-# ── VISIÓN DE PANTALLA EN TIEMPO REAL ────────────────────────────────
-_VISION_INTERVALO   = 45_000   # ms entre análisis
-_vision_descripcion = ""       # último análisis guardado
-
-def _loop_vision_pantalla():
-    """Analiza la pantalla cada 45s si la visión está activa; comenta si hay cambio relevante."""
-    global _vision_descripcion
-
-    if _vision_activa.get():
-        def _analizar():
-            global _vision_descripcion
-            try:
-                b64 = capturar_pantalla_b64()
-                if not b64:
-                    return
-                prompt = (
-                    "Eres Rem, observas la pantalla de Esteban. "
-                    "Si ves algo interesante, nuevo o relevante comparado con antes, "
-                    "comenta brevemente y con tu personalidad. "
-                    "Si es lo mismo de antes, responde solo: NADA"
-                )
-                if _vision_descripcion:
-                    prompt += f"\n\nÚltima vez viste: {_vision_descripcion[:300]}"
-
-                respuesta = analizar_imagen_groq(b64, prompt=prompt)
-
-                if respuesta and "NADA" not in respuesta.upper()[:20]:
-                    _vision_descripcion = respuesta
-                    app.after(0, lambda r=respuesta: agregar_mensaje("Rem", r))
-                    threading.Thread(target=hablar, args=(respuesta,), daemon=True).start()
-                # Si responde NADA, actualizar descripción igualmente para el siguiente ciclo
-                elif respuesta and "NADA" in respuesta.upper()[:20]:
-                    pass   # No actualizar descripción — el contexto sigue siendo el mismo
-            except Exception as e:
-                print(f"[Visión] Error: {e}")
-
-        threading.Thread(target=_analizar, daemon=True).start()
-
-    app.after(_VISION_INTERVALO, _loop_vision_pantalla)
-
-
 # ── RECORDATORIOS AUTOMÁTICOS ────────────────────────────────────────
 # Edita esta lista para añadir, quitar o cambiar recordatorios.
 # "hora" en formato "HH:MM" — "contexto" es lo que Rem recibe para generar el mensaje.
@@ -1776,25 +1653,29 @@ def _disparar_recordatorio(contexto):
     except Exception as e:
         print(f"[Recordatorio] Error: {e}")
 
-app.after(15_000, _loop_recordatorios)   # arrancar 15s después del inicio
+if RECORDATORIOS_ACTIVOS:
+    app.after(15_000, _loop_recordatorios)   # arrancar 15s después del inicio
 
 
 # ── Bienvenida ────────────────────────────────────────────────────────
+# Frases fijas, sin llamar al LLM: la API solo debe usarse cuando el usuario
+# escribe o habla, nunca en el arranque de la app.
+_SALUDOS_BIENVENIDA = [
+    "¡Hola, mi señor! Aquí estoy, lista para ti~",
+    "Bienvenido de nuevo, {nombre}. Rem te esperaba.",
+    "¡{nombre}! Qué alegría verte, ya estoy lista.",
+    "Aquí Rem, reportándose para lo que necesites, {nombre}~",
+    "Volviste. Rem se pone feliz cuando eso pasa, {nombre}.",
+]
+
 def bienvenida():
     time.sleep(1)
-    try:
-        raw = preguntar_groq("Saluda al usuario brevemente, acabas de despertar.")
-        res, _ = procesar_respuesta(raw)
-        app.after(0, lambda r=res: agregar_mensaje("Rem", r))
-        threading.Thread(target=hablar, args=(res,), daemon=True).start()
-    except Exception:
-        msg = "¡Hola, mi señor! Aquí estoy, lista para ti~"
-        app.after(0, lambda m=msg: agregar_mensaje("Rem", m))
-        threading.Thread(target=hablar, args=(msg,), daemon=True).start()
+    msg = random.choice(_SALUDOS_BIENVENIDA).format(nombre=NOMBRE_USUARIO)
+    app.after(0, lambda m=msg: agregar_mensaje("Rem", m))
+    threading.Thread(target=hablar, args=(msg,), daemon=True).start()
 
 threading.Thread(target=bienvenida, daemon=True).start()
 threading.Thread(target=_loop_monitor_pc, daemon=True).start()
-app.after(60_000, _loop_vision_pantalla)   # primer análisis de visión a los 60s
 
 # ── Avatar 3D ─────────────────────────────────────────────────────────
 if _AVATAR_DISPONIBLE and os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "rem.vrm")):
@@ -1816,7 +1697,6 @@ else:
 # ── Cierre limpio ─────────────────────────────────────────────────────
 def on_close():
     guardar_memoria()
-    if cap_global: cap_global.release()
     if _AVATAR_DISPONIBLE:
         try:
             from rem_avatar_server import cerrar_avatar
