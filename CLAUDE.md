@@ -35,6 +35,49 @@ no basta con copiar la carpeta.
 | `fairseq_shim/checkpoint_utils.py` | Fork de fairseq con `torch.load(weights_only=False)` |
 | `apply_shim.py` | Copia `fairseq_shim/` sobre el fairseq instalado en `venv/`. Ejecutar tras cualquier reinstalación de fairseq |
 | `cortar_sprites.py` | Script one-off para extraer sprites de un collage PNG |
+| `llm/` | Capa de abstracción de LLM (contrato + providers). Ver "Capa de abstracción de LLM" más abajo |
+| `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — hoy solo `[llm]` |
+
+## Capa de abstracción de LLM (`llm/`)
+Contrato común para poder cambiar de backend (Groq, Claude, un modelo local a futuro) sin tocar
+`Rem.py` más allá del punto de llamada.
+
+- `llm/base.py`: tipos normalizados (`Message`, `ToolSpec`, `ToolCall`, `Chunk` = `TextDelta` |
+  `ToolCallChunk` | `Done`) y el ABC `LLMProvider` con `stream_chat(system, messages, tools=None)
+  -> AsyncIterator[Chunk]`. **El system prompt es un parámetro explícito, no un `Message` más en la
+  lista**: Claude lo lleva como campo de nivel superior y los endpoints OpenAI-compatible como un
+  mensaje del array — si se metiera en `messages`, cada provider tendría que extraerlo de ahí para
+  dárselo a su API en el formato que le corresponde, y ese paso de ida y vuelta es justo donde se
+  rompe el prompt caching (ver "Nada volátil en el system prompt" más arriba).
+- `llm/groq.py`: `GroqProvider`, streaming real vía `AsyncGroq` (no la sync `Groq` que sigue usando
+  `extraer_memoria_importante()` vía `_groq_completions()` — esa ruta no se tocó, es una tarea de
+  extracción aparte). Reensambla tool_calls fragmentadas por índice de red antes de emitirlas.
+  Retry con backoff exponencial (heredado de `_groq_completions`), pero **solo cubre conectar y
+  obtener el stream** — si la conexión se corta a mitad de la respuesta ya no reintenta, porque
+  reintentar en ese punto rehace la respuesta desde cero y duplicaría texto que el consumidor ya
+  recibió; se deja propagar la excepción en su lugar.
+- `llm/__init__.py`: `get_provider()` — decide el provider por `REM_LLM_PROVIDER` (env) >
+  `[llm].provider` en `config.toml` > `"groq"` por defecto. Por ahora solo sabe instanciar Groq;
+  falla con `ValueError` claro si se pide otro provider (`claude`/`local` todavía no existen).
+- `llm/sentence_splitter.py`: `dividir_en_oraciones()` consume un `AsyncIterator[Chunk]` y emite
+  oraciones completas apenas se detecta su final (reutiliza la regla de corte de
+  `_partir_oraciones()` en Rem.py: `. ! ?` seguido de espacio, descarta fragmentos < 3 chars).
+  Maneja el caso de que una oración llegue partida entre dos chunks de red. **Construido pero
+  todavía no conectado a `Rem.py`** — conectarlo requeriría tocar `responder()`/`hablar()`, más
+  allá del único punto de llamada (`preguntar_groq()`) que se tocó en esta migración. Queda listo
+  para cuando el backend deje de ser Tkinter y `hablar()` pueda ir hablando oración por oración a
+  medida que llegan, en vez de esperar la respuesta completa.
+
+**Integración en `Rem.py`**: `preguntar_groq()` ya no llama a `_groq_completions()` — llama a
+`_drenar_stream_llm()`, que hace de puente sync→async: crea un event loop de asyncio nuevo y
+descartable (uno por turno, ya que `responder()` corre en un hilo nuevo por cada mensaje del
+usuario), junta todos los `TextDelta` del stream en un solo string, y lo devuelve — mismo contrato
+de entrada/salida que antes, `responder()`/`procesar_respuesta()`/`hablar()` no se tocaron. Ese
+loop **no puede ser el del `AudioWorker`** (`_worker_audio`): ese vive fijo en su propio hilo
+consumiendo su cola de audio, y un loop de asyncio no es seguro de usar desde otro hilo sin
+`run_coroutine_threadsafe`. Es un puente temporal: cuando Tkinter deje de ser el backend, este
+adaptador desaparece y se llama a `stream_chat()`/`dividir_en_oraciones()` directo desde el loop
+async nativo del backend nuevo.
 
 ## Configuración (.env en la raíz del proyecto)
 ```
@@ -116,6 +159,7 @@ Rem.py — hilo principal (Tkinter mainloop)
 ├── _cargar_rvc (daemon thread, inicio) — carga modelo RVC en background
 ├── escuchar() (daemon thread)          — micrófono → speech recognition
 ├── responder() (daemon thread)         — LLM → respuesta → hablar()
+│   └── _drenar_stream_llm()            — event loop asyncio propio y descartable por turno
 ├── extraer_memoria_importante()        — daemon thread, cada 8 msgs
 ├── _loop_monitor_pc (daemon thread)    — alerta CPU/RAM cada 60s
 └── _loop_recordatorios (app.after)     — recordatorios cada 30s, si RECORDATORIOS_ACTIVOS

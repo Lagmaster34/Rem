@@ -192,7 +192,7 @@ def cargar_memoria_sistema():
         with open(MEMORIA_SISTEMA_ARCHIVO, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return {"archivos": {}, "programas": {}, "carpetas": []}
+        return {"archivos": {}, "carpetas": []}
 
 def guardar_memoria_sistema():
     try:
@@ -305,7 +305,6 @@ Escribir texto:  {"accion": "escribir", "texto": "texto"}
 Crear carpeta:   {"accion": "crear_carpeta", "ruta": "ruta_completa"}
 Clima:           {"accion": "clima"}
 Descargar:       {"accion": "descargar", "url": "url", "nombre": "archivo.ext"}
-Instalar paquete: {"accion": "instalar_paquete", "paquete": "nombre-paquete"}
 Mover archivo:   {"accion": "mover_archivo", "origen": "ruta_origen", "destino": "ruta_destino"}
 Copiar archivo:  {"accion": "copiar_archivo", "origen": "ruta_origen", "destino": "ruta_destino"}
 Eliminar archivo: {"accion": "eliminar_archivo", "ruta": "ruta_completa"}
@@ -489,7 +488,6 @@ DESCRIPCIONES = {
     "clima":         lambda d: f"Consultar clima de {CIUDAD}",
     "descargar":     lambda d: f"Descargar: {d.get('nombre','')} desde {d.get('url','')}",
     "crear_carpeta":   lambda d: f"Crear carpeta: {d.get('ruta','')}",
-    "instalar_paquete":lambda d: f"Instalar paquete: {d.get('paquete','')}",
     "mover_archivo":   lambda d: f"Mover: {d.get('origen','')} → {d.get('destino','')}",
     "copiar_archivo":  lambda d: f"Copiar: {d.get('origen','')} → {d.get('destino','')}",
     "eliminar_archivo":lambda d: f"⚠️ ELIMINAR archivo: {d.get('ruta','')}",
@@ -511,6 +509,34 @@ def confirmar_accion(datos):
 
 
 # ── GROQ ──────────────────────────────────────────────────────────────
+def _drenar_stream_llm(system, mensajes):
+    """Puente sync→async temporal: responder() lanza un hilo nuevo por cada
+    turno (ver más abajo), así que un event loop nuevo y descartable acá es
+    más simple y seguro que compartir uno persistente entre turnos — y sobre
+    todo no puede ser el loop del AudioWorker (ver _worker_audio): ese vive
+    fijo en su propio hilo consumiendo su cola, y un loop de asyncio no es
+    thread-safe para usarse desde otro hilo sin run_coroutine_threadsafe.
+    Cuando el backend deje de ser Tkinter y pase a ser async nativo, este
+    adaptador desaparece y se llama a stream_chat() directo."""
+    from llm import Message, TextDelta, get_provider
+
+    provider = get_provider()
+    msgs = [Message(role=m["role"], content=m["content"]) for m in mensajes]
+
+    async def _consumir():
+        partes = []
+        async for chunk in provider.stream_chat(system, msgs):
+            if isinstance(chunk, TextDelta):
+                partes.append(chunk.text)
+        return "".join(partes)
+
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_consumir())
+    finally:
+        loop.close()
+
+
 def preguntar_groq(texto):
     texto_con_contexto = f"{construir_contexto_dinamico()}\n{texto}"
 
@@ -520,10 +546,7 @@ def preguntar_groq(texto):
             historial.pop(0)
         historial_snap = list(historial)
 
-    r = _groq_completions(
-        messages=[{"role": "system", "content": construir_prompt_sistema()}] + historial_snap,
-    )
-    c = r.choices[0].message.content
+    c = _drenar_stream_llm(construir_prompt_sistema(), historial_snap)
 
     with _lock_historial:
         historial.append({"role": "assistant", "content": c})
@@ -1015,25 +1038,6 @@ def ejecutar_accion(datos):
         nombre = datos.get("nombre","archivo_rem")
         if not url: return "No me diste la URL."
         return descargar_archivo(url, nombre)
-
-    elif ac == "instalar_paquete":
-        paquete = datos.get("paquete","").strip()
-        if not paquete: return "No me dijiste el nombre del paquete."
-        try:
-            resultado = subprocess.run(
-                ["sudo", "pacman", "-S", "--noconfirm", paquete],
-                capture_output=True, text=True, timeout=120
-            )
-            if resultado.returncode == 0:
-                memoria_sistema["programas"][paquete] = paquete
-                guardar_memoria_sistema()
-                return f"Paquete '{paquete}' instalado correctamente."
-            else:
-                return f"No pude instalar '{paquete}': {resultado.stderr[:200]}"
-        except subprocess.TimeoutExpired:
-            return "La instalación tardó demasiado y la cancelé."
-        except Exception as e:
-            return f"Error al instalar: {e}"
 
     elif ac == "mover_archivo":
         import shutil

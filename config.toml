@@ -1,0 +1,4 @@
+# Configuración no sensible de Rem (los secretos van en .env, no acá).
+[llm]
+provider = "groq"   # override: variable de entorno REM_LLM_PROVIDER
+model = "llama-3.3-70b-versatile"
