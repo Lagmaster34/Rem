@@ -14,10 +14,33 @@ _MODELO_DEFAULT = "llama-3.3-70b-versatile"
 
 
 class GroqProvider(LLMProvider):
+    """El cliente AsyncGroq (httpx por debajo) NO se crea acá en __init__: un
+    httpx.AsyncClient que llega a abrir una conexión real queda con su pool
+    interno atado al event loop que estaba corriendo en ese momento. Si este
+    GroqProvider se usa como singleton (p.ej. get_provider() cacheado a
+    futuro) y alguien lo llama desde un loop nuevo — el patrón exacto de
+    _drenar_stream_llm() en Rem.py, un loop descartable por turno — reusar
+    ese cliente revienta con "RuntimeError: Event loop is closed" en cuanto
+    intenta reusar la conexión pooleada del loop viejo (reproducido con
+    httpx.AsyncClient puro, sin mocks: falla en el segundo request, no en el
+    primero). Por eso el cliente se crea perezoso, por loop — ver
+    _obtener_cliente()."""
+
     def __init__(self, api_key: str, model: str = _MODELO_DEFAULT,
                  base_url: str | None = None, timeout: float = 30.0):
-        self._client = AsyncGroq(api_key=api_key, base_url=base_url, timeout=timeout)
+        self._api_key = api_key
+        self._base_url = base_url
+        self._timeout = timeout
         self._model = model
+        self._client: AsyncGroq | None = None
+        self._client_loop: asyncio.AbstractEventLoop | None = None
+
+    def _obtener_cliente(self) -> AsyncGroq:
+        loop = asyncio.get_running_loop()
+        if self._client is None or self._client_loop is not loop:
+            self._client = AsyncGroq(api_key=self._api_key, base_url=self._base_url, timeout=self._timeout)
+            self._client_loop = loop
+        return self._client
 
     async def stream_chat(
         self,
@@ -25,6 +48,7 @@ class GroqProvider(LLMProvider):
         messages: list[Message],
         tools: list[ToolSpec] | None = None,
     ) -> AsyncIterator[Chunk]:
+        client = self._obtener_cliente()
         payload_messages = [{"role": "system", "content": system}]
         payload_messages += [{"role": m.role, "content": m.content} for m in messages]
 
@@ -51,7 +75,7 @@ class GroqProvider(LLMProvider):
         stream = None
         for intento in range(_MAX_REINTENTOS):
             try:
-                stream = await self._client.chat.completions.create(**kwargs)
+                stream = await client.chat.completions.create(**kwargs)
                 break
             except Exception as e:
                 ultimo_error = e
