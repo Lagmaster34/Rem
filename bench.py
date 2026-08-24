@@ -3,8 +3,9 @@
 
 Lanza el servidor del avatar (HTTP :18765, WS :18766, overlay GTK) UNA vez y lo
 mantiene vivo mientras escribís comandos. No importa Rem.py (arranca la GUI
-Tkinter, el cliente Groq y app.mainloop() a nivel de módulo) — es autocontenido,
-reusa solo lipsync.py y rem_avatar_server.py.
+Tkinter y app.mainloop() a nivel de módulo, y en este venv ni siquiera podría:
+el Python 3.10.14 se compiló sin _tkinter) — es autocontenido, reusa solo
+config.py, lipsync.py y rem_avatar_server.py.
 
     venv/bin/python bench.py
     venv/bin/python bench.py --no-rvc      # 'say' más rápido, sin conversión de voz
@@ -31,6 +32,7 @@ import soundfile as sf
 import sounddevice as sd
 from scipy import signal as sps
 
+import config
 import lipsync
 from rem_avatar_server import (
     HTTP_PORT, TMP_AUDIO_DIR, iniciar_avatar, cerrar_avatar, enviar_audio,
@@ -220,6 +222,8 @@ def main():
 
     if not sys.executable.replace("\\", "/").endswith("venv/bin/python"):
         log("ADVERTENCIA: ejecuta con venv/bin/python bench.py")
+
+    config.cargar_dotenv()
 
     print("Iniciando avatar (HTTP :18765, WS :18766, overlay GTK)...")
     iniciar_avatar()

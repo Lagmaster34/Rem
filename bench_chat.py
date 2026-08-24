@@ -38,7 +38,9 @@ import soundfile as sf
 import sounddevice as sd
 from scipy import signal as sps
 
+import config
 import lipsync
+import personalidad
 from llm import Done, Message, TextDelta, ToolCallChunk, get_provider
 from rem_avatar_server import (
     HTTP_PORT, TMP_AUDIO_DIR, iniciar_avatar, cerrar_avatar, enviar_audio,
@@ -50,33 +52,11 @@ URL_AVATAR = f"http://localhost:{HTTP_PORT}/rem_avatar.html"
 ESPERA_CLIENTE_S = 8.0  # tiempo máximo para que un cliente WS conecte antes del fallback local
 ESPERA_HTTP_S = 5.0     # tiempo máximo para que el servidor HTTP responda antes de --open
 
-# Prompt mínimo de prueba: NO es el system prompt de Rem.py (personalidad +
-# reglas + catálogo de acciones + memoria) — reproducir eso acá está fuera de
-# alcance, este script solo prueba la capa LLM en sí.
-SYSTEM_PROMPT = (
-    "Sos Rem, una asistente de IA con la personalidad de Rem de Re:Zero: cálida, "
-    "leal y un poco tímida. Respondé de forma natural y breve, en español."
-)
-
 _rvc_cache = None
 
 
 def log(msg):
     print(f"  {msg}", flush=True)
-
-
-def _cargar_dotenv():
-    """Copia mínima de la de Rem.py: bench_chat.py es autocontenido y no pasa
-    por Rem.py, así que GROQ_API_KEY no llega al entorno solo por tener el
-    .env en la carpeta si no se cargó a mano antes."""
-    ruta = os.path.join(BASE, ".env")
-    if os.path.exists(ruta):
-        with open(ruta, encoding="utf-8") as f:
-            for linea in f:
-                linea = linea.strip()
-                if linea and not linea.startswith("#") and "=" in linea:
-                    k, v = linea.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
 
 
 def cargar_rvc(pitch=4, index_influence=0.75):
@@ -183,16 +163,21 @@ def _abrir_navegador():
     log(f"abriendo {URL_AVATAR} en el navegador por defecto")
 
 
-async def _chat(historial, texto, provider):
+async def _chat(historial, texto, provider, memoria_larga, memoria_sistema):
     """Manda `texto` al LLM vía stream_chat() y lo consume directo con
     `async for` — sin puente sync->async, ese es justo el punto de este
-    script. Imprime TextDelta a medida que llegan, muestra las ToolCall que
-    aparezcan y el Done final con el uso de tokens."""
-    historial.append(Message(role="user", content=texto))
+    script. Usa el mismo system prompt + contexto dinámico que preguntar_groq()
+    en Rem.py (personalidad.py, compartido) — antes mandaba una personalidad
+    de relleno inventada, no la real. Imprime TextDelta a medida que llegan,
+    muestra las ToolCall que aparezcan y el Done final con el uso de tokens."""
+    contexto = personalidad.construir_contexto_dinamico(memoria_sistema)
+    historial.append(Message(role="user", content=f"{contexto}\n{texto}"))
+
+    system = personalidad.construir_prompt_sistema(memoria_larga)
 
     print("Rem> ", end="", flush=True)
     partes = []
-    async for chunk in provider.stream_chat(SYSTEM_PROMPT, historial):
+    async for chunk in provider.stream_chat(system, historial):
         if isinstance(chunk, TextDelta):
             print(chunk.text, end="", flush=True)
             partes.append(chunk.text)
@@ -226,6 +211,12 @@ async def repl(args):
     voz_activa = False
     loop = asyncio.get_running_loop()
 
+    # Snapshot al arrancar, igual que Rem.py al iniciar — no se actualiza
+    # durante la sesión (bench_chat.py no tiene extraer_memoria_importante()),
+    # pero da el mismo contexto real de personalidad/memoria que tiene Rem.
+    memoria_larga = personalidad.cargar_memoria_larga()
+    memoria_sistema = personalidad.cargar_memoria_sistema()
+
     while True:
         try:
             linea = (await loop.run_in_executor(None, input, "bench_chat> ")).strip()
@@ -248,7 +239,7 @@ async def repl(args):
                 log("uso: chat <texto>")
                 continue
             try:
-                respuesta = await _chat(historial, resto, provider)
+                respuesta = await _chat(historial, resto, provider, memoria_larga, memoria_sistema)
                 if voz_activa and respuesta.strip():
                     await _decir(respuesta, usar_rvc=not args.no_rvc)
             except Exception as e:
@@ -279,7 +270,7 @@ def main():
     if not sys.executable.replace("\\", "/").endswith("venv/bin/python"):
         log("ADVERTENCIA: ejecuta con venv/bin/python bench_chat.py")
 
-    _cargar_dotenv()
+    config.cargar_dotenv()
 
     print("Iniciando avatar (HTTP :18765, WS :18766, overlay GTK)...")
     iniciar_avatar()

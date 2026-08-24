@@ -7,6 +7,7 @@ from typing import AsyncIterator
 
 from groq import AsyncGroq
 
+from ._retry import reintentar_con_backoff
 from .base import Chunk, Done, LLMProvider, Message, TextDelta, ToolCall, ToolCallChunk, ToolSpec
 
 _MAX_REINTENTOS = 3
@@ -28,6 +29,12 @@ class GroqProvider(LLMProvider):
 
     def __init__(self, api_key: str, model: str = _MODELO_DEFAULT,
                  base_url: str | None = None, timeout: float = 30.0):
+        if not api_key:
+            raise ValueError(
+                "GroqProvider necesita una api_key no vacía. Sin esto, el cliente "
+                "se construiría igual y recién fallaría en la primera petición con "
+                "un error de conexión/auth genérico, en vez de acá con un mensaje claro."
+            )
         self._api_key = api_key
         self._base_url = base_url
         self._timeout = timeout
@@ -66,25 +73,14 @@ class GroqProvider(LLMProvider):
                 for t in tools
             ]
 
-        # El retry con espera exponencial (heredado de _groq_completions) solo
-        # cubre conectar y obtener el stream: si la conexión ya empezó a
-        # entregar texto y se corta a mitad de camino, reintentar reharía la
-        # respuesta desde cero y duplicaría lo que el consumidor ya recibió —
-        # en ese caso es más honesto dejar que la excepción se propague.
-        ultimo_error = None
-        stream = None
-        for intento in range(_MAX_REINTENTOS):
-            try:
-                stream = await client.chat.completions.create(**kwargs)
-                break
-            except Exception as e:
-                ultimo_error = e
-                if intento < _MAX_REINTENTOS - 1:
-                    espera = 2 ** intento
-                    print(f"[Groq] Error (intento {intento+1}/{_MAX_REINTENTOS}): {e}. Reintentando en {espera}s...")
-                    await asyncio.sleep(espera)
-        else:
-            raise ultimo_error
+        # El retry con espera exponencial solo cubre conectar y obtener el
+        # stream: si la conexión ya empezó a entregar texto y se corta a
+        # mitad de camino, reintentar reharía la respuesta desde cero y
+        # duplicaría lo que el consumidor ya recibió — en ese caso es más
+        # honesto dejar que la excepción se propague sin reintentar.
+        stream = await reintentar_con_backoff(
+            lambda: client.chat.completions.create(**kwargs), _MAX_REINTENTOS, "Groq",
+        )
 
         # tool_calls llegan partidos en fragmentos de red por índice (varias
         # tool calls en paralelo comparten el mismo stream) — se acumulan acá

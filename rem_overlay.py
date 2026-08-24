@@ -149,16 +149,19 @@ def main():
     )
 
     # ── WebView ───────────────────────────────────────────────────────
-    webview = WebKit2.WebView()
-    webview.set_background_color(Gdk.RGBA(0, 0, 0, 0))
-
-    settings = webview.get_settings()
+    # WebKit2.Settings y WebKit2.WebsitePolicies se arman en objetos APARTE,
+    # completos, ANTES de crear el WebView (pasados por constructor) — así
+    # el orden en que se llaman los set_* de acá abajo deja de importar: no
+    # depende de que webview.get_settings() devuelva un objeto todavía sin
+    # terminar de configurar antes de la primera navegación. Esta regresión
+    # (autoplay bloqueado por NotAllowedError) ya pasó DOS VECES por
+    # reordenar/agregar líneas dentro de este bloque cuando el patrón era
+    # "webview = WebKit2.WebView(); settings = webview.get_settings()" — ver
+    # CLAUDE.md, "Regresión repetida de la política de autoplay".
+    settings = WebKit2.Settings()
 
     # El overlay es click-through por diseño (ver _aplicar_click_through): nunca va
-    # a llegar un gesto de usuario real. Se aplica ANTES que cualquier otra
-    # configuración y antes de la primera llamada a load_uri (más abajo, recién
-    # a los 1200ms vía GLib.timeout_add) — por si WebKit fija esta política al
-    # navegar y no la reevalúa luego para el documento ya cargado.
+    # a llegar un gesto de usuario real.
     try:
         settings.set_media_playback_requires_user_gesture(False)
         print("[Overlay] media-playback-requires-user-gesture desactivado (autoplay permitido)")
@@ -182,6 +185,26 @@ def main():
         print("[Overlay] console.* del frontend -> stdout, developer extras habilitados")
     except Exception as e:
         print(f"[Overlay] no se pudo habilitar el volcado de consola ({e})")
+
+    # `media-playback-requires-user-gesture` (arriba) NO alcanza por sí solo
+    # en WebKitGTK 2.52: hay un mecanismo separado y más nuevo,
+    # WebKitWebsitePolicies con la propiedad "autoplay" (WebKitAutoplayPolicy),
+    # que es el que de verdad decide si HTMLMediaElement.play() se rechaza con
+    # NotAllowedError. Confirmado en vivo: con solo la Settings de arriba
+    # (aunque bien armada, sin problema de orden) el rechazo seguía pasando;
+    # solo se resolvió agregando esto.
+    try:
+        policies = WebKit2.WebsitePolicies(autoplay=WebKit2.AutoplayPolicy.ALLOW)
+        print("[Overlay] WebsitePolicies.autoplay = ALLOW")
+    except Exception as e:
+        policies = None
+        print(f"[Overlay] WebsitePolicies no disponible en esta WebKit2 ({e})")
+
+    if policies is not None:
+        webview = WebKit2.WebView(settings=settings, website_policies=policies)
+    else:
+        webview = WebKit2.WebView.new_with_settings(settings)
+    webview.set_background_color(Gdk.RGBA(0, 0, 0, 0))
 
     webview.connect('context-menu', lambda *a: True)
     win.add(webview)

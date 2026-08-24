@@ -1,4 +1,30 @@
 # Configuración no sensible de Rem (los secretos van en .env, no acá).
 [llm]
-provider = "groq"   # override: variable de entorno REM_LLM_PROVIDER
-model = "llama-3.3-70b-versatile"
+provider = "claude"   # override: variable de entorno REM_LLM_PROVIDER. Groq queda como fallback.
+model = "llama-3.3-70b-versatile"   # modelo de Groq (fallback), no de Claude
+
+[llm.claude]
+# Sonnet 5 (familia intermedia): para un asistente conversacional de
+# escritorio la latencia importa más que la capacidad máxima de
+# razonamiento, y cada turno reenvía el system prompt completo (cacheado).
+# El modelo tope (Opus 5 / Fable 5) es caro y lento para esto. Haiku 4.5 es
+# la alternativa aún más barata/rápida si hace falta apretar más la
+# latencia, a costa de fidelidad de personaje.
+model = "claude-sonnet-5"
+max_tokens = 1024
+
+[llm.ollama]
+# Sin API key: corre local. Medido en esta máquina (4 GB VRAM): el modelo
+# ocupa ~2893 MiB cargado y RVC ~790 MiB — suman ~3683 de 4096 MiB, entran
+# juntos sin problema (la estimación anterior de 1-1,5 GB para RVC estaba
+# sobreestimada). keep_alive="10m" mantiene el modelo cargado entre turnos
+# en vez de descargarlo cada vez.
+base_url = "http://127.0.0.1:11434"
+model = "hf.co/HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive:Q4_K_M"
+keep_alive = "10m"
+# Sampling recomendado por el autor del modelo para modo no-thinking.
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0
+num_ctx = 8192

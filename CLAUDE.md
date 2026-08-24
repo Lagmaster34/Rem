@@ -15,7 +15,7 @@ no basta con copiar la carpeta.
 ## Stack técnico
 | Capa | Tecnología |
 |------|-----------|
-| LLM | Groq API — `llama-3.3-70b-versatile` |
+| LLM | Claude (Anthropic) — `claude-sonnet-5` por defecto. Groq queda como fallback (`llm/groq.py`) |
 | TTS | `edge-tts` (Microsoft Neural, voz `es-VE-PaolaNeural`, rate `-8%`) |
 | Voice conversion | `infer-rvc-python` + modelo `Rem_600e_6600s` |
 | STT | `speech_recognition` + Google |
@@ -36,11 +36,14 @@ no basta con copiar la carpeta.
 | `apply_shim.py` | Copia `fairseq_shim/` sobre el fairseq instalado en `venv/`. Ejecutar tras cualquier reinstalación de fairseq |
 | `cortar_sprites.py` | Script one-off para extraer sprites de un collage PNG |
 | `llm/` | Capa de abstracción de LLM (contrato + providers). Ver "Capa de abstracción de LLM" más abajo |
-| `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — hoy solo `[llm]` |
+| `config.py` | Módulo compartido: carga `.env` y lee `config.toml`. Lo usan `Rem.py`, `bench.py` y `bench_chat.py` — ninguno de los otros dos puede importar `Rem.py` (ver más abajo), así que sin esto no verían las variables de entorno |
+| `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — hoy solo `[llm]` / `[llm.claude]` |
+| `bench_chat.py` | REPL async nativo para probar la capa `llm/` sin Tkinter. Ver "Capa de abstracción de LLM" más abajo |
 
 ## Capa de abstracción de LLM (`llm/`)
-Contrato común para poder cambiar de backend (Groq, Claude, un modelo local a futuro) sin tocar
-`Rem.py` más allá del punto de llamada.
+Contrato común para poder cambiar de backend (Claude, Groq, un modelo local a futuro) sin tocar
+`Rem.py` más allá del punto de llamada. Proveedor activo: **Claude** (`llm/claude.py`), con **Groq
+como fallback** (`llm/groq.py`) — ver `get_provider()` más abajo.
 
 - `llm/base.py`: tipos normalizados (`Message`, `ToolSpec`, `ToolCall`, `Chunk` = `TextDelta` |
   `ToolCallChunk` | `Done`) y el ABC `LLMProvider` con `stream_chat(system, messages, tools=None)
@@ -49,16 +52,74 @@ Contrato común para poder cambiar de backend (Groq, Claude, un modelo local a f
   mensaje del array — si se metiera en `messages`, cada provider tendría que extraerlo de ahí para
   dárselo a su API en el formato que le corresponde, y ese paso de ida y vuelta es justo donde se
   rompe el prompt caching (ver "Nada volátil en el system prompt" más arriba).
-- `llm/groq.py`: `GroqProvider`, streaming real vía `AsyncGroq` (no la sync `Groq` que sigue usando
-  `extraer_memoria_importante()` vía `_groq_completions()` — esa ruta no se tocó, es una tarea de
-  extracción aparte). Reensambla tool_calls fragmentadas por índice de red antes de emitirlas.
-  Retry con backoff exponencial (heredado de `_groq_completions`), pero **solo cubre conectar y
-  obtener el stream** — si la conexión se corta a mitad de la respuesta ya no reintenta, porque
-  reintentar en ese punto rehace la respuesta desde cero y duplicaría texto que el consumidor ya
-  recibió; se deja propagar la excepción en su lugar.
+- `llm/_retry.py`: `reintentar_con_backoff()` — retry con backoff exponencial compartido por
+  `groq.py`, `claude.py` y `local.py`. Solo cubre conectar y obtener el stream (si la conexión se
+  corta a mitad de la respuesta ya no reintenta: reintentar ahí rehace la respuesta desde cero y
+  duplicaría texto que el consumidor ya recibió). Loguea tipo + `__cause__` de cada intento (no solo
+  `str(e)`), y al agotar los reintentos lanza `RuntimeError(...) from ultimo_error` — la excepción
+  original queda encadenada, no se pierde detrás de un mensaje genérico.
+- `llm/groq.py`: `GroqProvider`, streaming real vía `AsyncGroq`. Reensambla tool_calls fragmentadas
+  por índice de red antes de emitirlas.
+- `llm/local.py`: `OllamaProvider`, sobre la API **nativa** de Ollama (`/api/chat` vía `httpx`
+  crudo, streaming NDJSON) — no la compatible con OpenAI (`/v1/chat/completions`), que no acepta
+  `think` ni `keep_alive`. Sin API key: corre local. Modelo por defecto
+  `hf.co/HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive:Q4_K_M`, configurable en `config.toml` →
+  `[llm.ollama]` junto con `base_url`, `keep_alive` y el sampling (`temperature`/`top_p`/`top_k`/
+  `min_p`/`num_ctx`).
+  - **VRAM medida en esta máquina** (RTX 3050, 4 GB): el modelo ocupa ~2893 MiB cargado y RVC
+    ~790 MiB — suman ~3683 de 4096 MiB, **entran juntos** sin problema (la estimación inicial de
+    1-1,5 GB para RVC estaba sobreestimada; no hace falta serializarlos). Por eso `keep_alive`
+    default es `"10m"` en vez de `0`: mantiene el modelo cargado entre turnos.
+  - **`think=false` no es configurable a propósito**: con el thinking activo el modelo genera
+    cientos de tokens de razonamiento antes de responder — verificado en vivo como inviable para un
+    asistente hablado (demasiada latencia antes del primer `TextDelta`).
+  - `message.tool_calls` en esta API llega **completo** (argumentos ya como dict, sin fragmentar
+    entre chunks) — más simple que Claude, no hace falta acumular ni parsear JSON parcial. La API
+    tampoco manda un `id` por tool call, así que `OllamaProvider` genera uno (`uuid4().hex`) para
+    cumplir el contrato normalizado.
+  - Cada `Done.usage` trae `prompt_eval_count`/`eval_count` y las duraciones de Ollama en ms
+    (`load_duration_ms`, `prompt_eval_duration_ms`, `eval_duration_ms`, `total_duration_ms`); cada
+    turno también lo loguea por consola, con la carga del modelo separada de la generación. Medido
+    en esta máquina: con `keep_alive=0` (valor viejo) la carga rondaba ~4-4,5s en cada turno, sin
+    bajar con turnos repetidos ni con la caché de páginas tibia — confirmado con `keep_alive="10m"`
+    (valor actual) que el modelo sí queda cargado entre turnos: primer turno en frío ~4,2s de
+    carga, turnos siguientes ~0,2-0,3s. Verificado tanto con `curl` directo a `/api/chat` +
+    `/api/ps` como con `OllamaProvider` real end-to-end (incluyendo a través de
+    `get_provider()`/`config.toml`, no solo con el valor pasado a mano).
+  - **Bug encontrado y corregido durante la implementación**: el primer intento cortaba la
+    iteración de `resp.aiter_lines()` con `break` apenas llegaba la línea con `done: true`, en vez
+    de dejarla agotarse sola (el servidor cierra el body ahí mismo de todos modos). Un generador
+    async abandonado a mitad de iteración (en vez de agotado) necesita un `athrow(GeneratorExit)`
+    de limpieza que asyncio programa como Task aparte — si el loop del turno ya cerró para cuando el
+    GC lo recolecta (el patrón exacto de `_drenar_stream_llm()`: loop nuevo y descartable por
+    turno), esa Task se destruye a mitad de camino (`Task was destroyed but it is pending!`).
+    Reproducido, diagnosticado y arreglado sacando el `break`.
+- `llm/claude.py`: `ClaudeProvider`, streaming real vía `AsyncAnthropic`. Modelo por defecto
+  `claude-sonnet-5` (familia intermedia, no el tope Opus 5/Fable 5 — para un asistente conversacional
+  de escritorio la latencia importa más que la capacidad máxima, y cada turno reenvía el system
+  prompt completo aunque esté cacheado; Haiku 4.5 es la alternativa más barata/rápida si hace falta
+  apretar más, a costa de fidelidad de personaje). Configurable en `config.toml` → `[llm.claude]`
+  (`model`, `max_tokens`). Detalles de la traducción de eventos:
+  - System prompt como lista de bloques (`[{"type": "text", "text": system, "cache_control":
+    {"type": "ephemeral"}}]`), no string plano — así es como Anthropic cachea el prefijo.
+  - `max_tokens` es obligatorio en esta API (Rem usa 1024 por defecto: respuesta conversacional
+    corta, no una tarea agéntica).
+  - Traducción de eventos nativos → `Chunk`: `content_block_delta` con `text_delta` → `TextDelta`;
+    `message_stop` (con el `stop_reason` de `message_delta` y el `usage` acumulado) → `Done`.
+  - Tool calling: los argumentos llegan fragmentados como `input_json_delta` (`partial_json` por
+    índice de bloque) — se concatenan y se parsean recién en `content_block_stop`, nunca delta por
+    delta (el JSON parcial no es válido hasta estar completo).
+  - Cada `Done` loguea `cache_creation_input_tokens`/`cache_read_input_tokens` por turno, para
+    poder verificar a simple vista que el cache realmente pega.
 - `llm/__init__.py`: `get_provider()` — decide el provider por `REM_LLM_PROVIDER` (env) >
-  `[llm].provider` en `config.toml` > `"groq"` por defecto. Por ahora solo sabe instanciar Groq;
-  falla con `ValueError` claro si se pide otro provider (`claude`/`local` todavía no existen).
+  `[llm].provider` en `config.toml` > `"groq"` por defecto (hoy `config.toml` fija `"claude"`;
+  `"ollama"` corre 100% local, sin API key). Lee `config.toml` a través de
+  `config.leer_config_toml()` (ver más abajo). Si falta la API key del provider elegido
+  (`ANTHROPIC_API_KEY`/`GROQ_API_KEY`), **falla acá mismo con un `RuntimeError` explícito** en vez
+  de dejar que reviente recién en la primera petición con un error de conexión genérico — mismo
+  criterio que `GroqProvider`/`ClaudeProvider` rechazando una `api_key` vacía en su propio
+  `__init__` (`OllamaProvider` no tiene ese chequeo, no necesita key). Falla con `ValueError` claro
+  si se pide un provider que no existe.
 - `llm/sentence_splitter.py`: `dividir_en_oraciones()` consume un `AsyncIterator[Chunk]` y emite
   oraciones completas apenas se detecta su final (reutiliza la regla de corte de
   `_partir_oraciones()` en Rem.py: `. ! ?` seguido de espacio, descarta fragmentos < 3 chars).
@@ -68,19 +129,52 @@ Contrato común para poder cambiar de backend (Groq, Claude, un modelo local a f
   para cuando el backend deje de ser Tkinter y `hablar()` pueda ir hablando oración por oración a
   medida que llegan, en vez de esperar la respuesta completa.
 
-**Integración en `Rem.py`**: `preguntar_groq()` ya no llama a `_groq_completions()` — llama a
-`_drenar_stream_llm()`, que hace de puente sync→async: crea un event loop de asyncio nuevo y
-descartable (uno por turno, ya que `responder()` corre en un hilo nuevo por cada mensaje del
-usuario), junta todos los `TextDelta` del stream en un solo string, y lo devuelve — mismo contrato
-de entrada/salida que antes, `responder()`/`procesar_respuesta()`/`hablar()` no se tocaron. Ese
-loop **no puede ser el del `AudioWorker`** (`_worker_audio`): ese vive fijo en su propio hilo
-consumiendo su cola de audio, y un loop de asyncio no es seguro de usar desde otro hilo sin
-`run_coroutine_threadsafe`. Es un puente temporal: cuando Tkinter deje de ser el backend, este
-adaptador desaparece y se llama a `stream_chat()`/`dividir_en_oraciones()` directo desde el loop
-async nativo del backend nuevo.
+**Cliente perezoso por event loop (Groq y Claude)**: ni `GroqProvider` ni `ClaudeProvider` crean su
+cliente HTTP (`AsyncGroq`/`AsyncAnthropic`, ambos httpx por debajo) en `__init__` — lo arman recién
+en el primer uso real, y lo recrean si el event loop actual cambió respecto al de la última llamada
+(`_obtener_cliente()`). Motivo: un cliente httpx async que llega a abrir una conexión real queda con
+su pool interno atado al loop que estaba corriendo en ese momento; si el provider se usara como
+singleton y se lo llamara desde un loop nuevo — el patrón exacto de `_drenar_stream_llm()` más abajo,
+un loop descartable por turno — reusar ese cliente revienta con `RuntimeError: Event loop is closed`.
+Reproducido con `httpx.AsyncClient` puro (sin mocks): un request exitoso en un loop + el mismo
+cliente reusado en otro loop distinto falla así — pero **solo si el primer request llegó a completarse
+con éxito** (una conexión que nunca se estableció, p.ej. por un 401, no deja pool que reusar, así que
+un test con una API key inválida no alcanza para reproducirlo).
+
+**Integración en `Rem.py`**: `preguntar_groq()` llama a `_drenar_stream_llm()`, que hace de puente
+sync→async: crea un event loop de asyncio nuevo y descartable (uno por turno, ya que `responder()`
+corre en un hilo nuevo por cada mensaje del usuario), junta todos los `TextDelta` del stream en un
+solo string, y lo devuelve — mismo contrato de entrada/salida que antes,
+`responder()`/`procesar_respuesta()`/`hablar()` no se tocaron. Ese loop **no puede ser el del
+`AudioWorker`** (`_worker_audio`): ese vive fijo en su propio hilo consumiendo su cola de audio, y un
+loop de asyncio no es seguro de usar desde otro hilo sin `run_coroutine_threadsafe`. Es un puente
+temporal: cuando Tkinter deje de ser el backend, este adaptador desaparece y se llama a
+`stream_chat()`/`dividir_en_oraciones()` directo desde el loop async nativo del backend nuevo.
+`extraer_memoria_importante()` (cada 8 mensajes) también pasa por `_drenar_stream_llm()` — usa el
+mismo provider principal que la conversación, en vez de un cliente Groq síncrono aparte; si ese
+provider no tiene su API key configurada, el `RuntimeError` explícito de `get_provider()` llega tal
+cual al `except` de `extraer_memoria_importante()` y se loguea, sin tumbar el hilo.
+
+**`config.py`** (módulo compartido, en la raíz, no en `llm/`): `cargar_dotenv()` (carga `.env` al
+entorno vía `os.environ.setdefault`, tolera valores con `=` dentro gracias a `split("=", 1)` — las
+API keys pueden llevarlo) y `leer_config_toml()` (parsea `config.toml` con `tomlkit`). Existe porque
+`bench.py` y `bench_chat.py` no pueden importar `Rem.py` (ver "Banco de pruebas" más abajo) y antes
+no veían ninguna variable de `.env` — `llm/__init__.py` también lo usa para leer `config.toml`, en
+vez de tener su propia lectura duplicada.
+
+**Banco de pruebas sin Tkinter (`bench_chat.py`)**: el Python 3.10.14 del venv se compiló sin
+`_tkinter`, así que `Rem.py` no arranca ni se puede importar en este entorno (y Tkinter va a
+desaparecer del proyecto de todos modos). `bench_chat.py` es el REPL async nativo para probar
+`llm/` en aislamiento — en la línea de `bench.py` (que prueba lipsync/RVC/avatar sin el chat), pero
+para el LLM: `chat <texto>` llama a `stream_chat()` directo con `async for` (sin el puente
+sync→async, no hace falta: todo el REPL vive en un único `asyncio.run()`), `voz on|off` encadena la
+respuesta al pipeline de voz existente (`lipsync.py` + RVC + `enviar_audio` de
+`rem_avatar_server.py`, reusados tal cual), `reset` limpia el historial y `quit` cierra. Arranca el
+avatar exactamente igual que `bench.py` (`config.cargar_dotenv()` → `iniciar_avatar()`).
 
 ## Configuración (.env en la raíz del proyecto)
 ```
+ANTHROPIC_API_KEY=tu_api_key_de_anthropic
 GROQ_API_KEY=tu_api_key_de_groq
 NOMBRE_USUARIO=Esteban
 CIUDAD=Yarumal
@@ -91,10 +185,11 @@ REM_OVERLAY_W=520
 REM_OVERLAY_H=860
 RECORDATORIOS_ACTIVOS=false
 MEMORIA_EXTRACCION_ACTIVA=true
-MEMORIA_EXTRACCION_MODELO=llama-3.3-70b-versatile
-MEMORIA_EXTRACCION_BASE_URL=
-MEMORIA_EXTRACCION_API_KEY=
 ```
+`ANTHROPIC_API_KEY` es la que usa el provider activo (`claude`, ver `config.toml`); `GROQ_API_KEY`
+solo hace falta si `[llm].provider`/`REM_LLM_PROVIDER` se cambia a `"groq"`. `get_provider()` falla
+al arrancar con un mensaje explícito si falta la key del provider elegido — ver "Capa de
+abstracción de LLM" más arriba.
 `REM_LAYER` (`top`|`overlay`) y `REM_OVERLAY_W`/`REM_OVERLAY_H` los lee `rem_overlay.py`, no
 `Rem.py` — controlan la capa del compositor y el tamaño fijo de la layer surface (ver
 "Layer surface acotada" más abajo).
@@ -102,13 +197,11 @@ MEMORIA_EXTRACCION_API_KEY=
 22:00, 00:30) sin que el usuario haga nada — apagado por defecto porque la regla del proyecto es
 que la API solo se usa cuando el usuario escribe o habla (ver "Nada volátil en el system prompt /
 sin llamadas al LLM sin intervención del usuario" más abajo).
-`MEMORIA_EXTRACCION_*`: `extraer_memoria_importante()` es una tarea de extracción (no de
-conversación) que corre cada 8 mensajes — candidata natural para un modelo local en el futuro.
-`MEMORIA_EXTRACCION_ACTIVA=false` la desactiva del todo; `MEMORIA_EXTRACCION_BASE_URL` (vacío por
-defecto) apunta el cliente a un servidor OpenAI-compatible distinto del Groq principal (p.ej. uno
-local) sin tocar el resto del código, y `MEMORIA_EXTRACCION_API_KEY` es su API key si hace falta una
-distinta de `GROQ_API_KEY`.
-Todas las variables tienen valores por defecto en el código. Solo `GROQ_API_KEY` es obligatoria.
+`MEMORIA_EXTRACCION_ACTIVA` (default `true`): `extraer_memoria_importante()` es una tarea de
+extracción (no de conversación) que corre cada 8 mensajes, a través del mismo provider principal
+que la conversación (ver "Capa de abstracción de LLM") — `false` la desactiva del todo.
+Todas las variables tienen valores por defecto en el código. Solo la API key del provider activo
+(`ANTHROPIC_API_KEY` por defecto) es obligatoria.
 
 ## Nada volátil en el system prompt (para que el prompt caching funcione)
 El caching de prompts en los proveedores de inferencia (Groq incluido) exige que el prefijo sea
@@ -126,7 +219,8 @@ completo siempre. Por eso:
   no va en `construir_prompt_sistema()`.
 
 ## Ninguna llamada al LLM sin intervención del usuario
-Requisito firme del proyecto: la API (Groq) solo se usa cuando el usuario escribe o habla.
+Requisito firme del proyecto: la API (Claude, o el provider que esté activo) solo se usa cuando el
+usuario escribe o habla.
 - `bienvenida()` (saludo al arrancar la app) usa una frase estática elegida al azar de
   `_SALUDOS_BIENVENIDA`, no llama al LLM.
 - `RECORDATORIOS` (recordatorios automáticos por hora) está detrás de `RECORDATORIOS_ACTIVOS`,
@@ -339,10 +433,15 @@ pero para el lipsync no importa, porque hay un camino mejor que no depende del n
     (expressionManager no las toca, así que no hay pisado); la vía `expressionManager` escribe
     **antes**, porque `vrm.update()` es lo que consume `setValue()` y aplica los morphs reales.
   - `updateExpressions()` suprime el peso de la expresión `surprised` mientras hay audio de lipsync
-    activo (`_audioSource` truthy): sus binds incluyen el morph `"Huh"` (índice 25, fuera del rango
-    4-18 de los visemes, pero igual un gesto de boca) que si no competiría visualmente con el viseme
-    activo. `Talk` bindea `"Ah"` (índice 19, también boca) pero nunca se llama desde ningún lado del
+    activo (`_audioSource` truthy): sus binds incluyen los morphs **25, 38 y 41** (fuera del rango
+    4-18 de los visemes, pero igual gestos de boca) que si no competirían visualmente con el viseme
+    activo. `Talk` bindea el morph **19** (también boca) pero nunca se llama desde ningún lado del
     código — no hizo falta suprimirla aparte.
+- **`lookUp`/`lookDown`/`lookLeft`/`lookRight` tampoco tienen binds** (mismo problema que la
+  expresión `ou`/`U` de arriba: listas vacías, seleccionar esos presets no mueve nada) — la mirada
+  por expresiones (`expressionManager`) no funciona en este modelo, para ninguna dirección. La forma
+  real de implementar mirada acá es `vrm.lookAt` operando sobre los huesos `leftEye`/`rightEye` (ver
+  "Huesos humanoides" arriba, sí existen y están mapeados), no sobre blend shapes.
 
 ## Reproducción de audio: `<audio>` de HTML, no Web Audio API
 Se intentó primero con `AudioContext` (Web Audio API), con `resume()` en gestos de usuario
@@ -354,10 +453,13 @@ resolvía esto**: esa política de WebKit2 solo aplica a elementos de medios (`<
 la Web Audio API — por eso `AudioContext` seguía bloqueado pese a desactivarla.
 
 La solución fue eliminar el problema de raíz: `rem_avatar.html` reproduce con un `HTMLAudioElement`
-(`new Audio()`) en vez de `AudioContext`/`AudioBufferSourceNode`. `HTMLMediaElement.play()` no tiene
-la misma restricción de gesto de usuario en este WebView, así que no hace falta ningún workaround.
-Se creó **una sola vez** y se reutiliza para toda la cola (no una instancia por frase): a cada turno
-de la cola se le asigna `.src` y se llama `.play()` de nuevo.
+(`new Audio()`) en vez de `AudioContext`/`AudioBufferSourceNode`. Se creó **una sola vez** y se
+reutiliza para toda la cola (no una instancia por frase): a cada turno de la cola se le asigna
+`.src` y se llama `.play()` de nuevo. **Corrección sobre la afirmación original de este bloque**:
+en su momento se creyó que `HTMLMediaElement.play()` no tenía ninguna restricción de gesto de
+usuario en este WebView y que por eso no hacía falta ningún workaround — resultó ser incompleto,
+ver "Regresión repetida de la política de autoplay" más abajo: sí hay una restricción, solo que la
+controla un mecanismo distinto de `media-playback-requires-user-gesture`.
 
 - El lipsync ya no necesita `audioContext.currentTime - startTime`: `audio.currentTime` ya es la
   posición dentro del archivo actual, leída directo en cada frame — sobra de precisión a 60fps.
@@ -369,6 +471,42 @@ de la cola se le asigna `.src` y se llama `.play()` de nuevo.
   WebSocket y el fallback a `sounddevice` en `rem_avatar_server.py` que dependía de él — ya no hace
   falta, `_ws_handler` volvió a descartar todo lo que llega del cliente (solo le importa el cierre
   de conexión, para el log breve en vez de traceback).
+
+## Regresión repetida de la política de autoplay
+`play()` volvió a rechazarse con `NotAllowedError` una segunda vez, con el mismo síntoma que la
+sección anterior. El patrón de código en `rem_overlay.py` era `webview = WebKit2.WebView();
+settings = webview.get_settings()` y recién ahí se llamaba a `settings.set_media_playback_requires_
+user_gesture(False)` junto a los demás `set_*` — agregar `set_enable_write_console_messages_to_
+stdout(True)`/`set_enable_developer_extras(True)` (para el volcado de consola, ver más arriba) puso
+código nuevo por delante en el bloque y volvió a romperlo, la MISMA clase de fragilidad que ya había
+pasado una vez antes.
+
+**La causa real no era el orden del bloque — el diagnóstico original quedó incompleto.**
+Investigando en vivo (Hyprland real, probando `say` con `bench.py` y leyendo el log del overlay)
+con el orden ya arreglado (`WebKit2.Settings()` armado aparte, completo, antes de crear el WebView
+vía `WebKit2.WebView.new_with_settings(settings)` — así el orden interno de los `set_*` deja de
+importar) **el `NotAllowedError` seguía pasando igual**. `WebKitSettings:media-playback-requires-
+user-gesture` no es lo único que controla esto en WebKitGTK 2.52: hay un mecanismo separado y más
+nuevo, `WebKitWebsitePolicies` con la propiedad `autoplay` (`WebKitAutoplayPolicy`: `ALLOW` /
+`ALLOW_WITHOUT_SOUND` / `DENY`) — confirmado con `list_properties()` que el nombre real de la
+propiedad es `"autoplay"`, no `"autoplay-policy"`. Es el que de verdad decide si
+`HTMLMediaElement.play()` se rechaza.
+
+`WebsitePolicies` es una propiedad de **construcción** del `WebView` (`website-policies`, junto a
+`settings`), no algo que se pueda mutar después sobre un WebView ya creado — por eso el fix final
+construye los tres objetos (`Settings`, `WebsitePolicies`, `WebView`) en ese orden estricto, con
+`WebView(settings=settings, website_policies=policies)`:
+
+```python
+policies = WebKit2.WebsitePolicies(autoplay=WebKit2.AutoplayPolicy.ALLOW)
+webview = WebKit2.WebView(settings=settings, website_policies=policies)
+```
+
+Verificado en vivo: sin `WebsitePolicies`, el log mostraba `[Lipsync] play() rechazado ... name:
+NotAllowedError`; con `WebsitePolicies(autoplay=ALLOW)`, `[Lipsync] play() resuelto (promesa)`. Se
+mantiene también `media-playback-requires-user-gesture(False)` en `Settings` (por si algún otro
+camino de reproducción lo consulta), pero **no alcanza solo** — los dos mecanismos son
+independientes y hace falta el segundo.
 
 ## Encuadre del avatar: anclas normalizadas, no world units fijas
 `recalcularEncuadre()` deriva `camera.position.z` para que el modelo ocupe `CONFIG.pet.alturaPantalla`
@@ -383,7 +521,9 @@ carga del VRM y en cada `resize`.
 `new THREE.Box3().setFromObject(vrm.scene)`, que para un VRM con `SkinnedMesh` da la caja de la
 geometría **sin aplicar el skinning** — el shader deforma los vértices en la GPU, no en los datos de
 `geometry.attributes.position` en CPU, así que `Box3` mide aproximadamente la mitad de la altura real
-(medido en este modelo: Box3 ≈ 0,80u vs. huesos ≈ 1,55u). La fórmula de encuadre en sí es correcta
+(medido en este modelo, cifras exactas confirmadas en vivo: Box3 = 0,801u vs. huesos = 1,623u — el
+diagnóstico original con cifras aproximadas, 0,80u/1,55u, quedó confirmado por una medición real
+posterior). La fórmula de encuadre en sí es correcta
 para *cualquier* altura que se le pase (normaliza a `alturaPantalla`/`anchorY` por construcción) — el
 bug no estaba ahí, sino en que `Box3` alimentaba un dato de altura equivocado: la cámara terminaba
 demasiado cerca para el tamaño *real* renderizado (más grande que el medido), así que la cabeza se
@@ -424,6 +564,29 @@ escritorio — con las ~103 cadenas de spring bones de este modelo, costo consta
   `recalcularEncuadre()` (carga + resize) — así que si algún día la superficie vuelve a ser ancha,
   vuelve a las anclas originales solo. `BORDE_IZQ`/`BORDE_DER` en `tickPet()` pasaron de `const`
   cacheadas a leer `CONFIG.pet.walkLeft`/`walkRight` en vivo, si no el ajuste no tenía efecto ahí.
+
+## Arranque del overlay: sin divergencia entre bench.py y bench_chat.py, pero riesgo de conflicto de puertos
+Investigado tras un reporte de que `bench.py` había dejado de lanzar el overlay mientras
+`bench_chat.py` sí lo hacía. Probado en vivo (Hyprland real, no headless) corriendo cada script por
+separado con stdin cerrado tras ~10s: **ambos cargan el overlay de forma idéntica y exitosa** —
+mismo `rem_overlay.log` (VRM cargado, WS conectado, expresiones resueltas), sin ningún error. La
+secuencia de arranque del avatar es byte-a-byte la misma en los dos (`config.cargar_dotenv()` →
+`iniciar_avatar()` → `_abrir_navegador()` opcional) desde que `bench.py` también empezó a llamar a
+`config.cargar_dotenv()`, así que ese cambio no es la causa — no se pudo reproducir el reporte
+original en este entorno.
+
+**Riesgo real encontrado en el camino** (no confirmado como la causa de aquel reporte, pero sí un
+bug latente): `rem_avatar_server.py._iniciar_ws()` llama a `_ws_ready.set()` **antes** de intentar
+`websockets.serve(...)`. Si el puerto `:18766` ya está ocupado (p.ej. porque `bench.py`,
+`bench_chat.py` o `Rem.py` ya está corriendo en otra terminal), `websockets.serve()` lanza una
+excepción dentro del hilo daemon `AvatarWS` — que muere en silencio (una excepción no capturada en
+un `threading.Thread` no se propaga al hilo principal) — pero `_ws_ready` ya quedó en `True` desde
+antes de ese fallo. `iniciar_avatar()` nunca se entera: `_lanzar_overlay()` se llama igual, y el
+overlay termina intentando hablarle a un WebSocket que en ESTE proceso nunca llegó a levantar (aunque
+sí puede haber uno ajeno, del otro proceso, sirviendo ese mismo puerto). Si dos instancias de
+Rem/bench/bench_chat corren en simultáneo, la segunda puede terminar así — con un overlay que se ve
+"no funcionar" sin ningún error visible. No se tocó porque no se confirmó que sea la causa real del
+reporte; si vuelve a pasar, revisar primero si hay más de un proceso corriendo a la vez.
 
 
     # IMPORTANTE: 
