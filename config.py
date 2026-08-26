@@ -38,3 +38,13 @@ def leer_config_toml(ruta: str = TOML_PATH) -> dict:
     import tomlkit
     with open(ruta, encoding="utf-8") as f:
         return tomlkit.parse(f.read())
+
+
+def leer_dispositivo_rvc() -> str:
+    """Dispositivo para RVC: "cpu" o "cuda", desde config.toml [rvc].device
+    (default "cuda"). Cualquier valor que no sea exactamente "cpu" se trata
+    como "cuda" — ver la nota en CLAUDE.md sobre la calibración de num_gpu
+    que le hizo sitio a RVC en la misma GPU que el LLM local (Ollama)."""
+    rvc_config = leer_config_toml().get("rvc", {})
+    valor = str(rvc_config.get("device", "cuda")).strip().lower()
+    return "cpu" if valor == "cpu" else "cuda"

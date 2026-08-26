@@ -26,6 +26,8 @@ import os
 import sys
 import time
 
+import config
+
 BASE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(BASE, "pruebas_voz")
 
@@ -132,8 +134,9 @@ def mp3_a_wav16k(origen_mp3, destino_wav):
 def cargar_rvc(pitch, index_influence, envelope, protect):
     from infer_rvc_python import BaseLoader
 
+    dispositivo = config.leer_dispositivo_rvc()
     rmvpe = os.path.join(BASE, "rmvpe.pt")
-    rvc = BaseLoader(only_cpu=False, rmvpe_path=rmvpe)
+    rvc = BaseLoader(only_cpu=(dispositivo == "cpu"), rmvpe_path=rmvpe)
     rvc.apply_conf(
         tag="rem",
         file_model=os.path.join(BASE, "models", "Rem_600e_6600s", "Rem_600e_6600s.pth"),
@@ -146,7 +149,7 @@ def cargar_rvc(pitch, index_influence, envelope, protect):
         consonant_breath_protection=protect,
         resample_sr=0,
     )
-    return rvc
+    return rvc, dispositivo
 
 
 def reproducir(ruta, etiqueta):
@@ -201,7 +204,7 @@ def main():
         f"envelope_ratio={args.envelope}   consonant_breath_protection={args.protect}")
     t0 = time.perf_counter()
     try:
-        rvc = cargar_rvc(args.pitch, args.index, args.envelope, args.protect)
+        rvc, dispositivo = cargar_rvc(args.pitch, args.index, args.envelope, args.protect)
     except Exception as e:
         log(f"FALLO al cargar RVC: {type(e).__name__}: {e}")
         log("")
@@ -209,7 +212,7 @@ def main():
         if not args.no_play:
             reproducir(wav_crudo, "CRUDO")
         sys.exit(1)
-    log(f"modelo cargado en {time.perf_counter() - t0:.1f}s")
+    log(f"modelo cargado en {time.perf_counter() - t0:.1f}s ({dispositivo})")
 
     titulo("PASO 3 — CONVERSION RVC")
     t0 = time.perf_counter()
@@ -225,11 +228,11 @@ def main():
 
     import shutil
     shutil.copy(res[0], wav_rvc)
-    log(f"convertido en {t_rvc:.2f}s  -> {wav_rvc}")
+    log(f"convertido en {t_rvc:.2f}s ({dispositivo})  -> {wav_rvc}")
 
     titulo("RESULTADOS")
     log(f"TTS        : {t_tts:.2f}s")
-    log(f"RVC        : {t_rvc:.2f}s")
+    log(f"RVC        : {t_rvc:.2f}s  ({dispositivo})")
     log(f"TOTAL      : {t_tts + t_rvc:.2f}s")
     log("")
     log(f"WAV crudo  : {wav_crudo}")

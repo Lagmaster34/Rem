@@ -6,10 +6,12 @@ import os
 import config as _config
 
 from .base import Chunk, Done, LLMProvider, Message, TextDelta, ToolCall, ToolCallChunk, ToolSpec
+from .sentence_splitter import dividir_en_oraciones
 
 __all__ = [
     "Chunk", "Done", "LLMProvider", "Message", "TextDelta",
     "ToolCall", "ToolCallChunk", "ToolSpec", "get_provider",
+    "dividir_en_oraciones",
 ]
 
 
@@ -38,9 +40,10 @@ def get_provider() -> LLMProvider:
                 "(revisá tu .env). Sin esto Groq fallaría recién en la primera "
                 "petición con un error de conexión genérico — mejor fallar acá."
             )
+        groq_config = dict(llm_config.get("groq", {}))
         return GroqProvider(
             api_key=api_key,
-            model=str(llm_config.get("model", "llama-3.3-70b-versatile")),
+            model=str(groq_config.get("model", "llama-3.3-70b-versatile")),
         )
 
     if proveedor == "claude":
@@ -74,6 +77,7 @@ def get_provider() -> LLMProvider:
                 "top_k": ollama_config.get("top_k", 20),
                 "min_p": ollama_config.get("min_p", 0),
                 "num_ctx": ollama_config.get("num_ctx", 8192),
+                "num_gpu": ollama_config.get("num_gpu", 28),
             },
         )
 

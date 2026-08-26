@@ -332,6 +332,97 @@ Medido en esta máquina (RTX 3050 Laptop, torch 2.3.1+cu121) con `test_voz.py`:
 - salida de RVC: 40000 Hz
 - configuración usada: `pitch_lvl=4`, `index_influence=0.75`
 
+## RVC vuelve a GPU: calibración de num_gpu para hacerle sitio
+Se probó primero mover RVC a CPU cuando el LLM local (`ollama`) satura la VRAM (ver historial más
+abajo), pero medido en vivo con el `SentenceSplitter` ya conectado (ver más abajo) CPU no alcanza:
+una frase corta tardó **~13,6s** en convertir en CPU frente a ~3-5s en GPU — casi 4,5× tiempo real,
+así que la cola de conversión no le sigue el ritmo a la generación y la latencia termina peor que
+sin el splitter. La solución real no era mover RVC a CPU, sino bajarle capas al LLM en GPU
+(`num_gpu` de Ollama) para hacerle sitio a RVC en la misma tarjeta.
+
+**Calibración empírica** (RTX 3050, 4 GB VRAM; modelo Qwen3.5-4B Q4_K_M, 32 capas —
+`qwen35.block_count` vía `/api/show`). Para cada `num_gpu` candidato: se descargó el modelo
+(`keep_alive: 0`), se recargó con ese `num_gpu` + una generación de 100 tokens (`num_predict: 100`,
+`num_ctx: 4096`), se midió VRAM con `nvidia-smi` y tokens/s (`eval_count`/`eval_duration`), y se
+intentó una conversión RVC real en CUDA:
+
+| num_gpu | VRAM modelo | tok/s | RVC (cuda) |
+|---------|-------------|-------|------------|
+| 32 (default de Ollama, todas las capas) | ~2994 MiB | ~40,7 | **FALLA siempre** — CUDA out of memory |
+| 28 | ~2714 MiB | ~25,8 | OK |
+| 24 | ~2430 MiB | ~20,7 | OK |
+| 20 | ~2156 MiB | ~16,9 | OK |
+| 16 | ~1872 MiB | ~12,9 | OK |
+| 12 | ~1596 MiB | ~12,3 | OK |
+| 8  | ~1312 MiB | ~10,3 | OK |
+| 4  | ~1061 MiB | ~8,3  | OK |
+| 0 (CPU puro) | ~153 MiB | ~4,7 | OK |
+
+En `num_gpu=32` el resultado de `rvc(...)` vuelve vacío, no una excepción visible — mismo mecanismo
+de `infer_rvc_python` que traga excepciones de su hilo interno (ver más abajo). Se confirmó que es
+un **OOM real, no la carrera intermitente**: repetido 4 veces seguidas con el modelo ya cargado en
+`num_gpu=32`, las 4 veces salió vacío y las 4 veces el subproceso mostraba `CUDA out of memory` en
+stderr — pese a que la VRAM libre en reposo (~1100 MiB) parecía alcanzarle a los ~790 MiB que RVC
+necesita, el pico real durante la conversión (fragmentación + el propio LLM sin liberar su
+allocator) lo excede.
+
+`num_gpu=28` se verificó robusto (no "la primera que pasó"): conversión repetida varias veces, con
+una frase corta y con una de ~13s de audio, sin fallar ninguna — con VRAM libre de sobra
+(~1300+ MiB) a diferencia del filo de 32. Es el valor más alto que cumple el objetivo ("no bajes más
+de lo necesario"): bajar a 24 ya cuesta ~20% de tok/s sin ganar nada, la VRAM libre en 28 ya sobra.
+Configurado en `config.toml` → `[llm.ollama].num_gpu = 28`, pasado en cada petición vía
+`get_provider()` → `OllamaProvider._options["num_gpu"]` (se reenvía tal cual en el payload, sin
+lista blanca de claves).
+
+La velocidad de generación no se degrada de forma inviable ni siquiera en el otro extremo (CPU
+puro, `num_gpu=0`, ~4,7 tok/s) — no hizo falta evaluar la cuantización Q3_K_M para este objetivo, ya
+que `num_gpu=28` deja tok/s (~25,8) muy por encima del piso aceptable sin sacrificar VRAM de sobra.
+
+`device` en `config.toml` → `[rvc]` vuelve a `"cuda"` por defecto (`"cpu"` sigue disponible: sirve
+si el provider activo no es `ollama`, o para liberar toda la GPU por algún otro motivo) — vía
+`config.leer_dispositivo_rvc()`, aplicado en `bench.py`, `bench_chat.py`, `test_voz.py` y `Rem.py`
+(los cuatro construyen su `BaseLoader` con `only_cpu=(dispositivo == "cpu")`). Verificado en vivo
+end-to-end tras el cambio: LLM (`num_gpu=28`) → `SentenceSplitter` → RVC en CUDA, dos oraciones de
+una respuesta real, ambas convertidas sin OOM.
+
+## SentenceSplitter conectado en bench_chat.py
+`llm/sentence_splitter.py` estaba construido y testeado pero sin ningún consumidor real. Ahora
+`bench_chat.py._chat()` lo usa así: consume `provider.stream_chat()` con un pequeño tee
+(`_pasar_por()`, ya que un async generator es de un solo consumidor) que por un lado imprime el
+texto y registra `Done`/tool_calls tal como antes, y por otro alimenta `dividir_en_oraciones()` —
+cada oración completa se encola (`asyncio.Queue`) apenas está lista, sin esperar el resto de la
+respuesta. Un único worker (`_worker_habla()`, una tarea de fondo creada al arrancar el REPL)
+consume esa cola en orden y llama a `_decir()` por oración.
+
+- La conversión RVC dentro de `_decir()` corre en `asyncio.to_thread()`: es una llamada
+  bloqueante, y si corriera en el loop principal frenaría también al productor (`_chat()` leyendo
+  el siguiente chunk del LLM) — exactamente lo que se quiere solapar. `enviar_audio()` no espera a
+  que termine de reproducirse, solo despacha — por eso alcanza con un worker secuencial (no hace
+  falta paralelismo real entre oraciones) para lograr el solape: mientras la oración N sí ya está
+  sonando en el frontend, el worker sigue de largo con la N+1.
+- Medido en vivo (modelo Ollama a ~13 tok/s, RVC en CPU): una respuesta de 3 oraciones/67 tokens
+  tardó ~24s en generarse completa, pero el primer audio salió a los ~43s en un caso (RVC en CPU es
+  más lento que la generación) — la métrica que importa acá es la comparación entre "tiempo hasta
+  el primer audio" y "tiempo total", ambas logueadas por turno (`_TurnoHabla`), para poder decidir
+  después si el solape compensa según qué tan lento esté RVC ese día.
+- **Bug real encontrado en vivo, no de este código**: `infer_rvc_python`'s `BaseLoader.__call__`
+  spawnea un hilo interno (`threading.Thread(target=self.infer)`) por archivo y lo joinea
+  (`run_threads`) antes de devolver — pero si esa excepción ocurre en el frame de la excepción no
+  se re-lanza, así que el error queda parcialmente silenciado: se vio consistentemente en pruebas
+  aisladas mínimas que replican exactamente el patrón de `_decir()` (con y sin `asyncio.to_thread`)
+  **sin** reproducirlo, y de forma intermitente en el flujo real de `bench_chat.py` con RVC llamado
+  varias veces por turno (una vez por oración) — no se identificó la causa exacta de la carrera,
+  solo que existe y es intermitente. Cuando pasa, `__call__` devuelve una lista vacía en vez de
+  lanzar, así que `_decir()` ya lo tolera (cae a la voz cruda de edge-tts sin convertir para esa
+  oración en particular, no se cae ni se traba el pipeline) — se agregó un log explícito
+  (`"RVC no devolvió resultado — hablando sin convertir"`) para que ese fallback silencioso se note.
+  **Confirmado después, durante la calibración de `num_gpu`** (ver "RVC vuelve a GPU" más arriba):
+  un resultado vacío no implica necesariamente esta carrera intermitente — un CUDA out of memory
+  real pasa por el mismo camino silencioso (el hilo interno lo traga igual), y solo se distingue
+  mirando `stderr` del proceso. Con `num_gpu=28` ya calibrado esto no debería dispararse por falta
+  de VRAM, pero si vuelve a aparecer el log de fallback, no asumir que es "la carrera de siempre"
+  sin antes descartar OOM.
+
 ## Datos del modelo rem.vrm
 Extraído con `dump_vrm.py`. `rem.vrm` es **VRM 0.x** (usa `extensions.VRM`, no `VRMC_vrm`).
 
@@ -587,6 +678,62 @@ sí puede haber uno ajeno, del otro proceso, sirviendo ese mismo puerto). Si dos
 Rem/bench/bench_chat corren en simultáneo, la segunda puede terminar así — con un overlay que se ve
 "no funcionar" sin ningún error visible. No se tocó porque no se confirmó que sea la causa real del
 reporte; si vuelve a pasar, revisar primero si hay más de un proceso corriendo a la vez.
+
+## Segunda regresión del overlay: no es el bug de _ws_ready, es un crash interno de WebKit
+Investigado tras un nuevo reporte de que el overlay volvió a no aparecer. Revisando
+`rem_overlay.log` de una corrida real (proceso único, sin nada más corriendo — descartado el bug de
+`_ws_ready` de arriba: no había puerto ocupado ni segunda instancia) aparece esto:
+
+```
+CONSOLE NETWORK ERROR WebSocket connection to 'ws://localhost:18766/' failed: WebSocket network error: Network process crashed.
+ERROR: WebKit encountered an internal error. This is a WebKit bug.
+.../WebKit/WebProcess/Network/WebLoaderStrategy.cpp(640) : void WebKit::WebLoaderStrategy::internallyFailedLoadTimerFired()
+[native code]: CONSOLE WARN [WS] Error de conexión: error
+.../GLTFLoader.mjs:2:3766: CONSOLE ERROR [VRM] error: TypeError: Load failed
+```
+
+El **proceso de red de WebKit2GTK 2.52.5 se cae** (el propio mensaje de WebKit dice "this is a
+WebKit bug", no algo que dispare el código de Rem) justo mientras la página tiene dos fetches en
+vuelo: el WebSocket y el `fetch()` del glTF/VRM. El WebSocket se reconecta solo un instante después
+(se ve `[WS] conectado` de nuevo en la misma corrida, y el audio sigue funcionando bien el resto de
+la sesión) — pero la carga del VRM **no tiene ningún reintento**, así que si el crash pega justo en
+esa ventana, el avatar queda invisible por el resto de la sesión aunque el resto del pipeline
+(audio, lipsync, WS) siga andando con normalidad. Esto explica el síntoma reportado sin ser el
+mismo bug que la sección anterior.
+
+**Reproducido de forma consistente** en este entorno (dos corridas limpias seguidas, sin procesos
+previos, mismo resultado) — no fue un evento aislado. Se revisó lo obvio (procesos WebKit
+colgados, espacio en disco, RAM, `journalctl`/`dmesg`) sin encontrar una causa de recursos: nada
+lo explica desde ese lado. Sí aparecen mensajes de `xdg-desktop-portal`/`wireplumber` sin relación
+aparente alrededor de la misma hora en el journal del usuario, que podrían apuntar a la sesión de
+Hyprland en un estado degradado tras uso intensivo prolongado (muchos lanzamientos de overlay en
+esta sesión de trabajo) — no confirmado como causa, solo una correlación observada.
+No se implementó ningún arreglo en su momento (por ejemplo, reintentar la carga del VRM igual que ya
+se reintenta `load-failed` del WebView) porque la causa raíz es un bug interno de WebKit, no algo en
+este código — si vuelve a pasar, lo primero a probar es reiniciar la sesión de Hyprland.
+
+### Arreglo: reintento con espera exponencial en la carga del VRM
+La causa raíz sigue sin arreglarse (sigue siendo un bug de WebKit), pero que el avatar quede
+invisible el resto de la sesión por un crash transitorio sí era evitable — igual que el WebSocket ya
+se reconecta solo. `_cargarVRM(intento)` en `rem_avatar.html` envuelve el `loader.load()` original:
+si el callback de error dispara, loguea `[VRM] error (intento N/5): ...` y, si quedan intentos,
+reintenta con `setTimeout` tras `min(500 * 2**intento, 5000)` ms (mismo patrón — base, exponente,
+tope — que el retry de `load-failed` en `rem_overlay.py`); al agotar los 5 intentos loguea
+`"no se pudo cargar tras 5 intentos"` y se rinde, en vez de reintentar para siempre.
+
+**Verificado en vivo, tres escenarios** (con `bench.py`, cache de WebKit limpiada entre corridas en
+`~/.cache/rem_overlay.py/WebKitCache` para no servir una copia vieja de `rem_avatar.html` — la
+cache en disco de WebKit2GTK persiste entre lanzamientos del proceso y puede enmascarar cambios
+recién hechos al archivo si no se limpia):
+1. Carga normal (sin fallas): sin regresión, el avatar carga igual que antes.
+2. Falla transitoria real (se renombró `rem.vrm` para forzar un 404, y se restauró a los ~5s,
+   a mitad de la secuencia de reintentos): intento 1 falla y loguea "reintentando en 1000ms...";
+   para cuando dispara el reintento el archivo ya está de vuelta, y la carga siguiente
+   **se completa con éxito** (`[VRM] OK | expressions: ...`) — el escenario real que motivó el
+   pedido.
+3. Falla persistente (archivo ausente durante toda la ventana de prueba): se ven los 5 intentos
+   con backoff creciente (1000, 2000, 4000, 5000, y el quinto ya sin más espera) y el mensaje final
+   de rendición — confirma que no reintenta indefinidamente.
 
 
     # IMPORTANTE: 

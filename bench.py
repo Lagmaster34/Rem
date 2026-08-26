@@ -54,8 +54,9 @@ def log(msg):
 
 def cargar_rvc(pitch=4, index_influence=0.75):
     from infer_rvc_python import BaseLoader
+    dispositivo = config.leer_dispositivo_rvc()
     rmvpe = os.path.join(BASE, "rmvpe.pt")
-    rvc = BaseLoader(only_cpu=False, rmvpe_path=rmvpe)
+    rvc = BaseLoader(only_cpu=(dispositivo == "cpu"), rmvpe_path=rmvpe)
     rvc.apply_conf(
         tag="rem",
         file_model=os.path.join(BASE, "models", "Rem_600e_6600s", "Rem_600e_6600s.pth"),
@@ -68,7 +69,7 @@ def cargar_rvc(pitch=4, index_influence=0.75):
         consonant_breath_protection=0.33,
         resample_sr=0,
     )
-    return rvc
+    return rvc, dispositivo
 
 
 def _obtener_rvc():
@@ -77,7 +78,8 @@ def _obtener_rvc():
         log("cargando RVC (una sola vez, se reusa en los siguientes 'say')...")
         t0 = time.perf_counter()
         _rvc_cache = cargar_rvc()
-        log(f"RVC listo en {time.perf_counter() - t0:.1f}s")
+        rvc, dispositivo = _rvc_cache
+        log(f"RVC listo en {time.perf_counter() - t0:.1f}s ({dispositivo})")
     return _rvc_cache
 
 
@@ -107,8 +109,10 @@ async def _decir(texto, usar_rvc):
         sf.write(tmp_wav, audio.astype(np.float32), sr_)
 
         if usar_rvc:
-            rvc = _obtener_rvc()
-            resultados = rvc(audio_files=[tmp_wav], type_output="wav")
+            rvc, dispositivo = _obtener_rvc()
+            t_rvc = time.perf_counter()
+            resultados = await asyncio.to_thread(rvc, audio_files=[tmp_wav], type_output="wav")
+            log(f"conversión RVC ({dispositivo}): {time.perf_counter() - t_rvc:.2f}s")
             if resultados:
                 ruta_final = resultados[0]
 

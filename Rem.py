@@ -80,17 +80,21 @@ os.makedirs(RVC_MODELS_DIR, exist_ok=True)
 
 rvc = None  # se carga en segundo plano para no bloquear la UI
 
+_rvc_dispositivo = "cpu"
+
 def _cargar_rvc():
-    global rvc
+    global rvc, _rvc_dispositivo
     if not RVC_DISPONIBLE:
         return
     try:
-        print("[RVC] Cargando modelo en CPU...")
+        _rvc_dispositivo = _config.leer_dispositivo_rvc()
+        print(f"[RVC] Cargando modelo en {_rvc_dispositivo.upper()}...")
         model_path = os.path.join(RVC_MODELS_DIR, "Rem_600e_6600s", "Rem_600e_6600s.pth")
         index_path = os.path.join(RVC_MODELS_DIR, "Rem_600e_6600s", "Rem.index")
 
         rmvpe_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rmvpe.pt")
-        _rvc_tmp = BaseLoader(only_cpu=False, rmvpe_path=rmvpe_path if os.path.exists(rmvpe_path) else None)
+        _rvc_tmp = BaseLoader(only_cpu=(_rvc_dispositivo == "cpu"),
+                               rmvpe_path=rmvpe_path if os.path.exists(rmvpe_path) else None)
         _rvc_tmp.apply_conf(
             tag="rem",
             file_model=model_path,
@@ -105,7 +109,7 @@ def _cargar_rvc():
         )
         rvc = _rvc_tmp
         f0_used = "rmvpe" if os.path.exists(rmvpe_path) else "pm"
-        print(f"✅ Voz de Rem cargada (RVC) — CPU, f0: {f0_used}")
+        print(f"✅ Voz de Rem cargada (RVC) — {_rvc_dispositivo.upper()}, f0: {f0_used}")
     except Exception as e:
         print(f"❌ Error cargando RVC: {e}")
         rvc = None
@@ -455,7 +459,9 @@ def _worker_audio():
 
             if rvc:
                 set_rem_estado("thinking")
+                t_rvc = time.perf_counter()
                 resultados = rvc(audio_files=[tmp_wav], type_output="wav")
+                print(f"[RVC] conversión ({_rvc_dispositivo}): {time.perf_counter() - t_rvc:.2f}s")
                 ruta_final = resultados[0] if resultados else tmp_wav
             else:
                 ruta_final = tmp_wav

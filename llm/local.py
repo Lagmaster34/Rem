@@ -4,10 +4,15 @@
 imprescindibles acá (ver más abajo). Streaming NDJSON real vía httpx.
 
 Contexto de memoria (medido en esta máquina, RTX 3050 4 GB): el modelo
-Qwen3.5-4B Q4_K_M ocupa ~2893 MiB cargado, dejando ~1200 MiB libres, y RVC
-necesita entre 1 y 1,5 GB — no caben cómodos los dos a la vez en VRAM, así
-que hay que serializarlos. De ahí `keep_alive=0`: descarga el modelo apenas
-termina de generar, liberando la VRAM justo cuando RVC la necesita.
+Qwen3.5-4B Q4_K_M con sus 32 capas completas en GPU (num_gpu=32, el default
+de Ollama) ocupa ~2994 MiB, dejando solo ~1100 MiB libres — insuficiente
+para RVC en la misma GPU (confirmado: CUDA out of memory de forma
+consistente). La solución no es serializar LLM y RVC ni forzar RVC a CPU
+(~4,5x más lento, no le sigue el ritmo a la cola del SentenceSplitter), sino
+bajarle capas al LLM: con `num_gpu=28` (ver config.toml → [llm.ollama],
+incluye la tabla completa de calibración) el modelo ocupa ~2714 MiB y le
+deja sitio de sobra a RVC, a costa de bajar de ~40,7 a ~25,8 tok/s — sigue
+siendo una velocidad de generación cómoda.
 """
 import asyncio
 import json

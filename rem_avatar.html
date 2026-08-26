@@ -211,38 +211,61 @@ function tickPet(dt) {
 const loader = new GLTFLoader();
 loader.register(p => new VRMLoaderPlugin(p));
 
-loader.load('/rem.vrm',
-  gltf => {
-    vrm = gltf.userData.vrm;
-    window.__rem.vrm = vrm;
-    VRMUtils.removeUnnecessaryJoints(vrm.scene);
-    vrm.scene.rotation.y = Math.PI;
-    vrm.scene.scale.set(1, 1, 1);
-    vrm.scene.position.set(0, 0, 0); // posición neutra: medir la caja sin offsets propios
-    scene.add(vrm.scene);
+// Retry con espera exponencial: el WebKit2GTK de este proyecto sufre crashes
+// internos del Network Process (ver CLAUDE.md, "Segunda regresión del
+// overlay") que pueden tirar abajo este fetch justo en el peor momento. El
+// WebSocket ya se reconecta solo; loader.load() no tiene ningún retry propio,
+// así que sin esto un crash en esa ventana deja el avatar invisible por el
+// resto de la sesión aunque el resto del pipeline (audio, lipsync, WS) siga
+// funcionando con normalidad. La causa raíz es un bug de WebKit, no algo que
+// se arregle acá — esto solo evita que un fallo transitorio sea permanente.
+const VRM_MAX_INTENTOS = 5;
 
-    // Medición inicial por Box3 — placeholder para el primer frame o dos, hasta
-    // que la remedición por huesos (más abajo, en animate()) la corrija. Se
-    // guarda en _modeloAlturaBox3 solo para el log comparativo.
-    const caja = new THREE.Box3().setFromObject(vrm.scene);
-    _modeloAlturaBox3 = caja.max.y - caja.min.y;
-    _modeloAlturaLocal = _modeloAlturaBox3;
-    _modeloCentroLocal = (caja.max.y + caja.min.y) / 2;
-    console.log(`[Encuadre] altura por Box3 (provisoria): ${_modeloAlturaBox3.toFixed(3)} u`
-              + ` (min.y=${caja.min.y.toFixed(3)}, max.y=${caja.max.y.toFixed(3)})`);
+function _cargarVRM(intento = 1) {
+  loader.load('/rem.vrm',
+    gltf => {
+      vrm = gltf.userData.vrm;
+      window.__rem.vrm = vrm;
+      VRMUtils.removeUnnecessaryJoints(vrm.scene);
+      vrm.scene.rotation.y = Math.PI;
+      vrm.scene.scale.set(1, 1, 1);
+      vrm.scene.position.set(0, 0, 0); // posición neutra: medir la caja sin offsets propios
+      scene.add(vrm.scene);
 
-    recalcularEncuadre(); // fija camera.position.z, vrm.scene.position.y/x y el lookAt (provisorio)
-    _medirHuesosPendiente = true; // remedir con huesos en el próximo frame, una vez posado (ver animate())
+      // Medición inicial por Box3 — placeholder para el primer frame o dos, hasta
+      // que la remedición por huesos (más abajo, en animate()) la corrija. Se
+      // guarda en _modeloAlturaBox3 solo para el log comparativo.
+      const caja = new THREE.Box3().setFromObject(vrm.scene);
+      _modeloAlturaBox3 = caja.max.y - caja.min.y;
+      _modeloAlturaLocal = _modeloAlturaBox3;
+      _modeloCentroLocal = (caja.max.y + caja.min.y) / 2;
+      console.log(`[Encuadre] altura por Box3 (provisoria): ${_modeloAlturaBox3.toFixed(3)} u`
+                + ` (min.y=${caja.min.y.toFixed(3)}, max.y=${caja.max.y.toFixed(3)})`);
 
-    const names = vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? [];
-    console.log('[VRM] OK | expressions:', names.join(', '));
-    console.log('[VRM] springBones:', vrm.springBoneManager ? 'sí' : 'no');
-    _exprMap = buildExprMap(names);
-    localizarMallaFacial();
-  },
-  xhr => console.log('[VRM] cargando', Math.round(xhr.loaded / xhr.total * 100) + '%'),
-  err => console.error('[VRM] error:', err)
-);
+      recalcularEncuadre(); // fija camera.position.z, vrm.scene.position.y/x y el lookAt (provisorio)
+      _medirHuesosPendiente = true; // remedir con huesos en el próximo frame, una vez posado (ver animate())
+
+      const names = vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? [];
+      console.log('[VRM] OK | expressions:', names.join(', '));
+      console.log('[VRM] springBones:', vrm.springBoneManager ? 'sí' : 'no');
+      _exprMap = buildExprMap(names);
+      localizarMallaFacial();
+    },
+    xhr => console.log('[VRM] cargando', Math.round(xhr.loaded / xhr.total * 100) + '%'),
+    err => {
+      console.error(`[VRM] error (intento ${intento}/${VRM_MAX_INTENTOS}):`, err);
+      if (intento < VRM_MAX_INTENTOS) {
+        const espera = Math.min(500 * (2 ** intento), 5000);
+        console.warn(`[VRM] reintentando en ${espera}ms...`);
+        setTimeout(() => _cargarVRM(intento + 1), espera);
+      } else {
+        console.error(`[VRM] no se pudo cargar tras ${VRM_MAX_INTENTOS} intentos — el avatar queda invisible por el resto de la sesión.`);
+      }
+    }
+  );
+}
+
+_cargarVRM();
 
 // ═══════════════════════════════════════════════════
 // HELPERS: HUESOS Y EXPRESIONES

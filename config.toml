@@ -1,30 +1,91 @@
 # Configuración no sensible de Rem (los secretos van en .env, no acá).
-[llm]
-provider = "claude"   # override: variable de entorno REM_LLM_PROVIDER. Groq queda como fallback.
-model = "llama-3.3-70b-versatile"   # modelo de Groq (fallback), no de Claude
 
-[llm.claude]
-# Sonnet 5 (familia intermedia): para un asistente conversacional de
-# escritorio la latencia importa más que la capacidad máxima de
-# razonamiento, y cada turno reenvía el system prompt completo (cacheado).
-# El modelo tope (Opus 5 / Fable 5) es caro y lento para esto. Haiku 4.5 es
-# la alternativa aún más barata/rápida si hace falta apretar más la
-# latencia, a costa de fidelidad de personaje.
-model = "claude-sonnet-5"
-max_tokens = 1024
+[llm]
+# Proveedor activo. Override: variable de entorno REM_LLM_PROVIDER.
+# Valores: "ollama" (local) | "claude" (API de Anthropic) | "groq" (fallback)
+provider = "ollama"
+
 
 [llm.ollama]
-# Sin API key: corre local. Medido en esta máquina (4 GB VRAM): el modelo
-# ocupa ~2893 MiB cargado y RVC ~790 MiB — suman ~3683 de 4096 MiB, entran
-# juntos sin problema (la estimación anterior de 1-1,5 GB para RVC estaba
-# sobreestimada). keep_alive="10m" mantiene el modelo cargado entre turnos
-# en vez de descargarlo cada vez.
-base_url = "http://127.0.0.1:11434"
-model = "hf.co/HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive:Q4_K_M"
+# Proveedor por defecto. Corre local, sin API key ni coste.
+#
+# keep_alive mantiene el modelo en VRAM entre turnos:
+#   primer turno en frío ~4,2s | turnos siguientes ~0,2-0,3s
+# Con keep_alive = 0 se descarga tras cada respuesta y cada turno paga los ~4s.
+base_url   = "http://127.0.0.1:11434"
+model      = "hf.co/HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive:Q4_K_M"
 keep_alive = "10m"
-# Sampling recomendado por el autor del modelo para modo no-thinking.
+
+# Sampling recomendado por el autor del modelo para modo NO-thinking.
+# El thinking está desactivado en el código (think: false), no acá:
+# con thinking activo genera cientos de tokens de razonamiento antes de
+# responder, lo que hace inviable un asistente hablado.
 temperature = 0.7
-top_p = 0.8
-top_k = 20
-min_p = 0
-num_ctx = 8192
+top_p       = 0.8
+top_k       = 20
+min_p       = 0.0
+num_ctx     = 4096
+
+# Capas del modelo (32 en total) offloadeadas a GPU; el resto corre en CPU.
+# Calibrado en esta máquina (RTX 3050, 4 GB VRAM) para dejarle sitio a RVC
+# en la misma GPU (ver [rvc] más abajo) — probado escalonadamente de 32 a 0:
+#
+#   num_gpu | VRAM modelo | tok/s  | RVC (cuda)
+#   --------|-------------|--------|------------------------------------
+#   32      | ~2994 MiB   | ~40,7  | FALLA — CUDA out of memory siempre
+#           |             |        | (confirmado con 4 intentos seguidos;
+#           |             |        | infer_rvc_python traga la excepción
+#           |             |        | y devuelve lista vacía, no se ve
+#           |             |        | como error salvo mirando stderr)
+#   28      | ~2714 MiB   | ~25,8  | OK — robusto en repetidas pruebas,
+#           |             |        | frase corta y larga (13s de audio)
+#   24      | ~2430 MiB   | ~20,7  | OK
+#   20      | ~2156 MiB   | ~16,9  | OK
+#   16      | ~1872 MiB   | ~12,9  | OK
+#   12      | ~1596 MiB   | ~12,3  | OK
+#    8      | ~1312 MiB   | ~10,3  | OK
+#    4      | ~1061 MiB   | ~8,3   | OK
+#    0      | ~153 MiB    | ~4,7   | OK (CPU puro)
+#
+# 28 es el valor más alto verificado robusto (no el primero que "pasó una
+# vez"): se repitió la conversión RVC varias veces en ese punto, con una
+# frase corta y una de 13s, sin fallar ninguna vez. Bajar más no compra
+# nada (ya hay de sobra de VRAM libre en 28) y cuesta tok/s de forma
+# notoria entre escalones (28->24 ya es -20% de velocidad).
+num_gpu = 28
+
+
+[llm.claude]
+# API de Anthropic. Requiere ANTHROPIC_API_KEY en .env y saldo de API
+# (la suscripción Pro de claude.ai NO incluye créditos de API).
+#
+# Sonnet 5 (familia intermedia): para un asistente conversacional de
+# escritorio la latencia importa más que la capacidad máxima, y cada turno
+# reenvía el system prompt completo (cacheado). Los modelos tope son caros
+# y lentos para esto; Haiku 4.5 es la alternativa más barata y rápida, a
+# costa de fidelidad de personaje.
+model      = "claude-sonnet-5"
+max_tokens = 1024
+
+
+[llm.groq]
+# Fallback gratuito. Requiere GROQ_API_KEY en .env.
+model = "llama-3.3-70b-versatile"
+
+
+[rvc]
+# GPU por defecto. Medido en esta máquina: en CPU una frase corta tarda
+# ~13,6s en convertir frente a ~3-5s en GPU — casi 4,5x tiempo real. El
+# SentenceSplitter (ver CLAUDE.md) empuja cada oración a la cola de TTS+RVC
+# apenas se completa, para solapar conversión con generación; a ese ritmo
+# CPU no alcanza a seguirle el paso a la cola, así que la latencia percibida
+# termina siendo peor que sin el splitter.
+#
+# La razón por la que antes estaba en "cpu": con el modelo de Ollama en GPU
+# a capas completas (num_gpu=32, ~2994 MiB) no quedaba sitio para RVC — ver
+# la tabla de calibración en [llm.ollama].num_gpu más arriba. La solución
+# real no era mover RVC a CPU, sino bajarle capas al LLM (num_gpu=28) para
+# hacerle sitio a RVC en la misma GPU. "cpu" queda disponible por si algún
+# día el LLM activo no es "ollama" (nada compitiendo por VRAM, da igual) o
+# si se necesita liberar toda la GPU por otro motivo.
+device = "cuda"   # "cpu" | "cuda"
