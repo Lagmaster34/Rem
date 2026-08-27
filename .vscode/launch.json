@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "bench",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/bench.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "avatar (navegador)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:18765/rem_avatar.html",
+      "webRoot": "${workspaceFolder}"
+    },
+    {
+      "name": "Rem: test_voz",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/test_voz.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "args": ["--voz", "es-VE-PaolaNeural", "--rate=-8%"]
+    },
+    {
+      "name": "Rem: dump_vrm",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/dump_vrm.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "▶ Rem: bench + avatar",
+      "configurations": ["bench", "avatar (navegador)"],
+      "stopAll": true
+    }
+  ]
+}

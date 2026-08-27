@@ -25,5 +25,8 @@ rem.vrm
 # Entorno virtual
 venv/
 
+# Logs en runtime (overlay GTK, WebKit console)
+*.log
+
 # Archivos de prueba/debug
 fix_pipeline.py
