@@ -4,16 +4,16 @@ import time
 import asyncio
 import json
 import os
-import math
 import random
 import speech_recognition as sr
 import tkinter as tk
 import tkinter.messagebox as messagebox
-from PIL import Image, ImageTk, ImageFilter, ImageDraw, ImageEnhance
+from PIL import Image, ImageTk
 import threading
 import subprocess
 import psutil
 import glob
+import shutil
 import webbrowser
 import sounddevice as sd
 import soundfile as sf
@@ -286,6 +286,48 @@ def extraer_memoria_importante():
 
 
 # ── CONFIRMACION ──────────────────────────────────────────────────────
+def _desc_ejecutar_comando(d):
+    """Muestra el comando ya tokenizado (shlex, lo mismo que se ejecuta
+    después) y el binario real que resuelve el PATH — no el nombre suelto
+    que mandó el LLM, que puede no ser lo que realmente corre."""
+    comando = d.get("comando", "")
+    try:
+        tokens = shlex.split(comando)
+    except ValueError as e:
+        return f"Ejecutar en terminal: {comando}\n    ⚠ sintaxis inválida, se rechazará ({e})"
+    if not tokens:
+        return "Ejecutar en terminal: (comando vacío, se rechazará)"
+    binario = shutil.which(tokens[0]) or "⚠ no encontrado en PATH"
+    ok_args, msg_args = _args_permitidos(comando)
+    if not ok_args:
+        return f"Ejecutar: {' '.join(tokens)}\n    binario real: {binario}\n    ⚠ se rechazará: {msg_args}"
+    return f"Ejecutar: {' '.join(tokens)}\n    binario real: {binario}"
+
+
+def _desc_ruta(etiqueta, clave="ruta"):
+    """Descripción para una acción de un solo path: pasa por _ruta_segura()
+    (la misma validación real, no una copia) para mostrar el realpath — o el
+    motivo del rechazo, si ya se sabe que se va a rechazar."""
+    def _f(d):
+        ok, resuelta = _ruta_segura(d.get(clave, ""))
+        if not ok:
+            return f"{etiqueta} (⚠ se rechazará: {resuelta})"
+        return f"{etiqueta}: {resuelta}"
+    return _f
+
+
+def _desc_mover_copiar(verbo):
+    def _f(d):
+        ok_o, origen  = _ruta_segura(d.get("origen", ""))
+        ok_d, destino = _ruta_segura(d.get("destino", ""))
+        if not ok_o:
+            return f"{verbo} (⚠ origen se rechazará: {origen})"
+        if not ok_d:
+            return f"{verbo} (⚠ destino se rechazará: {destino})"
+        return f"{verbo}: {origen} → {destino}"
+    return _f
+
+
 DESCRIPCIONES = {
     "abrir":         lambda d: f"Abrir: {d.get('programa','')}",
     "cerrar":        lambda d: f"Cerrar: {d.get('programa','')}",
@@ -299,11 +341,11 @@ DESCRIPCIONES = {
     "escribir":      lambda d: f"Escribir: {d.get('texto','')}",
     "clima":         lambda d: f"Consultar clima de {CIUDAD}",
     "descargar":     lambda d: f"Descargar: {d.get('nombre','')} desde {d.get('url','')}",
-    "crear_carpeta":   lambda d: f"Crear carpeta: {d.get('ruta','')}",
-    "mover_archivo":   lambda d: f"Mover: {d.get('origen','')} → {d.get('destino','')}",
-    "copiar_archivo":  lambda d: f"Copiar: {d.get('origen','')} → {d.get('destino','')}",
-    "eliminar_archivo":lambda d: f"⚠️ ELIMINAR archivo: {d.get('ruta','')}",
-    "ejecutar_comando":lambda d: f"Ejecutar en terminal: {d.get('comando','')}",
+    "crear_carpeta":   _desc_ruta("Crear carpeta"),
+    "mover_archivo":   _desc_mover_copiar("Mover"),
+    "copiar_archivo":  _desc_mover_copiar("Copiar"),
+    "eliminar_archivo":_desc_ruta("⚠️ Mover a la papelera"),
+    "ejecutar_comando":_desc_ejecutar_comando,
 }
 
 def confirmar_accion(datos):
@@ -582,6 +624,11 @@ def _loop_monitor_pc():
 # ── DESCARGAR ARCHIVO ─────────────────────────────────────────────────
 def descargar_archivo(url, nombre):
     try:
+        # os.path.basename() descarta cualquier componente de directorio del
+        # nombre (incluido "../../"): sin esto, un nombre como
+        # "../../.ssh/authorized_keys" escribía el contenido descargado
+        # fuera de Descargas, en cualquier ruta escribible por el usuario.
+        nombre = os.path.basename(nombre) or "archivo_rem"
         ruta = os.path.join(
             os.environ.get("XDG_DOWNLOAD_DIR",
                            os.path.join(os.path.expanduser("~"), "Descargas")),
@@ -651,20 +698,155 @@ _METACHAR_PELIGROSOS = ('|', ';', '&&', '||', '`', '$(', '>', '<', '\n')
 # (o borra archivos) — la whitelist por primer token no alcanza para bloquearlo.
 _FIND_FLAGS_PELIGROSOS = ('-exec', '-execdir', '-delete')
 
-def _ruta_segura(ruta):
-    """Valida que la ruta esté dentro de /home/esteban y no en dirs peligrosos.
+# Subrutas de $HOME que quedan bloqueadas para mover/copiar/eliminar aunque
+# técnicamente estén dentro de _ZONA_SEGURA: credenciales, configuración de
+# apps (puede incluir tokens de sesión) y el propio proyecto (.env con las
+# API keys, .git con el historial) — este último se calcula desde la
+# ubicación real del proyecto, así que protege igual si algún día vuelve a
+# vivir dentro de $HOME (como antes de moverse a /mnt/extra, ver CLAUDE.md).
+_PROYECTO_DIR = os.path.dirname(os.path.abspath(__file__))
+_RUTAS_PROHIBIDAS_HOME = tuple(
+    os.path.realpath(os.path.expanduser(p)) for p in (
+        "~/.ssh", "~/.gnupg", "~/.config", "~/.local/share/keyrings", "~/.mozilla",
+    )
+) + (
+    os.path.realpath(os.path.join(_PROYECTO_DIR, ".env")),
+    os.path.realpath(os.path.join(_PROYECTO_DIR, ".git")),
+)
+
+def _ruta_segura(ruta, permitir_raiz=False):
+    """Valida que la ruta esté dentro de /home/esteban, no caiga en dirs
+    peligrosos ni en la lista negra de rutas sensibles dentro de $HOME.
 
     Usa os.path.commonpath sobre rutas ya resueltas con realpath en vez de
     startswith: "/home/estebanmalo" no debe pasar como si estuviera dentro
     de "/home/esteban" solo porque el string empieza igual.
+
+    `permitir_raiz`: por defecto, ni siquiera /home/esteban completo pasa
+    (ver el chequeo de abajo) — necesario para mover/copiar/eliminar/
+    ejecutar_comando, donde operar sobre TODO el home sería catastrófico.
+    Pero para lecturas puras como "buscar" (glob.glob, nunca escribe) esa
+    restricción no tiene sentido: buscar sin especificar carpeta ya usa
+    ~ como base por defecto, y bloquearlo rompería el caso más común de esa
+    acción. permitir_raiz=True se lo salta, sin tocar ninguna otra regla
+    (fuera de $HOME y la lista negra siguen aplicando igual).
     """
     ruta = os.path.realpath(os.path.expanduser(str(ruta)))
     if os.path.commonpath([ruta, _ZONA_SEGURA]) != _ZONA_SEGURA:
         return False, f"Solo puedo operar dentro de {_ZONA_SEGURA}."
+    if ruta == _ZONA_SEGURA and not permitir_raiz:
+        # Sin este chequeo, "eliminar/mover/copiar" con ruta="~" pasaba el
+        # chequeo de arriba (una ruta es "común" consigo misma) y operaba
+        # sobre todo el home — encontrado auditando este código, no pedido
+        # explícitamente, pero es la misma clase de problema.
+        return False, f"No puedo operar sobre {_ZONA_SEGURA} completo."
     for d in _DIRS_PROHIBIDOS:
         if os.path.commonpath([ruta, d]) == d:
             return False, f"No puedo tocar {d}."
+    for d in _RUTAS_PROHIBIDAS_HOME:
+        if os.path.commonpath([ruta, d]) == d:
+            return False, f"No puedo tocar {d} (ruta protegida)."
     return True, ruta
+
+_GIT_SUBCOMANDOS_PERMITIDOS = {"status", "log", "diff", "show"}
+_SYSTEMCTL_SUBCOMANDOS_PERMITIDOS = {"status", "list-units", "list-unit-files",
+                                     "is-active", "is-enabled", "is-failed", "show"}
+
+def _git_permitido(comando):
+    """git en la whitelist es una vía de escape: `-c` inyecta configuración
+    arbitraria (core.pager/core.editor/diff.external pueden ejecutar
+    cualquier programa dentro de ESTE MISMO subprocess.run, sin necesidad de
+    un segundo comando) y `--exec-path` apunta git a binarios arbitrarios.
+    En vez de enumerar todas las flags peligrosas, el subcomando debe ser
+    literalmente el segundo token: como -c/--exec-path son opciones
+    GLOBALES (van antes del subcomando en la gramática real de git), exigir
+    que el segundo token ya sea uno de la lista blanca las bloquea de raíz.
+    El chequeo explícito de abajo es una segunda capa, no la única defensa."""
+    try:
+        tokens = shlex.split(comando)
+    except ValueError as e:
+        return False, f"Comando con sintaxis inválida: {e}"
+    if len(tokens) < 2 or tokens[1] not in _GIT_SUBCOMANDOS_PERMITIDOS:
+        return False, f"Con git solo se permite: {', '.join(sorted(_GIT_SUBCOMANDOS_PERMITIDOS))}."
+    if any(t == "-c" or t.startswith("--exec-path") for t in tokens):
+        return False, "Esa opción de git no está permitida."
+    return True, "git"
+
+
+def _systemctl_permitido(comando):
+    """systemctl sin --user normalmente falla para acciones de estado (pide
+    polkit/root), lo que actuaba como red de seguridad implícita — pero con
+    --user esas mismas acciones (start/stop/enable/link/edit/mask/...) se
+    aplican a la sesión del propio usuario sin pedir ningún privilegio, así
+    que esa red desaparece con --user. Se restringe igual con o sin --user:
+    solo subcomandos de solo lectura, y nada de -H/--host (evita usarlo
+    contra otra máquina)."""
+    try:
+        tokens = shlex.split(comando)
+    except ValueError as e:
+        return False, f"Comando con sintaxis inválida: {e}"
+    resto = tokens[1:]
+    if any(t in ("-H", "--host") or t.startswith("--host=") for t in resto):
+        return False, "No se permite systemctl contra un host remoto (-H/--host)."
+    subcomando = next((t for t in resto if not t.startswith("-")), None)
+    if subcomando not in _SYSTEMCTL_SUBCOMANDOS_PERMITIDOS:
+        return False, f"Con systemctl solo se permite: {', '.join(sorted(_SYSTEMCTL_SUBCOMANDOS_PERMITIDOS))}."
+    return True, "systemctl"
+
+
+def _parece_ruta(token, cwd_ejecucion):
+    """Heurística para saber si un token de un comando es una ruta: prefijo
+    obvio (/, ~, ./, ../, o exactamente . o ..), o si no tiene ninguno,
+    que exista de verdad relativo al cwd real de ejecutar_comando — esto
+    último es lo que atrapa traversal escondido en un token sin prefijo
+    (p.ej. "foo/../../etc/passwd": no empieza con ninguno de los prefijos,
+    pero el archivo final SÍ existe, así que igual se marca y se valida)."""
+    if token in (".", "..") or token.startswith(("/", "~", "./", "../")):
+        return True
+    return os.path.exists(os.path.join(cwd_ejecucion, token))
+
+
+def _resolver_arg_como_shell(token, cwd_ejecucion):
+    """Resuelve `token` tal como lo vería el comando real al ejecutarse:
+    ejecutar_accion() corre subprocess.run con cwd=~ (ver más abajo), así
+    que una ruta relativa —con o sin prefijo— es relativa a ~, no al cwd de
+    este proceso de Rem.py (que puede ser cualquier otro). Por eso no basta
+    con os.path.realpath(token) directo."""
+    expandido = os.path.expanduser(token)
+    if os.path.isabs(expandido):
+        return expandido
+    return os.path.join(cwd_ejecucion, expandido)
+
+
+def _args_permitidos(comando):
+    """_cmd_permitido() validaba el binario pero no sus argumentos — así que
+    `cat /mnt/extra/rem/Rem/.env` (o cualquier ruta fuera de $HOME o en la
+    lista negra de _ruta_segura) pasaba sin ningún chequeo vía
+    ejecutar_comando, esquivando por completo esa protección. Cada token que
+    parece una ruta pasa ahora por _ruta_segura() — el mismo límite de
+    $HOME y la misma lista negra que mover/copiar/eliminar, ni más ni
+    menos. Efecto secundario a tener en cuenta: como _ruta_segura() también
+    rechaza operar sobre $HOME completo (ver más arriba), "ls ~" o
+    "find . ..." (apuntando literalmente a la raíz del home, no a una
+    subcarpeta) quedan bloqueados igual que "eliminar ~" — es la misma
+    validación pedida, sin una versión relajada aparte para comandos de
+    solo lectura."""
+    cwd_ejecucion = os.path.expanduser("~")
+    try:
+        tokens = shlex.split(comando)
+    except ValueError as e:
+        return False, f"Comando con sintaxis inválida: {e}"
+    for token in tokens[1:]:
+        if token.startswith("-"):
+            continue   # flags, no rutas
+        if not _parece_ruta(token, cwd_ejecucion):
+            continue
+        candidato = _resolver_arg_como_shell(token, cwd_ejecucion)
+        ok, resuelta = _ruta_segura(candidato)
+        if not ok:
+            return False, f"Argumento '{token}' no permitido: {resuelta}"
+    return True, None
+
 
 def _cmd_permitido(comando):
     """Valida el comando: sin metacaracteres de shell, primer token en lista blanca."""
@@ -684,7 +866,56 @@ def _cmd_permitido(comando):
         for flag in _FIND_FLAGS_PELIGROSOS:
             if flag in tokens:
                 return False, f"'{flag}' no está permitido en find (ejecuta o borra lo que encuentre)."
+    if primer_token == "git":
+        ok, msg = _git_permitido(comando)
+        if not ok:
+            return False, msg
+    elif primer_token == "systemctl":
+        ok, msg = _systemctl_permitido(comando)
+        if not ok:
+            return False, msg
+    ok, msg = _args_permitidos(comando)
+    if not ok:
+        return False, msg
     return True, primer_token
+
+
+# ── PAPELERA (eliminar_archivo ya no borra, mueve) ─────────────────────
+# Papelera estándar de XDG (~/.local/share/Trash) en vez de una carpeta
+# propia del proyecto: así lo que "elimina" también aparece en la papelera
+# del gestor de archivos del escritorio (Thunar, ver COMANDOS más arriba),
+# recuperable con las herramientas normales del sistema.
+_TRASH_DIR   = os.path.realpath(os.path.expanduser("~/.local/share/Trash"))
+_TRASH_FILES = os.path.join(_TRASH_DIR, "files")
+_TRASH_INFO  = os.path.join(_TRASH_DIR, "info")
+
+def _mover_a_papelera(ruta):
+    """Mueve `ruta` (ya validada por _ruta_segura) a la papelera de XDG, con
+    su .trashinfo (spec: freedesktop.org Trash). Devuelve la ruta final
+    dentro de la papelera. Si el nombre ya existe ahí, le agrega un sufijo
+    numérico en vez de pisar lo que ya estaba."""
+    import datetime
+    import urllib.parse
+
+    os.makedirs(_TRASH_FILES, exist_ok=True)
+    os.makedirs(_TRASH_INFO, exist_ok=True)
+
+    nombre    = os.path.basename(ruta.rstrip("/")) or "sin_nombre"
+    destino   = os.path.join(_TRASH_FILES, nombre)
+    info_path = os.path.join(_TRASH_INFO, nombre + ".trashinfo")
+    sufijo = 1
+    while os.path.exists(destino) or os.path.exists(info_path):
+        destino   = os.path.join(_TRASH_FILES, f"{nombre}.{sufijo}")
+        info_path = os.path.join(_TRASH_INFO, f"{nombre}.{sufijo}.trashinfo")
+        sufijo += 1
+
+    with open(info_path, "w", encoding="utf-8") as f:
+        f.write("[Trash Info]\n")
+        f.write(f"Path={urllib.parse.quote(ruta)}\n")
+        f.write(f"DeletionDate={datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}\n")
+
+    shutil.move(ruta, destino)
+    return destino
 
 
 _pyautogui_mod = None
@@ -777,7 +1008,12 @@ def ejecutar_accion(datos):
 
     elif ac == "buscar":
         arch = datos.get("archivo","")
-        base = datos.get("carpeta", os.path.expanduser("~"))
+        base_datos = datos.get("carpeta", os.path.expanduser("~"))
+        # permitir_raiz=True: buscar es de solo lectura (glob.glob, nunca
+        # escribe) y por defecto ya busca en todo el home — a diferencia de
+        # mover/copiar/eliminar, no hay motivo para bloquear ~ como base.
+        ok, base = _ruta_segura(base_datos, permitir_raiz=True)
+        if not ok: return base
         # Consultar memoria del sistema primero
         en_memoria = buscar_en_memoria_sistema(arch)
         if en_memoria:
@@ -825,6 +1061,8 @@ def ejecutar_accion(datos):
     elif ac == "crear_carpeta":
         ruta = datos.get("ruta","")
         if not ruta: return "No me dijiste la ruta."
+        ok, ruta = _ruta_segura(ruta)
+        if not ok: return ruta
         try:
             os.makedirs(ruta, exist_ok=True)
             registrar_carpeta_sistema(ruta)
@@ -841,7 +1079,6 @@ def ejecutar_accion(datos):
         return descargar_archivo(url, nombre)
 
     elif ac == "mover_archivo":
-        import shutil
         origen  = datos.get("origen","")
         destino = datos.get("destino","")
         ok_o, origen  = _ruta_segura(origen)
@@ -857,7 +1094,6 @@ def ejecutar_accion(datos):
             return f"No pude mover el archivo: {e}"
 
     elif ac == "copiar_archivo":
-        import shutil
         origen  = datos.get("origen","")
         destino = datos.get("destino","")
         ok_o, origen  = _ruta_segura(origen)
@@ -876,24 +1112,20 @@ def ejecutar_accion(datos):
             return f"No pude copiar el archivo: {e}"
 
     elif ac == "eliminar_archivo":
-        import shutil
         ruta = datos.get("ruta","")
         ok, ruta = _ruta_segura(ruta)
         if not ok: return ruta
         if not os.path.exists(ruta):
             return f"No existe: {ruta}"
         try:
-            if os.path.isdir(ruta):
-                shutil.rmtree(ruta)
-            else:
-                os.remove(ruta)
+            destino = _mover_a_papelera(ruta)
             # Limpiar de memoria si estaba registrado
             nombre = os.path.basename(ruta)
             memoria_sistema["archivos"].pop(nombre, None)
             guardar_memoria_sistema()
-            return f"Eliminado: {ruta}"
+            return f"Movido a la papelera: {ruta} (recuperable en {destino})"
         except Exception as e:
-            return f"No pude eliminar: {e}"
+            return f"No pude mover a la papelera: {e}"
 
     elif ac == "ejecutar_comando":
         comando = datos.get("comando","").strip()
@@ -1254,167 +1486,6 @@ def _loop_sync_bg_chat():
 app.after(500, _loop_sync_bg_chat)
 
 
-# ── DESKTOP PET (ventana flotante transparente) ───────────────────────
-SPRITE_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sprites")
-TRANSP      = "#fe03fe"   # color que Windows convierte en transparencia
-PET_W, PET_H = 220, 340
-
-os.makedirs(SPRITE_DIR, exist_ok=True)
-
-
-def _cargar_o_generar_frames():
-    """
-    Busca PNGs en sprites/ por estado.
-    Nombres esperados:
-      idle_0.png, idle_1.png ...      → estado idle
-      talking_0.png, talking_1.png ... → estado talking
-      thinking.png                     → estado thinking
-    Si no hay nada, genera animación sintética desde el wallpaper.
-    """
-    SIZE = (PET_W, PET_H)
-    TRANSP_RGB = (254, 3, 254)
-
-    def _compositar(img):
-        """Pega una imagen sobre fondo magenta manejando RGB y RGBA."""
-        img = img.convert("RGBA").resize(SIZE, Image.LANCZOS)
-        bg  = Image.new("RGB", SIZE, TRANSP_RGB)
-        # Si tiene canal alpha real lo usamos; si no, pegamos directo
-        r, g, b, a = img.split()
-        if a.getextrema() == (255, 255):
-            # Sin transparencia real — pegar directo
-            bg.paste(img.convert("RGB"))
-        else:
-            bg.paste(img.convert("RGB"), mask=a)
-        return ImageTk.PhotoImage(bg)
-
-    def _cargar_estado(patron_lista):
-        """Carga todos los PNGs que coincidan con los patrones, uno por uno."""
-        resultado = []
-        archivos = []
-        for p in patron_lista:
-            archivos += glob.glob(os.path.join(SPRITE_DIR, p))
-        archivos = sorted(set(archivos))   # sin duplicados, ordenados
-        for ruta in archivos:
-            try:
-                img = Image.open(ruta)
-                ph  = _compositar(img)
-                resultado.append(ph)
-                print(f"  [Sprites] ✓ {os.path.basename(ruta)}")
-            except Exception as e:
-                print(f"  [Sprites] ✗ {os.path.basename(ruta)}: {e}")
-        return resultado
-
-    frames = {"idle": [], "talking": [], "thinking": []}
-
-    # Cargar sprites reales (cada estado por separado)
-    frames["idle"]     = _cargar_estado(["idle*.png"])
-    frames["talking"]  = _cargar_estado(["talking*.png", "talk*.png", "hablar*.png"])
-    frames["thinking"] = _cargar_estado(["thinking*.png", "think*.png", "pensar*.png"])
-
-    encontrado = any(frames[e] for e in frames)
-
-    if not encontrado:
-        # Generar frames sintéticos desde el wallpaper
-        try:
-            base = Image.open(IMAGEN_FONDO).convert("RGBA")
-            bw, bh = base.size
-            # Recortar el centro-derecho donde suele estar el personaje
-            crop = base.crop((bw // 2, 0, bw, bh)).resize(SIZE, Image.LANCZOS)
-        except Exception:
-            crop = Image.new("RGBA", SIZE, (20, 20, 60, 255))
-
-        # Idle: 8 frames con flotación suave (±4 px)
-        for i in range(8):
-            offset = int(4 * math.sin(i * math.pi / 4))
-            frame  = Image.new("RGBA", SIZE, (0, 0, 0, 0))
-            frame.paste(crop, (0, offset))
-            frames["idle"].append(_compositar(frame))
-
-        # Talking: 6 frames alternando brillo (simulación de boca)
-        for i in range(6):
-            factor = 1.0 + 0.18 * (i % 2)
-            f = ImageEnhance.Brightness(crop).enhance(factor)
-            frames["talking"].append(_compositar(f))
-
-        # Thinking: tinte azulado suave
-        overlay = Image.new("RGBA", SIZE, (60, 100, 255, 45))
-        tinted  = Image.alpha_composite(crop, overlay)
-        frames["thinking"] = [_compositar(tinted)] * 3
-
-    # Fallback: si algún estado quedó vacío, usar idle
-    for estado in ("talking", "thinking"):
-        if not frames[estado]:
-            frames[estado] = frames["idle"][:]
-
-    return frames
-
-
-# Crear ventana flotante
-pet_win = tk.Toplevel(app)
-pet_win.overrideredirect(True)            # sin barra de título
-pet_win.attributes("-topmost", True)      # siempre encima
-try:
-    pet_win.attributes("-transparentcolor", TRANSP)   # solo funciona en Windows
-except tk.TclError:
-    pass   # en Linux/X11 se ignora; el fondo magenta quedará visible si no hay compositor
-pet_win.configure(bg=TRANSP)
-
-# Posición inicial: esquina inferior derecha
-_sw = app.winfo_screenwidth()
-_sh = app.winfo_screenheight()
-pet_win.geometry(f"{PET_W}x{PET_H}+{_sw - PET_W - 24}+{_sh - PET_H - 64}")
-
-pet_lbl = tk.Label(pet_win, bg=TRANSP, cursor="fleur")
-pet_lbl.pack()
-
-# Drag (clic + arrastre para mover el pet)
-_drag = {"x": 0, "y": 0}
-
-def _drag_start(e):
-    _drag["x"], _drag["y"] = e.x, e.y
-
-def _drag_move(e):
-    pet_win.geometry(
-        f"+{pet_win.winfo_x() + e.x - _drag['x']}"
-        f"+{pet_win.winfo_y() + e.y - _drag['y']}"
-    )
-
-pet_lbl.bind("<ButtonPress-1>", _drag_start)
-pet_lbl.bind("<B1-Motion>",     _drag_move)
-
-# Menú clic derecho
-pet_menu = tk.Menu(app, tearoff=0, bg=BG1, fg=CLR_REM,
-                   activebackground=CLR_ACC, activeforeground="white",
-                   font=FNT_SM)
-pet_menu.add_command(label="Ocultar personaje",
-                     command=lambda: pet_win.withdraw())
-pet_menu.add_command(label="Mostrar personaje",
-                     command=lambda: pet_win.deiconify())
-pet_menu.add_separator()
-pet_menu.add_command(label="Traer chat al frente",
-                     command=lambda: app.lift())
-
-pet_lbl.bind("<ButtonPress-3>", lambda e: pet_menu.tk_popup(e.x_root, e.y_root))
-
-# Cargar frames
-_pet_frames = _cargar_o_generar_frames()
-_pet_idx    = {"idle": 0, "talking": 0, "thinking": 0}
-
-
-def _loop_pet():
-    estado  = _rem_estado
-    frames  = _pet_frames.get(estado) or _pet_frames["idle"]
-    if frames:
-        idx = _pet_idx[estado] % len(frames)
-        pet_lbl.config(image=frames[idx])
-        pet_lbl.image = frames[idx]
-        _pet_idx[estado] = idx + 1
-    delay = {"idle": 350, "talking": 150, "thinking": 500}.get(estado, 350)
-    app.after(delay, _loop_pet)
-
-app.after(600, _loop_pet)
-
-
 # ── RECORDATORIOS AUTOMÁTICOS ────────────────────────────────────────
 # Edita esta lista para añadir, quitar o cambiar recordatorios.
 # "hora" en formato "HH:MM" — "contexto" es lo que Rem recibe para generar el mensaje.
@@ -1484,7 +1555,6 @@ threading.Thread(target=_loop_monitor_pc, daemon=True).start()
 
 # ── Avatar 3D ─────────────────────────────────────────────────────────
 if _AVATAR_DISPONIBLE and os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "rem.vrm")):
-    pet_win.withdraw()   # ocultar sprites — el avatar 3D los reemplaza
     from rem_avatar_server import iniciar_avatar
     _sw = app.winfo_screenwidth()
     _sh = app.winfo_screenheight()
@@ -1496,7 +1566,7 @@ if _AVATAR_DISPONIBLE and os.path.exists(os.path.join(os.path.dirname(os.path.ab
     ).start()
     print("[Avatar] Iniciando avatar 3D de Rem…")
 else:
-    print("[Avatar] Usando sprites (rem.vrm no encontrado o servidor no disponible)")
+    print("[Avatar] rem.vrm no encontrado o servidor no disponible — sin avatar")
 
 
 # ── Cierre limpio ─────────────────────────────────────────────────────
@@ -1507,8 +1577,6 @@ def on_close():
             from rem_avatar_server import cerrar_avatar
             cerrar_avatar()
         except Exception: pass
-    try: pet_win.destroy()
-    except Exception: pass
     app.destroy()
 
 app.protocol("WM_DELETE_WINDOW", on_close)

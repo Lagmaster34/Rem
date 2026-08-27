@@ -34,7 +34,6 @@ no basta con copiar la carpeta.
 | `fairseq_shim/__init__.py` | Shim que reemplaza el `__init__.py` de fairseq para compatibilidad PyTorch |
 | `fairseq_shim/checkpoint_utils.py` | Fork de fairseq con `torch.load(weights_only=False)` |
 | `apply_shim.py` | Copia `fairseq_shim/` sobre el fairseq instalado en `venv/`. Ejecutar tras cualquier reinstalación de fairseq |
-| `cortar_sprites.py` | Script one-off para extraer sprites de un collage PNG |
 | `llm/` | Capa de abstracción de LLM (contrato + providers). Ver "Capa de abstracción de LLM" más abajo |
 | `config.py` | Módulo compartido: carga `.env` y lee `config.toml`. Lo usan `Rem.py`, `bench.py` y `bench_chat.py` — ninguno de los otros dos puede importar `Rem.py` (ver más abajo), así que sin esto no verían las variables de entorno |
 | `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — hoy solo `[llm]` / `[llm.claude]` |
@@ -172,6 +171,19 @@ respuesta al pipeline de voz existente (`lipsync.py` + RVC + `enviar_audio` de
 `rem_avatar_server.py`, reusados tal cual), `reset` limpia el historial y `quit` cierra. Arranca el
 avatar exactamente igual que `bench.py` (`config.cargar_dotenv()` → `iniciar_avatar()`).
 
+## Personalidad de Rem (`personalidad.py`)
+`_INSTRUCCIONES_BASE` prioriza dos reglas por encima de todo (longitud y honestidad, en ese orden,
+al principio del prompt) en vez de enterrar "respondé corto" como el punto 7 de 8 entre rasgos de
+personalidad — con un modelo chico (Ollama, 4B, ver "Capa de abstracción de LLM" más arriba) esa
+regla se perdía entre el resto y las respuestas salían de 100-180 tokens en vez de 1-3 frases. El
+personaje ya no tiene cariño/afecto ni rasgos de pareja — es una colega de trabajo con foco en lo
+técnico (programación, Linux, hardware, redes, IA), que contradice a Esteban cuando hace falta en
+vez de darle la razón primero y matizar después. Los bloques ACCIONES DEL SISTEMA/REGLAS DE
+SEGURIDAD/MEMORIA DEL SISTEMA se mantienen intactos entre reescrituras de personalidad — son
+funcionales, no de tono, y cualquier cambio a los permisos reales (ver "Seguridad de acciones del
+sistema" más abajo) tiene que reflejarse ahí también, o el modelo va a intentar acciones que el
+código ya rechaza sin saber por qué.
+
 ## Configuración (.env en la raíz del proyecto)
 ```
 ANTHROPIC_API_KEY=tu_api_key_de_anthropic
@@ -272,10 +284,54 @@ rem_avatar_server.py (daemon thread desde Rem.py)
 | `_lock_mem_sis` | `memoria_sistema` y sus escrituras a disco |
 
 ## Seguridad de acciones del sistema
-- `ejecutar_comando`: whitelist de binarios, bloquea metacaracteres de shell, usa `shlex.split()` sin `shell=True`
-- `_ruta_segura()`: valida que las rutas estén dentro de `/home/$NOMBRE_USUARIO`
-- Toda acción pasa por `confirmar_accion()` (diálogo de confirmación)
-- CORS restringido a `localhost` en `rem_avatar_server.py`
+- `ejecutar_comando`: whitelist de binarios, bloquea metacaracteres de shell, usa `shlex.split()` sin `shell=True`.
+  `git` y `systemctl`, aunque están en la whitelist, se restringen además a un conjunto cerrado de
+  subcomandos de solo lectura (`_git_permitido()`/`_systemctl_permitido()`) — `git -c
+  core.pager=...`/`--exec-path` pueden ejecutar programas arbitrarios dentro del mismo
+  `subprocess.run`, y `systemctl --user start/stop/enable/...` aplica sin pedir ningún privilegio
+  (a diferencia de sin `--user`, que suele fallar por polkit — esa falla actuaba como red de
+  seguridad implícita que `--user` esquiva).
+- `_ruta_segura(ruta, permitir_raiz=False)`: valida que la ruta esté dentro de `/home/$NOMBRE_USUARIO`,
+  que no sea `/home/$NOMBRE_USUARIO` completo (por defecto — sin este chequeo, "eliminar ~" hacía
+  `shutil.rmtree()` sobre todo el home), que no caiga en dirs del sistema (`/etc`, `/root`, ...) ni en
+  la lista negra de subrutas sensibles dentro de `$HOME` (`_RUTAS_PROHIBIDAS_HOME`: `~/.ssh`,
+  `~/.gnupg`, `~/.config`, `~/.local/share/keyrings`, `~/.mozilla`, y el `.env`/`.git` del propio
+  proyecto, calculados desde su ubicación real — protegen igual si el proyecto vuelve a vivir dentro
+  de `$HOME`). La usan `mover_archivo`/`copiar_archivo`/`eliminar_archivo`/`crear_carpeta`, y `buscar`
+  con `permitir_raiz=True` (es de solo lectura — `glob.glob`, nunca escribe — y por defecto ya busca
+  en todo el home; bloquear la raíz ahí rompería el caso más común).
+- **`ejecutar_comando` valida también sus argumentos, no solo el binario** (`_args_permitidos()`):
+  antes, `_cmd_permitido()` solo miraba el primer token — `cat /ruta/al/proyecto/.env` vía
+  `ejecutar_comando` ignoraba por completo `_ruta_segura()` y la lista negra. Cada token que "parece
+  una ruta" (prefijo `/`, `~`, `./`, `../`, o que exista de verdad relativo al cwd real de
+  `ejecutar_comando`, lo que atrapa traversal escondido tipo `carpeta_real/../../etc/passwd`) pasa por
+  `_ruta_segura()` con `permitir_raiz=False` — mismo límite que mover/copiar/eliminar. Efecto
+  secundario a tener en cuenta: `ls ~`/`find .` (apuntando literalmente a la raíz del home) también
+  quedan bloqueados por esto, no solo los casos destructivos.
+- `descargar_archivo()`: sanea `nombre` con `os.path.basename()` — sin esto, un `nombre` con `../../`
+  escribía el contenido descargado fuera de `~/Descargas`.
+- `eliminar_archivo` mueve a la papelera de XDG (`~/.local/share/Trash`, con su `.trashinfo`) en vez de
+  borrar (`_mover_a_papelera()`) — recuperable con las herramientas normales del escritorio (Thunar).
+- Diálogo de confirmación (`DESCRIPCIONES`): para rutas, muestra el `realpath` ya validado por
+  `_ruta_segura()` (o el motivo del rechazo, si ya se sabe que va a fallar) en vez del string crudo
+  que mandó el LLM; para `ejecutar_comando`, muestra el comando tokenizado con `shlex` y el binario
+  real que resuelve el `PATH` (`shutil.which`).
+- Toda acción pasa por `confirmar_accion()` (diálogo de confirmación).
+- CORS restringido a `localhost` en `rem_avatar_server.py`.
+
+Los cuatro huecos detectados en la auditoría previa (`ejecutar_comando` sin validar argumentos,
+`crear_carpeta` y `buscar` sin pasar por `_ruta_segura()`, `descargar_archivo` sin sanear `nombre`)
+quedaron cerrados en esta pasada. Si en el futuro se agrega una acción nueva que reciba una ruta
+directo del JSON del LLM, ese es el lugar a revisar: pasarla por `_ruta_segura()` antes de usarla,
+no asumir que el patrón ya está cubierto en todos lados.
+
+**`memoria_sistema.json` ya no se trackea en git** (`git rm --cached`, el `.gitignore` ya tenía
+`memoria_*.json` pero no aplica retroactivamente a un archivo agregado antes de esa regla) — el
+archivo local sigue existiendo y la app lo sigue leyendo/escribiendo igual, solo que sus cambios ya
+no terminan en el historial del repo público. Se verificó todo el historial de git: el archivo
+estuvo vacío en su único commit, así que no hizo falta reescribir historia. Se aprovechó para sacar
+la clave `"programas"` del JSON, que no existe en el schema que lee `personalidad.cargar_memoria_sistema()`
+(solo `archivos`/`carpetas`) — residuo de un formato viejo.
 
 ## Arrancar el proyecto
 ```bash
