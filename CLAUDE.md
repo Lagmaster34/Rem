@@ -423,6 +423,72 @@ consume esa cola en orden y llama a `_decir()` por oración.
   de VRAM, pero si vuelve a aparecer el log de fallback, no asumir que es "la carrera de siempre"
   sin antes descartar OOM.
 
+## Precarga de RVC y fin de la recarga del .pth en cada frase
+Dos problemas medidos en vivo con el `SentenceSplitter` ya conectado (ver arriba): el primer audio
+de una sesión tardaba ~16,5s (carga de RVC + primera conversión en frío) mientras el usuario
+esperaba, y el log mostraba `Loading .../Rem_600e_6600s.pth` antes de **cada** conversión — con el
+splitter mandando una oración a la vez, eso es una recarga del modelo por oración, no por respuesta.
+
+**Causa de la recarga**: `BaseLoader.__call__()` (el método que `bench.py`/`bench_chat.py` usaban)
+guarda el tag de la última conversión en `cache_params`, una **variable local** que se reinicializa
+a `None` al entrar a `__call__()` — así que aunque el tag (`"rem"`) nunca cambia entre llamadas,
+la condición `cache_params != id_tag` es `True` siempre, y `load_trained_model()` (con su
+`torch.load()` del `.pth` y la relectura del `.index` vía faiss) se repite en cada conversión.
+`BaseLoader` expone un método distinto para esto — `generate_from_cache(audio_data, tag)` — que
+guarda el estado equivalente en `self.cache_model`/`self.model_vc` (atributos de instancia, no
+variables locales) y compara con `!=` antes de recargar: como la config de `"rem"` nunca cambia
+tras el `apply_conf()` inicial, la carga real solo ocurre una vez por instancia de `BaseLoader`.
+`bench.py` y `bench_chat.py` ahora llaman a `generate_from_cache(audio_data=<ruta_wav>, tag="rem")`
+en vez de `__call__(audio_files=[...], type_output="wav")` — con `type_output` fijo en `"array"`
+dentro de ese método, devuelve `(audio_int16, sample_rate)` directo en vez de escribir un archivo,
+así que `_decir()` lo escribe a wav con `sf.write()` antes de mandarlo a `enviar_audio()`.
+
+**Beneficio colateral**: `__call__()` corre `self.infer()` dentro de un `threading.Thread` propio
+que solo se joinea (`run_threads`) — si `infer()` lanza, esa excepción no se propaga al hilo
+llamador (comportamiento estándar de `threading.Thread`), y por eso el bug de la carrera
+intermitente documentado arriba ("RVC no devolvió resultado") se manifestaba como una lista vacía
+en vez de una excepción visible. `generate_from_cache()` llama a `self.infer()` **directo**, sin
+hilo interno — un fallo real de RVC (OOM de CUDA, lo que sea) ahora llega a `_decir()` como una
+excepción de verdad, con su mensaje, en vez de desaparecer en silencio. `_decir()` sigue
+tolerándolo igual que antes (`except Exception` alrededor de la conversión, cae a la voz cruda de
+edge-tts sin convertir para esa oración), pero ahora el log de fallback trae el motivo real.
+
+**Precarga en el arranque**: `_precargar_rvc()` (nueva función en ambos scripts) carga RVC y hace
+una conversión de calentamiento descartable (frase fija `"Hola."`) en un hilo de fondo
+(`threading.Thread(daemon=True)`), lanzado en `main()` antes de `iniciar_avatar()` para solaparse
+con el arranque del servidor HTTP/WS y el subproceso del overlay en vez de sumarse después. Así,
+para cuando el usuario escribe su primer `chat`/`say` real, tanto la carga del modelo (`import
+torch`/`faiss`, `Config()`) como el primer `generate_from_cache()` en frío (el más caro: incluye
+`torch.load()` del `.pth`, cargar el estimador de pitch `RMVPE` y leer el `.index`) ya se pagaron
+en background.
+
+**Bug de concurrencia encontrado al combinar ambos cambios, y su arreglo**: `BaseLoader` no es
+thread-safe entre llamadas concurrentes — ni `generate_from_cache()` ni la carga perezosa del
+estimador de pitch (`self.model_pitch_estimator`) tienen lock propio. Con el hilo de precarga y una
+petición real llegando casi al mismo tiempo (probado en vivo mandando un `say` a los 2s de
+arrancar, antes de que la precarga terminara), **ambos hilos vieron el cache vacío a la vez** y
+recargaron el `.pth` y el `RMVPE` por duplicado (`Loading .../Rem_600e_6600s.pth` y `Loading vocal
+pitch estimator model` aparecían dos veces seguidas en el log). Arreglado serializando **toda**
+llamada a RVC — tanto la carga inicial (`_obtener_rvc()`) como cada conversión
+(`generate_from_cache()`, ahora envuelta en `_convertir_rvc()`) — detrás de un único
+`threading.Lock()` (`_rvc_lock`). No hay costo real: las dos rutas comparten la misma GPU/CPU, así
+que no había paralelismo que ganar corriéndolas a la vez, solo una carrera a evitar. Verificado en
+vivo tras el fix: una sola aparición de cada línea `Loading`, sin duplicados, en varias corridas
+seguidas de `bench.py` y `bench_chat.py`.
+
+**Medido en vivo, esta máquina, GPU** (`bench.py`, con la precarga corriendo de fondo mientras el
+REPL ya está disponible):
+- Carga del objeto `BaseLoader` (`import torch`/`faiss` + `Config()`): ~3,2-6,2s (varía entre
+  corridas, primer import de estas libs en el proceso).
+- Calentamiento completo (síntesis TTS de la frase de descarte + `generate_from_cache()` en frío,
+  incluyendo `torch.load()` del `.pth`, carga del `RMVPE` y lectura del `.index`): ~9-13s.
+- **Primera conversión real del usuario, después de que la precarga ya terminó**: **0,88s** — misma
+  velocidad que las conversiones subsiguientes (antes del fix, la primera conversión de la sesión
+  costaba ~11-16s, todo pagado en el momento en que el usuario ya está esperando la respuesta).
+- Con `bench_chat.py` el patrón es idéntico: calentamiento de fondo en ~9s, una sola aparición de
+  cada `Loading`, sin bloquear el prompt del REPL (queda disponible de inmediato, antes de que
+  termine la precarga).
+
 ## Datos del modelo rem.vrm
 Extraído con `dump_vrm.py`. `rem.vrm` es **VRM 0.x** (usa `extensions.VRM`, no `VRMC_vrm`).
 

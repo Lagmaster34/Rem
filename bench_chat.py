@@ -28,6 +28,7 @@ import argparse
 import asyncio
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -53,6 +54,14 @@ ESPERA_CLIENTE_S = 8.0  # tiempo máximo para que un cliente WS conecte antes de
 ESPERA_HTTP_S = 5.0     # tiempo máximo para que el servidor HTTP responda antes de --open
 
 _rvc_cache = None
+# Protege tanto la carga de RVC (_obtener_rvc) como cada conversión
+# (generate_from_cache): BaseLoader no es thread-safe entre llamadas
+# concurrentes — self.cache_model/self.model_vc/self.model_pitch_estimator se
+# leen y escriben sin lock propio, así que dos conversiones a la vez (el hilo
+# de precarga y un turno con voz llegando antes de que termine) pueden verse
+# ambas con el cache todavía vacío y recargar el .pth y el rmvpe por
+# duplicado — visto en vivo antes de agregar este lock.
+_rvc_lock = threading.Lock()
 
 
 def log(msg):
@@ -80,14 +89,69 @@ def cargar_rvc(pitch=4, index_influence=0.75):
 
 
 def _obtener_rvc():
+    """Carga RVC si hace falta y devuelve la instancia cacheada. Con lock
+    porque ahora hay dos llamadores concurrentes posibles: el hilo de
+    precarga (_precargar_rvc, lanzado al arrancar) y _decir() si el usuario
+    llega a pedir voz antes de que la precarga termine — sin el lock, ambos
+    podrían ver _rvc_cache en None a la vez y cargar el modelo dos veces."""
     global _rvc_cache
-    if _rvc_cache is None:
-        log("cargando RVC (una sola vez, se reusa en las siguientes respuestas)...")
+    with _rvc_lock:
+        if _rvc_cache is None:
+            log("cargando RVC...")
+            t0 = time.perf_counter()
+            _rvc_cache = cargar_rvc()
+            rvc, dispositivo = _rvc_cache
+            log(f"RVC listo en {time.perf_counter() - t0:.1f}s ({dispositivo})")
+        return _rvc_cache
+
+
+def _convertir_rvc(rvc, tmp_wav):
+    """generate_from_cache() bajo el mismo lock que _obtener_rvc() — ver el
+    comentario de _rvc_lock más arriba sobre por qué hace falta serializar
+    también las conversiones, no solo la carga inicial."""
+    with _rvc_lock:
+        return rvc.generate_from_cache(audio_data=tmp_wav, tag="rem")
+
+
+def _preparar_wav_16k(audio_mp3, tmp_mp3, tmp_wav):
+    """mp3 de edge-tts -> wav mono 16kHz, el formato que espera RVC. Comparte
+    esta conversión _decir() (una oración real) y _precargar_rvc() (la
+    oración de calentamiento) para no duplicarla."""
+    with open(tmp_mp3, "wb") as f:
+        f.write(audio_mp3)
+    audio, sr_ = sf.read(tmp_mp3)
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+    if sr_ != 16000:
+        audio = sps.resample(audio, int(round(len(audio) * 16000 / sr_)))
+        sr_ = 16000
+    sf.write(tmp_wav, audio.astype(np.float32), sr_)
+
+
+def _precargar_rvc():
+    """Carga RVC y lo deja "caliente" con una conversión de calentamiento
+    descartada, en un hilo de fondo lanzado al arrancar (ver main()) — para
+    que el primer 'chat'/'say' real no pague ni la carga del modelo (~4-6s)
+    ni el costo extra de la primera conversión en frío (kernels CUDA sin
+    compilar/cachear todavía). Todo lo que toca (log/print, nada de estado
+    compartido con el REPL) es seguro de llamar desde un hilo aparte."""
+    tmp_mp3 = os.path.join(TMP_AUDIO_DIR, "_precarga_rvc.mp3")
+    tmp_wav = os.path.join(TMP_AUDIO_DIR, "_precarga_rvc.wav")
+    try:
+        rvc, dispositivo = _obtener_rvc()
         t0 = time.perf_counter()
-        _rvc_cache = cargar_rvc()
-        rvc, dispositivo = _rvc_cache
-        log(f"RVC listo en {time.perf_counter() - t0:.1f}s ({dispositivo})")
-    return _rvc_cache
+        audio_mp3, _ = asyncio.run(lipsync.sintetizar_con_timings("Hola."))
+        _preparar_wav_16k(audio_mp3, tmp_mp3, tmp_wav)
+        _convertir_rvc(rvc, tmp_wav)
+        log(f"calentamiento RVC listo en {time.perf_counter() - t0:.2f}s ({dispositivo}) — RVC caliente para el primer chat")
+    except Exception as e:
+        log(f"precarga de RVC falló, no bloqueante ({e})")
+    finally:
+        for tmp in (tmp_mp3, tmp_wav):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 async def _decir(texto, usar_rvc):
@@ -106,36 +170,32 @@ async def _decir(texto, usar_rvc):
     uid = int(time.time() * 1000)
     tmp_mp3 = os.path.join(TMP_AUDIO_DIR, f"bench_chat_tmp_{uid}.mp3")
     tmp_wav = os.path.join(TMP_AUDIO_DIR, f"bench_chat_tmp_{uid}.wav")
+    tmp_wav_rvc = os.path.join(TMP_AUDIO_DIR, f"bench_chat_tmp_{uid}_rvc.wav")
     ruta_final = tmp_wav
     entregado = False
 
     try:
-        with open(tmp_mp3, "wb") as f:
-            f.write(audio_mp3)
-
-        audio, sr_ = sf.read(tmp_mp3)
-        if audio.ndim > 1:
-            audio = audio.mean(axis=1)
-        if sr_ != 16000:
-            audio = sps.resample(audio, int(round(len(audio) * 16000 / sr_)))
-            sr_ = 16000
-        sf.write(tmp_wav, audio.astype(np.float32), sr_)
+        _preparar_wav_16k(audio_mp3, tmp_mp3, tmp_wav)
 
         if usar_rvc:
             rvc, dispositivo = _obtener_rvc()
             t_rvc = time.perf_counter()
-            resultados = await asyncio.to_thread(rvc, audio_files=[tmp_wav], type_output="wav")
-            log(f"conversión RVC ({dispositivo}): {time.perf_counter() - t_rvc:.2f}s")
-            if resultados:
-                ruta_final = resultados[0]
-            else:
-                # infer_rvc_python corre la conversión en un hilo interno que
-                # solo se joinea (run_threads) — si esa excepción no se
-                # propaga (visto en vivo, intermitente, llamando RVC varias
-                # veces seguidas por turno), __call__ igual devuelve una lista
-                # vacía en vez de lanzar. Sin este log, la oración sonaría con
-                # la voz cruda de edge-tts sin que se note por qué.
-                log("RVC no devolvió resultado — hablando sin convertir (voz cruda de edge-tts)")
+            try:
+                # generate_from_cache() reusa net_g/index/pipe ya cargados en
+                # la instancia (self.model_vc) en vez de releer el .pth y el
+                # .index de disco en cada llamada, como sí hace __call__ (ver
+                # CLAUDE.md, "Precarga de RVC y fin de la recarga del .pth en cada frase"). Además corre
+                # infer() en el hilo actual (el de asyncio.to_thread), no en
+                # un hilo interno que __call__ solo joinea sin propagar sus
+                # excepciones — así que un fallo real de RVC (p.ej. un OOM de
+                # CUDA) llega acá como excepción, en vez de volver una lista
+                # vacía en silencio.
+                audio_opt, sr_rvc = await asyncio.to_thread(_convertir_rvc, rvc, tmp_wav)
+                sf.write(tmp_wav_rvc, audio_opt, sr_rvc)
+                ruta_final = tmp_wav_rvc
+                log(f"conversión RVC ({dispositivo}): {time.perf_counter() - t_rvc:.2f}s")
+            except Exception as e:
+                log(f"RVC falló ({e}) — hablando sin convertir (voz cruda de edge-tts)")
 
         enviado = enviar_audio(ruta_final, timeline)
         if not enviado:
@@ -158,7 +218,7 @@ async def _decir(texto, usar_rvc):
             except sd.PortAudioError as e:
                 log(f"no se pudo reproducir localmente ({e}) — revisa el dispositivo de audio por defecto")
     finally:
-        for tmp in {tmp_mp3, tmp_wav, ruta_final}:
+        for tmp in {tmp_mp3, tmp_wav, tmp_wav_rvc}:
             try:
                 os.remove(tmp)
             except OSError:
@@ -375,6 +435,13 @@ def main():
         log("ADVERTENCIA: ejecuta con venv/bin/python bench_chat.py")
 
     config.cargar_dotenv()
+
+    if not args.no_rvc:
+        # Lanzada antes de iniciar_avatar() (HTTP/WS/overlay) para solaparse
+        # con ese arranque en vez de sumarse después — para cuando el REPL
+        # queda listo para el primer 'chat', RVC ya suele estar cargado y
+        # calentado (ver CLAUDE.md, "Precarga de RVC y fin de la recarga del .pth en cada frase").
+        threading.Thread(target=_precargar_rvc, daemon=True).start()
 
     print("Iniciando avatar (HTTP :18765, WS :18766, overlay GTK)...")
     iniciar_avatar()
