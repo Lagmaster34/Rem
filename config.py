@@ -1,12 +1,12 @@
 """config.py — configuración compartida de Rem: carga de .env y config.toml.
 
 Extraído de Rem.py (donde vivía como _cargar_dotenv(), privada del módulo) a
-un módulo compartido porque bench.py y bench_chat.py no pueden importar
-Rem.py — el Python 3.10.14 del venv se compiló sin _tkinter, y aunque lo
-tuviera, Rem.py ejecuta su GUI Tkinter a nivel de módulo con solo importarlo.
-Sin este módulo, esos scripts nunca veían las variables de .env (ni
-GROQ_API_KEY antes ni ANTHROPIC_API_KEY ahora), lo que se manifestaba como un
-error de conexión genérico en vez de un mensaje claro de "falta la API key".
+un módulo compartido porque bench_chat.py no puede importar Rem.py — el
+Python 3.10.14 del venv se compiló sin _tkinter, y aunque lo tuviera, Rem.py
+ejecuta su GUI Tkinter a nivel de módulo con solo importarlo. Sin este
+módulo, ese script nunca veía las variables de .env (ni GROQ_API_KEY antes ni
+ANTHROPIC_API_KEY ahora), lo que se manifestaba como un error de conexión
+genérico en vez de un mensaje claro de "falta la API key".
 """
 import os
 

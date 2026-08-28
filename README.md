@@ -206,10 +206,10 @@ llm/
   local.py                # Ollama
   claude.py               # API de Anthropic
   groq.py
+  echo.py                 # EchoProvider — sin modelo, repite el último mensaje (modo eco)
   sentence_splitter.py    # empuja cada oración al TTS en cuanto se completa
   _retry.py
-bench.py                  # prueba voz + lipsync sin LLM ni chat
-bench_chat.py             # prueba el LLM con la personalidad, sin avatar
+bench_chat.py             # REPL: LLM + personalidad + voz/lipsync/avatar (modo ia/eco)
 models/Rem_600e_6600s/
 tmp_audio/
 ```
@@ -221,8 +221,7 @@ tmp_audio/
 ```bash
 source venv/bin/activate
 
-python bench.py        # solo voz + lipsync
-python bench_chat.py   # solo LLM + personalidad
+python bench_chat.py   # REPL — 'modo eco' para voz/lipsync/avatar sin LLM, 'modo ia' para el LLM real
 python Rem.py          # todo (bloqueado por _tkinter hasta migrar el chat a web)
 ```
 

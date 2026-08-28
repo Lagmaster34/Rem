@@ -2,10 +2,10 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "bench",
+      "name": "bench_chat",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/bench.py",
+      "program": "${workspaceFolder}/bench_chat.py",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": true
@@ -37,8 +37,8 @@
   ],
   "compounds": [
     {
-      "name": "▶ Rem: bench + avatar",
-      "configurations": ["bench", "avatar (navegador)"],
+      "name": "▶ Rem: bench_chat + avatar",
+      "configurations": ["bench_chat", "avatar (navegador)"],
       "stopAll": true
     }
   ]

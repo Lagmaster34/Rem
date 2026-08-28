@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""bench_chat.py — REPL async nativo para la capa LLM (llm/), sin Tkinter ni GUI.
+"""bench_chat.py — REPL async nativo para la capa LLM (llm/) y para probar
+lipsync/RVC/avatar, sin Tkinter ni GUI. No importa Rem.py (no se puede: el
+Python 3.10.14 del venv se compiló sin _tkinter, y Tkinter va a desaparecer
+del proyecto de todos modos) — es autocontenido, reusa lipsync.py y
+rem_avatar_server.py directo.
 
-En la línea de bench.py (banco de pruebas del lipsync/RVC/avatar sin el chat),
-pero para el otro extremo: probar stream_chat() de verdad, sin Rem.py. No lo
-importa (no se puede: el Python 3.10.14 del venv se compiló sin _tkinter, y
-Tkinter va a desaparecer del proyecto de todos modos) — es autocontenido,
-reusa lipsync.py y rem_avatar_server.py igual que bench.py.
+Antes existía bench.py aparte para probar voz/lipsync/avatar con una frase
+suelta, sin pasar por ningún LLM — el modo eco (ver más abajo) cubre
+exactamente ese caso y más, así que bench.py se eliminó (ver CLAUDE.md,
+"bench.py eliminado, absorbido por bench_chat.py + modo eco").
 
 Es el precursor del backend que va a reemplazar a Tkinter: consume
 provider.stream_chat() directo con `async for`, sin el puente sync->async de
@@ -16,12 +19,28 @@ corre en un hilo nuevo por turno — acá no hace falta, todo el REPL vive en un
     venv/bin/python bench_chat.py
     venv/bin/python bench_chat.py --no-rvc      # 'voz' sin conversión RVC
     venv/bin/python bench_chat.py --open        # abre el navegador al arrancar
+    venv/bin/python bench_chat.py --depurar-contexto-eco  # ver más abajo
 
 Comandos dentro del REPL:
-    chat <texto>       — manda <texto> al LLM, imprime la respuesta en streaming
+    chat <texto>       — manda <texto> al modo activo, imprime la respuesta en streaming
+    modo                — muestra el modo activo (ia/eco)
+    modo ia|eco          — cambia de modo en caliente, sin reiniciar (ver SesionChat)
     voz on|off          — activa/desactiva hablar la respuesta (lipsync+RVC+avatar)
     reset                — limpia el historial de la conversación
+    state <estado>      — manda ese estado al avatar (idle/talking/thinking/happy/sad/angry/surprised)
+    open                 — abre el avatar en el navegador por defecto
     quit                 — cierra limpiamente (o Ctrl+D / Ctrl+C)
+
+Modo "ia" habla con el provider configurado (llm.get_provider() — Claude,
+Groq u Ollama según .env/config.toml), con el contexto dinámico real
+(fecha/hora/estado de la PC) antepuesto a cada mensaje. Modo "eco"
+(llm.echo.EchoProvider) no llama a ningún modelo: repite tal cual el último
+mensaje, sin ese contexto — el modo eco existe para que Rem diga
+exactamente lo que se escribió (probar TTS/RVC/lipsync/avatar de punta a
+punta sin gastar tokens ni depender de que haya red o API key), así que
+anteponerlo por defecto contradiría el propósito. --depurar-contexto-eco
+lo fuerza de vuelta si hace falta ver ese bloque sin gastar tokens de un
+LLM real.
 """
 
 import argparse
@@ -43,8 +62,10 @@ import config
 import lipsync
 import personalidad
 from llm import Done, Message, TextDelta, ToolCallChunk, dividir_en_oraciones, get_provider
+from llm.echo import EchoProvider
 from rem_avatar_server import (
     HTTP_PORT, TMP_AUDIO_DIR, iniciar_avatar, cerrar_avatar, enviar_audio,
+    enviar_estado, ESTADOS_VALIDOS,
 )
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -293,7 +314,52 @@ async def _worker_habla(cola, usar_rvc):
         cola.task_done()
 
 
-async def _chat(historial, texto, provider, memoria_larga, memoria_sistema, cola_habla=None):
+MODOS_VALIDOS = ("ia", "eco")
+
+
+class SesionChat:
+    """Estado de una conversación: modo activo, provider y su historial.
+
+    Agrupados acá (en vez de variables sueltas en repl(), como estaban antes)
+    para que cambiar_modo() sea una función limpia y reusable — es el mismo
+    mecanismo que va a usar el botón de la futura ventana de chat en React
+    para alternar entre hablar con la IA de verdad y con el eco de prueba,
+    no lógica pegada a este REPL en particular. repl() es el único que sabe
+    de input()/print(); esta clase no.
+    """
+
+    def __init__(self, modo_inicial="ia"):
+        self.modo = None
+        self.provider = None
+        self.historial: list[Message] = []
+        self.cambiar_modo(modo_inicial)
+
+    def cambiar_modo(self, modo):
+        """Cambia el provider activo en caliente, sin reiniciar el proceso.
+        Devuelve True si hubo un cambio real, False si ya estaba en ese modo
+        (no-op: no pierde el historial por las dudas de un "modo ia"
+        repetido — el llamador puede usar el valor de vuelta para no decir
+        "historial limpiado" cuando no limpió nada). El historial no se
+        mezcla entre modos: se limpia al cambiar — más simple que mantener
+        dos historiales en paralelo, y evita que un modo arranque con
+        contexto real de una conversación que tuvo el otro."""
+        if modo not in MODOS_VALIDOS:
+            raise ValueError(f"modo debe ser uno de {MODOS_VALIDOS}, no {modo!r}")
+        if modo == self.modo:
+            return False
+        # get_provider() puede lanzar (p.ej. falta la API key del provider
+        # configurado, ver llm/__init__.py) — se arma el provider nuevo ANTES
+        # de tocar self.modo/self.historial, así que si falla la sesión queda
+        # exactamente como estaba, no a mitad de cambio.
+        nuevo_provider = EchoProvider() if modo == "eco" else get_provider()
+        self.modo = modo
+        self.provider = nuevo_provider
+        self.historial = []
+        return True
+
+
+async def _chat(historial, texto, provider, memoria_larga, memoria_sistema, cola_habla=None,
+                 incluir_contexto=True):
     """Manda `texto` al LLM vía stream_chat() y lo consume directo con
     `async for` — sin puente sync->async, ese es justo el punto de este
     script. Usa el mismo system prompt + contexto dinámico que preguntar_groq()
@@ -303,9 +369,19 @@ async def _chat(historial, texto, provider, memoria_larga, memoria_sistema, cola
 
     Si `cola_habla` no es None (voz activada), cada oración completa se
     encola para hablar (TTS+RVC+envío) apenas dividir_en_oraciones() la
-    detecta — no se espera a que termine el resto de la respuesta."""
-    contexto = personalidad.construir_contexto_dinamico(memoria_sistema)
-    historial.append(Message(role="user", content=f"{contexto}\n{texto}"))
+    detecta — no se espera a que termine el resto de la respuesta.
+
+    `incluir_contexto=False` (usado en modo eco, ver repl()) omite el bloque
+    de fecha/hora/estado de la PC: ese bloque existe para informarle al LLM,
+    y en modo eco no hay LLM — anteponerlo igual solo hace que Rem lea en
+    voz alta el porcentaje de CPU, que no es lo que pide el modo eco (repetir
+    tal cual lo que se escribió). El default sigue siendo True porque en modo
+    ia el contexto real sí hace falta."""
+    if incluir_contexto:
+        contexto = personalidad.construir_contexto_dinamico(memoria_sistema)
+        historial.append(Message(role="user", content=f"{contexto}\n{texto}"))
+    else:
+        historial.append(Message(role="user", content=texto))
 
     system = personalidad.construir_prompt_sistema(memoria_larga)
     estado = _TurnoHabla() if cola_habla is not None else None
@@ -342,20 +418,23 @@ async def _chat(historial, texto, provider, memoria_larga, memoria_sistema, cola
 
 def _imprimir_ayuda():
     print()
-    print(f"  Abrí {URL_AVATAR} en un navegador normal para ver el avatar (o usá 'open' si lo agregás).")
+    print(f"  Abrí {URL_AVATAR} en un navegador normal para ver el avatar (o usá el comando 'open').")
     print()
     print("  Comandos:")
-    print("    chat <texto>       — manda <texto> al LLM, respuesta en streaming")
+    print("    chat <texto>       — manda <texto> al modo activo, respuesta en streaming")
+    print("    modo                — muestra el modo activo (ia/eco)")
+    print("    modo ia|eco          — cambia de modo en caliente, sin reiniciar")
     print("    voz on|off          — activa/desactiva hablar la respuesta (lipsync+RVC+avatar)")
     print("    reset                — limpia el historial de la conversación")
+    print(f"    state <estado>    — manda ese estado ({'/'.join(sorted(ESTADOS_VALIDOS))})")
+    print("    open               — abre el avatar en el navegador por defecto")
     print("    quit                 — cierra limpiamente (o Ctrl+D / Ctrl+C)")
     print()
 
 
 async def repl(args):
     _imprimir_ayuda()
-    provider = get_provider()
-    historial: list[Message] = []
+    sesion = SesionChat(modo_inicial="ia")
     voz_activa = False
     loop = asyncio.get_running_loop()
 
@@ -393,13 +472,35 @@ async def repl(args):
                 if not resto:
                     log("uso: chat <texto>")
                     continue
+                # En modo eco no hay LLM que necesite el contexto dinámico
+                # (fecha/hora/estado de la PC) — incluirlo igual solo hace
+                # que Rem lo repita en voz alta. --depurar-contexto-eco lo
+                # fuerza de vuelta si hace falta ver ese bloque sin gastar
+                # tokens de un LLM real.
+                incluir_contexto = sesion.modo != "eco" or args.depurar_contexto_eco
                 try:
                     await _chat(
-                        historial, resto, provider, memoria_larga, memoria_sistema,
+                        sesion.historial, resto, sesion.provider, memoria_larga, memoria_sistema,
                         cola_habla=cola_habla if voz_activa else None,
+                        incluir_contexto=incluir_contexto,
                     )
                 except Exception as e:
                     log(f"error: {e}")
+
+            elif comando == "modo":
+                valor = resto.lower()
+                if not valor:
+                    log(f"modo activo: {sesion.modo}")
+                    continue
+                try:
+                    if sesion.cambiar_modo(valor):
+                        log(f"modo -> {sesion.modo} (historial limpiado)")
+                    else:
+                        log(f"ya estaba en modo {sesion.modo}")
+                except ValueError as e:
+                    log(f"{e} (uso: modo ia|eco)")
+                except Exception as e:
+                    log(f"no se pudo cambiar a modo {valor!r}: {e}")
 
             elif comando == "voz":
                 valor = resto.lower()
@@ -410,11 +511,22 @@ async def repl(args):
                 log(f"voz -> {'activada' if voz_activa else 'desactivada'}")
 
             elif comando == "reset":
-                historial.clear()
+                sesion.historial.clear()
                 log("historial limpiado")
 
+            elif comando == "state":
+                estado = resto.lower()
+                if estado not in ESTADOS_VALIDOS:
+                    log(f"estado inválido. usar uno de: {', '.join(sorted(ESTADOS_VALIDOS))}")
+                    continue
+                enviar_estado(estado)
+                log(f"estado -> {estado}")
+
+            elif comando == "open":
+                _abrir_navegador()
+
             else:
-                log(f"comando desconocido: {comando!r} (usa chat / voz / reset / quit)")
+                log(f"comando desconocido: {comando!r} (usa chat / modo / voz / reset / state / open / quit)")
     finally:
         # Deja que las oraciones ya encoladas terminen de hablarse (hasta 5s)
         # en vez de cortarlas a mitad de camino al salir.
@@ -429,6 +541,10 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--no-rvc", action="store_true", help="'voz' salta la conversión RVC (más rápido)")
     p.add_argument("--open", action="store_true", help="abre el navegador automáticamente al arrancar")
+    p.add_argument("--depurar-contexto-eco", action="store_true",
+                    help="incluye el contexto dinámico (fecha/hora/estado de la PC) también en "
+                         "modo eco — apagado por defecto, solo para depurar ese bloque sin gastar "
+                         "tokens de un LLM real")
     args = p.parse_args()
 
     if not sys.executable.replace("\\", "/").endswith("venv/bin/python"):

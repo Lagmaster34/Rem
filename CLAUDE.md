@@ -35,9 +35,9 @@ no basta con copiar la carpeta.
 | `fairseq_shim/checkpoint_utils.py` | Fork de fairseq con `torch.load(weights_only=False)` |
 | `apply_shim.py` | Copia `fairseq_shim/` sobre el fairseq instalado en `venv/`. Ejecutar tras cualquier reinstalación de fairseq |
 | `llm/` | Capa de abstracción de LLM (contrato + providers). Ver "Capa de abstracción de LLM" más abajo |
-| `config.py` | Módulo compartido: carga `.env` y lee `config.toml`. Lo usan `Rem.py`, `bench.py` y `bench_chat.py` — ninguno de los otros dos puede importar `Rem.py` (ver más abajo), así que sin esto no verían las variables de entorno |
+| `config.py` | Módulo compartido: carga `.env` y lee `config.toml`. Lo usa `Rem.py` y `bench_chat.py` — `bench_chat.py` no puede importar `Rem.py` (ver más abajo), así que sin esto no vería las variables de entorno |
 | `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — hoy solo `[llm]` / `[llm.claude]` |
-| `bench_chat.py` | REPL async nativo para probar la capa `llm/` sin Tkinter. Ver "Capa de abstracción de LLM" más abajo |
+| `bench_chat.py` | REPL async nativo: prueba la capa `llm/` (modo ia) y voz/lipsync/avatar (modo eco), sin Tkinter. Ver "Capa de abstracción de LLM" más abajo y "bench.py eliminado" más abajo |
 
 ## Capa de abstracción de LLM (`llm/`)
 Contrato común para poder cambiar de backend (Claude, Groq, un modelo local a futuro) sin tocar
@@ -157,19 +157,59 @@ cual al `except` de `extraer_memoria_importante()` y se loguea, sin tumbar el hi
 **`config.py`** (módulo compartido, en la raíz, no en `llm/`): `cargar_dotenv()` (carga `.env` al
 entorno vía `os.environ.setdefault`, tolera valores con `=` dentro gracias a `split("=", 1)` — las
 API keys pueden llevarlo) y `leer_config_toml()` (parsea `config.toml` con `tomlkit`). Existe porque
-`bench.py` y `bench_chat.py` no pueden importar `Rem.py` (ver "Banco de pruebas" más abajo) y antes
-no veían ninguna variable de `.env` — `llm/__init__.py` también lo usa para leer `config.toml`, en
-vez de tener su propia lectura duplicada.
+`bench_chat.py` no puede importar `Rem.py` (ver "Banco de pruebas" más abajo) y antes no veía
+ninguna variable de `.env` — `llm/__init__.py` también lo usa para leer `config.toml`, en vez de
+tener su propia lectura duplicada.
 
 **Banco de pruebas sin Tkinter (`bench_chat.py`)**: el Python 3.10.14 del venv se compiló sin
 `_tkinter`, así que `Rem.py` no arranca ni se puede importar en este entorno (y Tkinter va a
-desaparecer del proyecto de todos modos). `bench_chat.py` es el REPL async nativo para probar
-`llm/` en aislamiento — en la línea de `bench.py` (que prueba lipsync/RVC/avatar sin el chat), pero
-para el LLM: `chat <texto>` llama a `stream_chat()` directo con `async for` (sin el puente
-sync→async, no hace falta: todo el REPL vive en un único `asyncio.run()`), `voz on|off` encadena la
-respuesta al pipeline de voz existente (`lipsync.py` + RVC + `enviar_audio` de
-`rem_avatar_server.py`, reusados tal cual), `reset` limpia el historial y `quit` cierra. Arranca el
-avatar exactamente igual que `bench.py` (`config.cargar_dotenv()` → `iniciar_avatar()`).
+desaparecer del proyecto de todos modos). `bench_chat.py` es el REPL async nativo que cubre tanto
+`llm/` como voz/lipsync/avatar, con dos modos alternables en caliente (`SesionChat.cambiar_modo()`,
+ver "bench.py eliminado" más abajo): `chat <texto>` llama a `stream_chat()` directo con `async for`
+(sin el puente sync→async, no hace falta: todo el REPL vive en un único `asyncio.run()`), `voz
+on|off` encadena la respuesta al pipeline de voz existente (`lipsync.py` + RVC + `enviar_audio` de
+`rem_avatar_server.py`, reusados tal cual), `state <estado>` / `open` controlan el avatar
+directamente, `reset` limpia el historial y `quit` cierra. Arranca el avatar con
+`config.cargar_dotenv()` → `iniciar_avatar()`.
+
+## Modo eco (`llm/echo.py`) y `bench.py` eliminado
+`EchoProvider` implementa el contrato de `LLMProvider` sin llamar a ningún modelo: busca el último
+`Message` con `role="user"` en la lista (no asume que sea el último elemento, aunque en el uso normal
+lo es) y lo emite tal cual como un único `TextDelta`, ignorando `system` y `tools` por completo, y
+cierra con `Done(reason="stop")`. Sin estado, sin cliente HTTP, sin API key — nada que inicializar.
+Registrado en el factory (`llm/__init__.py`) como provider `"echo"`, sin requerir configuración.
+Sirve para que Rem repita con su voz lo que se escriba, sin IA de por medio: prueba TTS/RVC/lipsync/
+avatar de punta a punta sin gastar tokens ni depender de que haya red o API key.
+
+**`SesionChat` (en `bench_chat.py`)** agrupa `modo`/`provider`/`historial` y expone
+`cambiar_modo(modo) -> bool` (`True` si hubo un cambio real, `False` si ya estaba en ese modo — el
+REPL usa el valor de vuelta para no decir "historial limpiado" cuando no limpió nada) como una
+función limpia, sin nada de `input()`/`print()` — el mismo mecanismo que va a usar el botón de la
+futura ventana de chat en React para alternar entre la IA de verdad y el eco de prueba, no lógica
+pegada a este REPL en particular. El historial no se mezcla entre modos: se limpia al cambiar (más
+simple que mantener dos historiales en paralelo). Atomicidad: el provider nuevo se arma (`EchoProvider()`
+o `get_provider()`, que puede lanzar si falta una API key) **antes** de tocar `self.modo`/
+`self.historial` — si falla, la sesión queda exactamente como estaba, no a mitad de cambio.
+
+**El contexto dinámico no se antepone en modo eco**: `_chat()` normalmente antepone
+`construir_contexto_dinamico()` (fecha/hora/estado de la PC) al mensaje del usuario antes de
+guardarlo en el historial, porque ese bloque existe para informarle al LLM — pero en modo eco no hay
+LLM, así que incluirlo igual solo lograba que Rem leyera en voz alta el porcentaje de CPU, en contra
+del propósito del modo (repetir tal cual lo que se escribió). `_chat()` ahora recibe
+`incluir_contexto: bool` (default `True`, sin cambios para modo ia); `repl()` calcula
+`sesion.modo != "eco"` para decidirlo. `--depurar-contexto-eco` (apagado por defecto) lo fuerza de
+vuelta si hace falta ver ese bloque específicamente sin gastar tokens de un LLM real.
+
+**`bench.py` eliminado**: existía para probar voz/lipsync/avatar con una frase suelta, sin pasar por
+ningún LLM — exactamente lo que cubre el modo eco de `bench_chat.py`, y más (además tiene modo ia,
+`voz on/off`, `SentenceSplitter`, etc.). Antes de borrarlo se comparó comando por comando contra
+`bench_chat.py`: tenía dos que no existían del otro lado, `state <estado>` (dispara manualmente un
+estado emocional del avatar) y `open` (abre el navegador en cualquier momento de la sesión, no solo
+al arrancar) — los dos se portaron a `bench_chat.py` antes de borrar `bench.py`. Diferencia menor de
+comportamiento que no se portó: `bench.py`'s `say` sintetizaba el texto completo como una sola unidad
+TTS/RVC; `bench_chat.py` siempre pasa por `dividir_en_oraciones()`, así que un texto con varias
+oraciones se parte en llamadas `_decir()` separadas — sin efecto perceptible con texto normal, solo
+importa para probar la síntesis de una frase larga sin cortes.
 
 ## Personalidad de Rem (`personalidad.py`)
 `_INSTRUCCIONES_BASE` prioriza dos reglas por encima de todo (longitud y honestidad, en ese orden,
@@ -451,8 +491,8 @@ que `num_gpu=28` deja tok/s (~25,8) muy por encima del piso aceptable sin sacrif
 
 `device` en `config.toml` → `[rvc]` vuelve a `"cuda"` por defecto (`"cpu"` sigue disponible: sirve
 si el provider activo no es `ollama`, o para liberar toda la GPU por algún otro motivo) — vía
-`config.leer_dispositivo_rvc()`, aplicado en `bench.py`, `bench_chat.py`, `test_voz.py` y `Rem.py`
-(los cuatro construyen su `BaseLoader` con `only_cpu=(dispositivo == "cpu")`). Verificado en vivo
+`config.leer_dispositivo_rvc()`, aplicado en `bench_chat.py`, `test_voz.py` y `Rem.py`
+(los tres construyen su `BaseLoader` con `only_cpu=(dispositivo == "cpu")`). Verificado en vivo
 end-to-end tras el cambio: LLM (`num_gpu=28`) → `SentenceSplitter` → RVC en CUDA, dos oraciones de
 una respuesta real, ambas convertidas sin OOM.
 
@@ -500,7 +540,7 @@ de una sesión tardaba ~16,5s (carga de RVC + primera conversión en frío) mien
 esperaba, y el log mostraba `Loading .../Rem_600e_6600s.pth` antes de **cada** conversión — con el
 splitter mandando una oración a la vez, eso es una recarga del modelo por oración, no por respuesta.
 
-**Causa de la recarga**: `BaseLoader.__call__()` (el método que `bench.py`/`bench_chat.py` usaban)
+**Causa de la recarga**: `BaseLoader.__call__()` (el método que `bench_chat.py` usaba)
 guarda el tag de la última conversión en `cache_params`, una **variable local** que se reinicializa
 a `None` al entrar a `__call__()` — así que aunque el tag (`"rem"`) nunca cambia entre llamadas,
 la condición `cache_params != id_tag` es `True` siempre, y `load_trained_model()` (con su
@@ -509,7 +549,7 @@ la condición `cache_params != id_tag` es `True` siempre, y `load_trained_model(
 guarda el estado equivalente en `self.cache_model`/`self.model_vc` (atributos de instancia, no
 variables locales) y compara con `!=` antes de recargar: como la config de `"rem"` nunca cambia
 tras el `apply_conf()` inicial, la carga real solo ocurre una vez por instancia de `BaseLoader`.
-`bench.py` y `bench_chat.py` ahora llaman a `generate_from_cache(audio_data=<ruta_wav>, tag="rem")`
+`bench_chat.py` ahora llama a `generate_from_cache(audio_data=<ruta_wav>, tag="rem")`
 en vez de `__call__(audio_files=[...], type_output="wav")` — con `type_output` fijo en `"array"`
 dentro de ese método, devuelve `(audio_int16, sample_rate)` directo en vez de escribir un archivo,
 así que `_decir()` lo escribe a wav con `sf.write()` antes de mandarlo a `enviar_audio()`.
@@ -524,11 +564,11 @@ excepción de verdad, con su mensaje, en vez de desaparecer en silencio. `_decir
 tolerándolo igual que antes (`except Exception` alrededor de la conversión, cae a la voz cruda de
 edge-tts sin convertir para esa oración), pero ahora el log de fallback trae el motivo real.
 
-**Precarga en el arranque**: `_precargar_rvc()` (nueva función en ambos scripts) carga RVC y hace
+**Precarga en el arranque**: `_precargar_rvc()` carga RVC y hace
 una conversión de calentamiento descartable (frase fija `"Hola."`) en un hilo de fondo
 (`threading.Thread(daemon=True)`), lanzado en `main()` antes de `iniciar_avatar()` para solaparse
 con el arranque del servidor HTTP/WS y el subproceso del overlay en vez de sumarse después. Así,
-para cuando el usuario escribe su primer `chat`/`say` real, tanto la carga del modelo (`import
+para cuando el usuario escribe su primer `chat` real, tanto la carga del modelo (`import
 torch`/`faiss`, `Config()`) como el primer `generate_from_cache()` en frío (el más caro: incluye
 `torch.load()` del `.pth`, cargar el estimador de pitch `RMVPE` y leer el `.index`) ya se pagaron
 en background.
@@ -536,7 +576,7 @@ en background.
 **Bug de concurrencia encontrado al combinar ambos cambios, y su arreglo**: `BaseLoader` no es
 thread-safe entre llamadas concurrentes — ni `generate_from_cache()` ni la carga perezosa del
 estimador de pitch (`self.model_pitch_estimator`) tienen lock propio. Con el hilo de precarga y una
-petición real llegando casi al mismo tiempo (probado en vivo mandando un `say` a los 2s de
+petición real llegando casi al mismo tiempo (probado en vivo mandando un `chat` a los 2s de
 arrancar, antes de que la precarga terminara), **ambos hilos vieron el cache vacío a la vez** y
 recargaron el `.pth` y el `RMVPE` por duplicado (`Loading .../Rem_600e_6600s.pth` y `Loading vocal
 pitch estimator model` aparecían dos veces seguidas en el log). Arreglado serializando **toda**
@@ -545,9 +585,9 @@ llamada a RVC — tanto la carga inicial (`_obtener_rvc()`) como cada conversió
 `threading.Lock()` (`_rvc_lock`). No hay costo real: las dos rutas comparten la misma GPU/CPU, así
 que no había paralelismo que ganar corriéndolas a la vez, solo una carrera a evitar. Verificado en
 vivo tras el fix: una sola aparición de cada línea `Loading`, sin duplicados, en varias corridas
-seguidas de `bench.py` y `bench_chat.py`.
+seguidas de `bench_chat.py`.
 
-**Medido en vivo, esta máquina, GPU** (`bench.py`, con la precarga corriendo de fondo mientras el
+**Medido en vivo, esta máquina, GPU** (`bench_chat.py`, con la precarga corriendo de fondo mientras el
 REPL ya está disponible):
 - Carga del objeto `BaseLoader` (`import torch`/`faiss` + `Config()`): ~3,2-6,2s (varía entre
   corridas, primer import de estas libs en el proceso).
@@ -556,9 +596,8 @@ REPL ya está disponible):
 - **Primera conversión real del usuario, después de que la precarga ya terminó**: **0,88s** — misma
   velocidad que las conversiones subsiguientes (antes del fix, la primera conversión de la sesión
   costaba ~11-16s, todo pagado en el momento en que el usuario ya está esperando la respuesta).
-- Con `bench_chat.py` el patrón es idéntico: calentamiento de fondo en ~9s, una sola aparición de
-  cada `Loading`, sin bloquear el prompt del REPL (queda disponible de inmediato, antes de que
-  termine la precarga).
+- El prompt del REPL queda disponible de inmediato, antes de que termine la precarga (corre en un
+  hilo de fondo, ver más arriba) — no bloquea el arranque.
 
 ## Datos del modelo rem.vrm
 Extraído con `dump_vrm.py`. `rem.vrm` es **VRM 0.x** (usa `extensions.VRM`, no `VRMC_vrm`).
@@ -710,7 +749,7 @@ código nuevo por delante en el bloque y volvió a romperlo, la MISMA clase de f
 pasado una vez antes.
 
 **La causa real no era el orden del bloque — el diagnóstico original quedó incompleto.**
-Investigando en vivo (Hyprland real, probando `say` con `bench.py` y leyendo el log del overlay)
+Investigando en vivo (Hyprland real, probando `chat` con `bench_chat.py` y leyendo el log del overlay)
 con el orden ya arreglado (`WebKit2.Settings()` armado aparte, completo, antes de crear el WebView
 vía `WebKit2.WebView.new_with_settings(settings)` — así el orden interno de los `set_*` deja de
 importar) **el `NotAllowedError` seguía pasando igual**. `WebKitSettings:media-playback-requires-
@@ -793,26 +832,25 @@ escritorio — con las ~103 cadenas de spring bones de este modelo, costo consta
   vuelve a las anclas originales solo. `BORDE_IZQ`/`BORDE_DER` en `tickPet()` pasaron de `const`
   cacheadas a leer `CONFIG.pet.walkLeft`/`walkRight` en vivo, si no el ajuste no tenía efecto ahí.
 
-## Arranque del overlay: sin divergencia entre bench.py y bench_chat.py, pero riesgo de conflicto de puertos
-Investigado tras un reporte de que `bench.py` había dejado de lanzar el overlay mientras
-`bench_chat.py` sí lo hacía. Probado en vivo (Hyprland real, no headless) corriendo cada script por
-separado con stdin cerrado tras ~10s: **ambos cargan el overlay de forma idéntica y exitosa** —
-mismo `rem_overlay.log` (VRM cargado, WS conectado, expresiones resueltas), sin ningún error. La
-secuencia de arranque del avatar es byte-a-byte la misma en los dos (`config.cargar_dotenv()` →
-`iniciar_avatar()` → `_abrir_navegador()` opcional) desde que `bench.py` también empezó a llamar a
-`config.cargar_dotenv()`, así que ese cambio no es la causa — no se pudo reproducir el reporte
-original en este entorno.
+## Riesgo de conflicto de puertos si hay más de un proceso con el overlay
+Investigado tras un reporte de que el overlay había dejado de lanzarse en un lanzamiento del REPL
+(en su momento con dos scripts equivalentes, `bench.py` y `bench_chat.py` — el primero ya no existe,
+ver "bench.py eliminado" más abajo). Probado en vivo (Hyprland real, no headless) con stdin cerrado
+tras ~10s: el overlay cargó de forma idéntica y exitosa en ambos — mismo `rem_overlay.log` (VRM
+cargado, WS conectado, expresiones resueltas), sin ningún error. La secuencia de arranque del avatar
+era byte-a-byte la misma en los dos (`config.cargar_dotenv()` → `iniciar_avatar()` →
+`_abrir_navegador()` opcional) — no se pudo reproducir el reporte original en este entorno.
 
 **Riesgo real encontrado en el camino** (no confirmado como la causa de aquel reporte, pero sí un
-bug latente): `rem_avatar_server.py._iniciar_ws()` llama a `_ws_ready.set()` **antes** de intentar
-`websockets.serve(...)`. Si el puerto `:18766` ya está ocupado (p.ej. porque `bench.py`,
+bug latente, y sigue vigente): `rem_avatar_server.py._iniciar_ws()` llama a `_ws_ready.set()`
+**antes** de intentar `websockets.serve(...)`. Si el puerto `:18766` ya está ocupado (p.ej. porque
 `bench_chat.py` o `Rem.py` ya está corriendo en otra terminal), `websockets.serve()` lanza una
 excepción dentro del hilo daemon `AvatarWS` — que muere en silencio (una excepción no capturada en
 un `threading.Thread` no se propaga al hilo principal) — pero `_ws_ready` ya quedó en `True` desde
 antes de ese fallo. `iniciar_avatar()` nunca se entera: `_lanzar_overlay()` se llama igual, y el
 overlay termina intentando hablarle a un WebSocket que en ESTE proceso nunca llegó a levantar (aunque
 sí puede haber uno ajeno, del otro proceso, sirviendo ese mismo puerto). Si dos instancias de
-Rem/bench/bench_chat corren en simultáneo, la segunda puede terminar así — con un overlay que se ve
+Rem/bench_chat corren en simultáneo, la segunda puede terminar así — con un overlay que se ve
 "no funcionar" sin ningún error visible. No se tocó porque no se confirmó que sea la causa real del
 reporte; si vuelve a pasar, revisar primero si hay más de un proceso corriendo a la vez.
 
@@ -858,7 +896,7 @@ reintenta con `setTimeout` tras `min(500 * 2**intento, 5000)` ms (mismo patrón 
 tope — que el retry de `load-failed` en `rem_overlay.py`); al agotar los 5 intentos loguea
 `"no se pudo cargar tras 5 intentos"` y se rinde, en vez de reintentar para siempre.
 
-**Verificado en vivo, tres escenarios** (con `bench.py`, cache de WebKit limpiada entre corridas en
+**Verificado en vivo, tres escenarios** (con `bench_chat.py`, cache de WebKit limpiada entre corridas en
 `~/.cache/rem_overlay.py/WebKitCache` para no servir una copia vieja de `rem_avatar.html` — la
 cache en disco de WebKit2GTK persiste entre lanzamientos del proceso y puede enmascarar cambios
 recién hechos al archivo si no se limpia):

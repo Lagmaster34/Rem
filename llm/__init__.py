@@ -81,7 +81,11 @@ def get_provider() -> LLMProvider:
             },
         )
 
+    if proveedor == "echo":
+        from .echo import EchoProvider
+        return EchoProvider()
+
     raise ValueError(
         f"Proveedor de LLM desconocido: '{proveedor}'. "
-        "Implementados: 'groq', 'claude', 'ollama'."
+        "Implementados: 'groq', 'claude', 'ollama', 'echo'."
     )
