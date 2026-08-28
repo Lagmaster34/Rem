@@ -175,33 +175,55 @@ def _rotar_memoria_sistema():
         memoria_sistema["carpetas"] = memoria_sistema["carpetas"][-(_MEM_SIS_MAX // 2):]
 
 def registrar_archivo_sistema(nombre, ruta):
-    """Guarda nombre → ruta en la memoria del sistema."""
+    """Guarda nombre → ruta en la memoria del sistema.
+
+    _ruta_segura() de por medio a propósito: esta memoria no es un resultado
+    de una sola vez, se reinyecta tal cual en el prompt de CADA turno futuro
+    (construir_contexto_dinamico() en personalidad.py lee memoria_sistema
+    directo, sin filtrar nada) — así que una sola entrada indebida acá (p.ej.
+    "id_rsa" → ~/.ssh/id_rsa, si algún llamador se olvida de filtrar antes de
+    registrar) queda expuesta para siempre, no solo en esa respuesta. Esta es
+    la única función que escribe en memoria_sistema["archivos"], así que
+    filtrar acá alcanza para todos los llamadores, presentes y futuros."""
+    ok, _ = _ruta_segura(ruta, permitir_raiz=True)
+    if not ok:
+        return
     memoria_sistema["archivos"][nombre] = ruta
     _rotar_memoria_sistema()
     guardar_memoria_sistema()
 
 def registrar_carpeta_sistema(ruta):
-    """Añade una ruta de carpeta a la memoria del sistema (sin duplicados)."""
+    """Añade una ruta de carpeta a la memoria del sistema (sin duplicados).
+    Mismo filtro y mismo motivo que registrar_archivo_sistema()."""
+    ok, _ = _ruta_segura(ruta, permitir_raiz=True)
+    if not ok:
+        return
     if ruta not in memoria_sistema["carpetas"]:
         memoria_sistema["carpetas"].append(ruta)
         _rotar_memoria_sistema()
         guardar_memoria_sistema()
 
 def buscar_en_memoria_sistema(nombre):
-    """Devuelve la ruta si el archivo/carpeta ya está en memoria. None si no."""
+    """Devuelve la ruta si el archivo/carpeta ya está en memoria. None si no.
+
+    Filtra con _ruta_segura() como segunda capa (registrar_archivo_sistema()
+    ya no debería dejar entrar una ruta prohibida, pero esto cubre entradas
+    que hayan quedado de antes de este chequeo, o de una edición manual del
+    JSON) — y si encuentra una entrada así, la borra en vez de solo omitirla,
+    para que no siga apareciendo en construir_contexto_dinamico() tampoco."""
     # Buscar por nombre exacto primero
     if nombre in memoria_sistema["archivos"]:
         ruta = memoria_sistema["archivos"][nombre]
-        if os.path.exists(ruta):
-            return ruta
-        else:
-            del memoria_sistema["archivos"][nombre]   # entrada obsoleta
+        if not os.path.exists(ruta) or not _ruta_segura(ruta, permitir_raiz=True)[0]:
+            del memoria_sistema["archivos"][nombre]   # entrada obsoleta o no permitida
             guardar_memoria_sistema()
+        else:
+            return ruta
     # Buscar por nombre aproximado
     nombre_lower = nombre.lower()
     for k, v in list(memoria_sistema["archivos"].items()):
         if nombre_lower in k.lower() or nombre_lower in v.lower():
-            if os.path.exists(v):
+            if os.path.exists(v) and _ruta_segura(v, permitir_raiz=True)[0]:
                 return v
     return None
 
@@ -748,6 +770,17 @@ def _ruta_segura(ruta, permitir_raiz=False):
             return False, f"No puedo tocar {d} (ruta protegida)."
     return True, ruta
 
+
+def _filtrar_rutas_seguras(rutas):
+    """Filtra una lista de rutas (p.ej. resultados de glob.glob), quedándose
+    solo con las que pasan _ruta_segura(). glob.glob() no sabe nada de la
+    lista negra ni del límite de $HOME — validar la CARPETA base de una
+    búsqueda no alcanza, porque "**" recursivo igual encuentra archivos
+    dentro de ~/.ssh o ~/.config si están debajo de esa base. Sin este
+    filtro, buscar "id_rsa" o ".env" devolvía la ruta real dentro de la
+    lista negra tal cual."""
+    return [r for r in rutas if _ruta_segura(r, permitir_raiz=True)[0]]
+
 _GIT_SUBCOMANDOS_PERMITIDOS = {"status", "log", "diff", "show"}
 _SYSTEMCTL_SUBCOMANDOS_PERMITIDOS = {"status", "list-units", "list-unit-files",
                                      "is-active", "is-enabled", "is-failed", "show"}
@@ -1019,7 +1052,14 @@ def ejecutar_accion(datos):
         if en_memoria:
             return f"Ya sé dónde está '{arch}': {en_memoria}"
         try:
-            res = glob.glob(os.path.join(base, "**", arch), recursive=True)
+            res_crudo = glob.glob(os.path.join(base, "**", arch), recursive=True)
+            # base ya pasó por _ruta_segura(), pero eso solo valida el punto
+            # de partida — "**" recursivo puede encontrar coincidencias
+            # dentro de ~/.ssh, ~/.config, etc. igual. Filtrar acá, no solo
+            # confiar en que registrar_archivo_sistema() lo haga después: el
+            # mensaje de vuelta con las rutas crudas ya sería una fuga, más
+            # allá de lo que quede o no guardado en memoria.
+            res = _filtrar_rutas_seguras(res_crudo)
             if res:
                 registrar_archivo_sistema(arch, res[0])
             return (f"Encontré {len(res)}:\n" + "\n".join(res[:5])) if res else f"No encontré '{arch}'."

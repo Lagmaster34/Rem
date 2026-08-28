@@ -308,6 +308,18 @@ rem_avatar_server.py (daemon thread desde Rem.py)
   `_ruta_segura()` con `permitir_raiz=False` — mismo límite que mover/copiar/eliminar. Efecto
   secundario a tener en cuenta: `ls ~`/`find .` (apuntando literalmente a la raíz del home) también
   quedan bloqueados por esto, no solo los casos destructivos.
+- **`buscar` filtra también los resultados del `glob.glob()`, no solo la carpeta base**
+  (`_filtrar_rutas_seguras()`): validar la carpeta de partida con `_ruta_segura()` no alcanza, porque
+  `"**"` recursivo encuentra coincidencias dentro de `~/.ssh`/`~/.config`/etc. igual si están debajo
+  de esa base — antes, buscar `"id_rsa"` o `".env"` devolvía la ruta real dentro de la lista negra tal
+  cual, tanto en la respuesta como cacheada en `memoria_sistema.json`. Como defensa en profundidad,
+  `registrar_archivo_sistema()`/`registrar_carpeta_sistema()` (los únicos dos lugares que escriben en
+  `memoria_sistema`) también rechazan una ruta que no pase `_ruta_segura()`, y
+  `buscar_en_memoria_sistema()` filtra (y borra) cualquier entrada que ya esté adentro y no pase el
+  chequeo — importante porque `construir_contexto_dinamico()` en `personalidad.py` reinyecta
+  `memoria_sistema` completo en el prompt de cada turno futuro sin filtrar nada: una entrada indebida
+  ahí no es una fuga de una sola vez, queda expuesta en todas las respuestas siguientes hasta que se
+  borre a mano.
 - `descargar_archivo()`: sanea `nombre` con `os.path.basename()` — sin esto, un `nombre` con `../../`
   escribía el contenido descargado fuera de `~/Descargas`.
 - `eliminar_archivo` mueve a la papelera de XDG (`~/.local/share/Trash`, con su `.trashinfo`) en vez de
@@ -321,9 +333,12 @@ rem_avatar_server.py (daemon thread desde Rem.py)
 
 Los cuatro huecos detectados en la auditoría previa (`ejecutar_comando` sin validar argumentos,
 `crear_carpeta` y `buscar` sin pasar por `_ruta_segura()`, `descargar_archivo` sin sanear `nombre`)
-quedaron cerrados en esta pasada. Si en el futuro se agrega una acción nueva que reciba una ruta
-directo del JSON del LLM, ese es el lugar a revisar: pasarla por `_ruta_segura()` antes de usarla,
-no asumir que el patrón ya está cubierto en todos lados.
+quedaron cerrados en esa pasada. Una revisión posterior encontró que validar la carpeta base de
+`buscar` no alcanzaba (ver el bullet de `_filtrar_rutas_seguras()` más arriba) — cerrado también. Si
+en el futuro se agrega una acción nueva que reciba una ruta directo del JSON del LLM, o que devuelva
+una lista de rutas encontradas en vez de una sola, ese es el lugar a revisar: pasarla (o filtrarla)
+por `_ruta_segura()` antes de usarla o devolverla, no asumir que el patrón ya está cubierto en todos
+lados.
 
 **`memoria_sistema.json` ya no se trackea en git** (`git rm --cached`, el `.gitignore` ya tenía
 `memoria_*.json` pero no aplica retroactivamente a un archivo agregado antes de esa regla) — el
