@@ -15,6 +15,18 @@ import { GLTFLoader }    from 'https://esm.sh/three@0.169.0/examples/jsm/loaders
 import { VRMLoaderPlugin, VRMUtils } from 'https://esm.sh/@pixiv/three-vrm@2';
 
 // ═══════════════════════════════════════════════════
+// MODO: ?modo=overlay|ventana (overlay por defecto)
+// ═══════════════════════════════════════════════════
+// overlay: rem_overlay.py — layer surface transparente, click-through, sin
+//          suelo, encuadre angosto (ver CLAUDE.md).
+// ventana: rem_chat.py — ventana GTK normal, decorada y opaca, con suelo de
+//          cuadrícula synthwave y Rem centrada en el tercio izquierdo.
+// Un solo motor para las dos: nada de duplicar este archivo por modo.
+const _modoParam = new URLSearchParams(location.search).get('modo');
+const MODO = (_modoParam === 'ventana') ? 'ventana' : 'overlay';
+console.log(`[Modo] activo: ${MODO}${_modoParam && _modoParam !== MODO ? ` (param ?modo=${_modoParam} no reconocido, default overlay)` : ''}`);
+
+// ═══════════════════════════════════════════════════
 // CONFIGURACIÓN CENTRALIZADA
 // ═══════════════════════════════════════════════════
 const CONFIG = {
@@ -22,10 +34,26 @@ const CONFIG = {
   // deriva de la altura real medida del modelo (Box3) + estas anclas normalizadas.
   camera:  { fov: 28 },
   pet:     {
-    anchorX: 0.82, anchorY: 0.55,       // posición de reposo, fracción de pantalla (0=izq/arriba, 1=der/abajo)
-    walkLeft: 0.62, walkRight: 0.95,    // rango de caminata, misma fracción normalizada
-    alturaPantalla: 0.45,               // fracción del alto de pantalla que debe ocupar Rem
-    velocity: 0.18,                     // fracción de pantalla por segundo
+    anchorY: 0.55,           // altura de reposo, fracción de pantalla (0=arriba, 1=abajo)
+    alturaPantalla: 0.45,    // fracción del alto de pantalla que debe ocupar Rem
+  },
+  // anchorX por modo: sin caminata (ver "eliminar la caminata" en CLAUDE.md),
+  // la posición horizontal es fija, así que alcanza con un valor por modo en
+  // vez de un rango de caminata.
+  modos: {
+    overlay: { anchorX: 0.5,   suelo: false },  // superficie angosta dedicada, centrado
+    ventana: { anchorX: 1 / 6, suelo: true  },  // centrada en el tercio izquierdo del ancho
+  },
+  // Suelo de cuadrícula synthwave — solo en modo "ventana" (ver crearSueloSynthwave()).
+  // Nada de reflejos ni post-procesado: GPU justa (ver CLAUDE.md, calibración de VRAM).
+  suelo: {
+    colorLinea:     0x2be8ff,  // cian brillante
+    colorHorizonte: 0x9be8ff,  // línea de horizonte, más clara que el resto de la cuadrícula
+    colorFondo:     0x05000f,  // casi negro con un tinte violeta sutil
+    tamano: 40,       // lado del área cuadriculada, en unidades de mundo
+    divisiones: 40,
+    nieblaCerca: 3.0, // arranca justo detrás de Rem — a ella no la toca
+    nieblaLejos: 16,  // a partir de acá el suelo ya se perdió en el fondo
   },
   ws:      { port: 18766, retryDelay: 1500, maxRetries: 10 },
   lighting: {
@@ -34,14 +62,49 @@ const CONFIG = {
     fill:    { color: 0x8899ff, intensity: 0.6, pos: [-2, 1, 0.5] },
     rim:     { color: 0xffffff, intensity: 0.3, pos: [0, 2, -2] },
   },
+  // Brazos/antebrazos — todo en radianes. Ver "BRAZOS ACOPLADOS AL CUERPO"
+  // más abajo para cómo se combinan. Pensado para poder afinarse sin leer
+  // el resto del código.
+  brazos: {
+    separacion:        1.20,  // ángulo de reposo de ruZ/luZ — antes 1.28 (pegados al cuerpo)
+    balanceoDelante:   0.14,  // inclinación hacia delante base del upperArm (ruX/luX)
+    codoFlexionBase:  -0.30,  // flexión de codo en reposo — nunca brazos rectos del todo
+    codoDerivaAmp:     0.05,  // amplitud del ruido que hace derivar el codo (además de la base)
+    acopleRespiracion: 0.35,  // cuánto de spr.bX (torso, respiración) se filtra al balanceo del brazo
+    acopleInclinacion: 0.25,  // cuánto de spr.bZ (torso, traslado de peso) se filtra al brazo
+    gestoRuidoAmp:     1.6,   // cuánto empuja el envolvente de ruido la amplitud del gesto al hablar
+    gestoHablaAmp:     0.5,   // cuánto empuja la energía real del habla (apertura de mandíbula)
+  },
+  // Dedos — 5 dedos × 3 falanges × 2 manos, todos con el mismo patrón de
+  // curvatura de reposo (decrece hacia la punta) + deriva lenta. Radianes.
+  dedos: {
+    curlProximal:    0.55,  // falange más cercana a la palma — la que más se curva
+    curlIntermedio:  0.42,
+    curlDistal:      0.28,  // la punta — la que menos se curva
+    curlPulgar:      0.32,  // el pulgar se curva menos que los demás dedos, y se opone (ver código)
+    derivaAmp:       0.05,  // amplitud del ruido de micro-variación, para que no queden congelados
+    derivaFreq:      0.025, // muy lento a propósito — es solo para que no se vean muertos
+  },
+  // Giro de bailarina — animación de reposo puntual (no un loop). Ver
+  // "GIRO DE BAILARINA (idle puntual)" más abajo. Todo en segundos/radianes.
+  giro: {
+    intervaloMinS:    20,   // mínimo de idle+sin audio antes de poder disparar
+    intervaloMaxS:    30,   // máximo — se sortea un valor al azar en este rango cada vez
+    duracionS:        3.5,  // duración del giro completo (360°), pedido 3-4s
+    alturaPieRad:     0.55, // cuánto se levanta la pierna trasera (rightUpperLeg.rotation.x)
+    flexionRodillaRad:0.9,  // flexión de rightLowerLeg en el punto más alto del giro
+    inclinacionCabezaRad: 0.35, // cuánto mira hacia abajo (head.rotation.x) en el punto más alto
+    ladeoCabezaRad:   0.18, // inclinación lateral de cabeza (head.rotation.z) en el punto más alto
+    separacionBrazosRad: 0.35, // cuánto se separan los brazos del cuerpo durante el giro
+    volverDuracionS:  0.4,  // segundos para interpolar de vuelta si se interrumpe a mitad de camino
+  },
 };
 
-// Valores originales de las anclas horizontales, antes de cualquier ajuste por
-// aspect — se preservan para poder volver a ellos si la superficie es ancha
-// (navegador normal) después de haber sido angosta, o viceversa.
-const _anchorXOriginal   = CONFIG.pet.anchorX;
-const _walkLeftOriginal  = CONFIG.pet.walkLeft;
-const _walkRightOriginal = CONFIG.pet.walkRight;
+// Valor de anchorX del modo activo, antes de cualquier ajuste por aspect —
+// se preserva para poder volver a él si la superficie deja de ser angosta
+// después de haberlo sido, o viceversa (ver _ajustarAnclasPorAspect()).
+const _anchorXOriginal = CONFIG.modos[MODO].anchorX;
+CONFIG.pet.anchorX = _anchorXOriginal;
 
 // ═══════════════════════════════════════════════════
 // RENDERER + ESCENA
@@ -58,31 +121,31 @@ const scene = new THREE.Scene();
 // Cámara tipo teleobjetivo — plano medio VTuber.
 // Posición/lookAt reales los fija recalcularEncuadre() una vez medido el modelo;
 // esto es solo un placeholder razonable para el primer frame antes de esa carga.
-const camera = new THREE.PerspectiveCamera(CONFIG.camera.fov, window.innerWidth / window.innerHeight, 0.1, 20);
+// far=45: en modo ventana la línea de horizonte del suelo synthwave queda a
+// camera.position.z + CONFIG.suelo.tamano/2 (~27u con los valores por
+// defecto) — con far=20 (el valor original, pensado solo para el overlay
+// sin suelo) la cámara la recortaba directo, invisible sin ningún error.
+const camera = new THREE.PerspectiveCamera(CONFIG.camera.fov, window.innerWidth / window.innerHeight, 0.1, 45);
 camera.position.set(0, 0, 1.6);
 camera.lookAt(0, 0, 0);
 
 // Inspección manual desde la consola del navegador (window.__rem.vrm, .scene, .camera).
 window.__rem = { vrm: null, scene, camera };
 
-// El overlay es una superficie de 520x860 (aspect ~0,60, vertical) dedicada
-// solo al avatar — no un monitor de 16:9. Las anclas horizontales (anchorX/
-// walkLeft/walkRight) están pensadas para un monitor ancho donde Rem camina
-// por un tercio de pantalla; en una superficie angosta, anchorX=0.82 cae
-// FUERA del recuadro visible. Si el ancho es menor que el alto, se colapsan
-// a 0.5 (centrado, sin caminata lateral). Se reevalúa en cada
+// Sin caminata, anchorX es un valor fijo por modo (ver CONFIG.modos) — pero
+// una superficie angosta y vertical (el overlay real mide 520x860, aspect
+// ~0,60) sigue necesitando el mismo colapso a 0,5 que antes: un anchorX
+// pensado para una ventana ancha (modo ventana, 1100x620) caería fuera del
+// recuadro visible en una superficie angosta. Se reevalúa en cada
 // recalcularEncuadre() (carga + resize) por si la superficie cambia de forma.
 function _ajustarAnclasPorAspect() {
   const esVertical = camera.aspect < 1;
-  CONFIG.pet.anchorX   = esVertical ? 0.5 : _anchorXOriginal;
-  CONFIG.pet.walkLeft  = esVertical ? 0.5 : _walkLeftOriginal;
-  CONFIG.pet.walkRight = esVertical ? 0.5 : _walkRightOriginal;
+  CONFIG.pet.anchorX = esVertical ? 0.5 : _anchorXOriginal;
   console.log(`[Encuadre] aspect=${camera.aspect.toFixed(3)} `
-            + `(${esVertical ? 'vertical: overlay' : 'horizontal'}) -> `
-            + `anchorX=${CONFIG.pet.anchorX} walkLeft=${CONFIG.pet.walkLeft} walkRight=${CONFIG.pet.walkRight}`);
+            + `(${esVertical ? 'vertical' : 'horizontal'}) -> anchorX=${CONFIG.pet.anchorX}`);
   return esVertical;
 }
-_ajustarAnclasPorAspect(); // antes de que charX se inicialice más abajo, con el valor ya correcto
+_ajustarAnclasPorAspect();
 
 // Iluminación tipo estudio de stream
 scene.add(new THREE.AmbientLight(CONFIG.lighting.ambient.color, CONFIG.lighting.ambient.intensity));
@@ -146,10 +209,8 @@ function medirAlturaHuesos() {
 function recalcularEncuadre() {
   const fovRad = camera.fov * Math.PI / 180;
 
-  // 0) Reevaluar anclas horizontales por si el aspect cambió (resize) —
-  //    también colapsa charX al centro si se volvió vertical.
-  const esVertical = _ajustarAnclasPorAspect();
-  if (esVertical) charX = 0.5;
+  // 0) Reevaluar anclas horizontales por si el aspect cambió (resize).
+  _ajustarAnclasPorAspect();
 
   // 1) Distancia de cámara tal que el modelo (altura real medida) ocupe
   //    CONFIG.pet.alturaPantalla del alto visible de pantalla.
@@ -167,43 +228,72 @@ function recalcularEncuadre() {
   const centroObjetivoMundo = _alturaVisible * (0.5 - CONFIG.pet.anchorY);
   _modeloPositionY = centroObjetivoMundo - _modeloCentroLocal;
 
-  const posX = worldX(charX);
+  // Sin caminata, la X es fija: CONFIG.pet.anchorX (ya resuelto por modo y
+  // por _ajustarAnclasPorAspect() arriba) — no hay un charX mutable que leer.
+  const posX = worldX(CONFIG.pet.anchorX);
   if (vrm) {
     vrm.scene.position.y = _modeloPositionY;
     vrm.scene.position.x = posX;
   }
 
+  posicionarSuelo();
+
   console.log(`[Encuadre] z=${camera.position.z.toFixed(3)} anchoVisible=${_anchoVisible.toFixed(3)} `
             + `alturaVisible=${_alturaVisible.toFixed(3)} position.y=${_modeloPositionY.toFixed(3)} `
-            + `position.x=${posX.toFixed(3)} (charX=${charX})`);
+            + `position.x=${posX.toFixed(3)} (anchorX=${CONFIG.pet.anchorX})`);
 }
 
 // ═══════════════════════════════════════════════════
-// DESKTOP PET — CAMINATA (fracciones normalizadas de pantalla)
+// SUELO DE CUADRÍCULA SYNTHWAVE (solo modo "ventana")
 // ═══════════════════════════════════════════════════
-const VEL = CONFIG.pet.velocity;
-let charX = CONFIG.pet.anchorX, charDir = -1;  // empieza en la posición de reposo
-let petEstado = 'idle_anim', petTimer = 2 + Math.random() * 3;
-let walkBlend = 0, walkPhase = 0;
+// GridHelper + Fog — nada de reflejos ni post-procesado (la GPU de esta
+// máquina ya anda justa compartiendo VRAM con RVC/el LLM local, ver
+// CLAUDE.md). La niebla es lo que da la sensación de perspectiva hacia un
+// horizonte, no geometría extra: las líneas lejanas se funden con
+// colorFondo en vez de dibujarse nítidas hasta el infinito.
+let _grid = null, _horizonte = null;
 
-function tickPet(dt) {
-  if (estado === 'talking' || estado === 'thinking') { petEstado = 'idle_anim'; return; }
-  petTimer -= dt;
-  if (petTimer <= 0) {
-    petEstado = petEstado === 'idle_anim' ? 'walking' : 'idle_anim';
-    petTimer  = petEstado === 'walking' ? 4 + Math.random() * 6 : 3 + Math.random() * 5;
-    if (petEstado === 'walking' && Math.random() < 0.3) charDir *= -1;
-  }
-  if (petEstado === 'walking') {
-    // Se leen en vivo (no cacheadas): _ajustarAnclasPorAspect() puede haberlas
-    // colapsado a 0.5 si la superficie es vertical (overlay).
-    const bordeIzq = CONFIG.pet.walkLeft, bordeDer = CONFIG.pet.walkRight;
-    charX += charDir * VEL * dt;
-    if (charX > bordeDer) { charX = bordeDer; charDir = -1; petEstado = 'idle_anim'; petTimer = 2 + Math.random() * 3; }
-    if (charX < bordeIzq) { charX = bordeIzq; charDir =  1; petEstado = 'idle_anim'; petTimer = 2 + Math.random() * 3; }
-    if (vrm) vrm.scene.position.x = worldX(charX);
-  }
+function crearSueloSynthwave() {
+  if (MODO !== 'ventana') return;
+
+  const cfg = CONFIG.suelo;
+  _grid = new THREE.GridHelper(cfg.tamano, cfg.divisiones, cfg.colorLinea, cfg.colorLinea);
+  _grid.material.transparent = true;
+  _grid.material.opacity = 0.8;
+  scene.add(_grid);
+
+  // Línea de horizonte: más brillante que el resto de la cuadrícula, en el
+  // borde lejano — refuerza el punto de fuga. fog=false para que no se
+  // apague con la distancia como el resto de la cuadrícula: es justo la
+  // marca de "hasta acá se ve", tiene que quedar siempre legible.
+  const mitad = cfg.tamano / 2;
+  const geomHorizonte = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-mitad, 0, -mitad),
+    new THREE.Vector3( mitad, 0, -mitad),
+  ]);
+  const matHorizonte = new THREE.LineBasicMaterial({
+    color: cfg.colorHorizonte, transparent: true, opacity: 0.9, fog: false,
+  });
+  _horizonte = new THREE.Line(geomHorizonte, matHorizonte);
+  scene.add(_horizonte);
+
+  scene.fog = new THREE.Fog(cfg.colorFondo, cfg.nieblaCerca, cfg.nieblaLejos);
+  scene.background = new THREE.Color(cfg.colorFondo);
+  renderer.setClearColor(cfg.colorFondo, 1); // opaca: sin alpha en modo ventana
+
+  console.log('[Suelo] synthwave creado:', cfg);
 }
+
+// Alinea el suelo con los pies de Rem — se llama desde recalcularEncuadre()
+// cada vez que cambia _modeloPositionY (carga, remedición por huesos, resize).
+function posicionarSuelo() {
+  if (!_grid) return;
+  const pieY = _modeloPositionY + (_modeloCentroLocal - _modeloAlturaLocal / 2);
+  _grid.position.y = pieY;
+  if (_horizonte) _horizonte.position.y = pieY;
+}
+
+crearSueloSynthwave();
 
 // ═══════════════════════════════════════════════════
 // CARGA VRM
@@ -248,6 +338,27 @@ function _cargarVRM(intento = 1) {
       const names = vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? [];
       console.log('[VRM] OK | expressions:', names.join(', '));
       console.log('[VRM] springBones:', vrm.springBoneManager ? 'sí' : 'no');
+      // Diagnóstico de lo que necesita la animación natural (ver "RUIDO
+      // PERLIN 1D"/"MICRO-SACCADES" más abajo): si este modelo no trajera
+      // alguno de estos, mejor saberlo acá que verlo fallar en silencio.
+      console.log('[VRM] lookAt (micro-saccades):', vrm.lookAt ? 'sí' : 'no',
+                  '| leftShoulder/rightShoulder (respiración en hombros):',
+                  !!getB('leftShoulder'), !!getB('rightShoulder'));
+      {
+        const dedosFaltantes = [];
+        for (const lado of ['left', 'right']) {
+          for (const dedo of ['Thumb', 'Index', 'Middle', 'Ring', 'Little']) {
+            for (const falange of ['Proximal', 'Intermediate', 'Distal']) {
+              if (!getB(`${lado}${dedo}${falange}`)) dedosFaltantes.push(`${lado}${dedo}${falange}`);
+            }
+          }
+        }
+        console.log(`[VRM] dedos: ${30 - dedosFaltantes.length}/30 mapeados`,
+                    dedosFaltantes.length ? `— faltan: ${dedosFaltantes.join(', ')}` : '');
+        console.log('[VRM] piernas para el giro:',
+                    !!getB('rightUpperLeg'), !!getB('rightLowerLeg'),
+                    !!getB('leftUpperLeg'), !!getB('leftLowerLeg'));
+      }
       _exprMap = buildExprMap(names);
       localizarMallaFacial();
     },
@@ -460,6 +571,17 @@ let _audioPlaying  = false;
 let _timeline       = [];
 let _timelineIdx     = 0;
 let _jawApertura     = 0;
+// "Energía del habla": versión suavizada de _jawApertura, usada para que la
+// gesticulación de brazos en modo talking siga la intensidad real de lo que
+// se está diciendo (ver "BRAZOS ACOPLADOS AL CUERPO" y getStatePose(),
+// case 'talking') en vez de moverse siempre igual. Sube rápido, baja rápido
+// también (mismo dt*8) — no hace falta que sea más lenta al bajar, el
+// envolvente de ruido de getStatePose() ya aporta la parte "lenta".
+let _hablaEnergia = 0;
+function actualizarHablaEnergia(dt) {
+  const objetivo = _audioActivo ? clamp(_jawApertura * 1.3, 0, 1) : 0;
+  _hablaEnergia = lerp(_hablaEnergia, objetivo, dt * 8);
+}
 
 // Tres vías de lipsync, en orden de preferencia:
 //   'indice'           — escribe morphTargetInfluences[índice] directo en TODAS las
@@ -757,6 +879,11 @@ const spr = {
   luZ: new Spring( 1.28, 22, 7.0),
   ruX: new Spring(0.05,  16, 5.0),
   luX: new Spring(0.05,  16, 5.0),
+  // Antebrazos (flexión de codo) — un poco más blandas que ruX/luX a
+  // propósito: el antebrazo "va detrás" del hombro, un retardo sobre otro
+  // retardo (ver "BRAZOS ACOPLADOS AL CUERPO" en animate()).
+  rlX: new Spring(-0.30, 14, 5.5),
+  llX: new Spring(-0.30, 14, 5.5),
 };
 
 // Perfiles de stiffness/damping por estado
@@ -781,85 +908,119 @@ function applySpringConfig() {
 // ═══════════════════════════════════════════════════
 let surprisedSnap = 0;
 
+// Canales hX/hY/hZ/bZ/ruZ/luZ/ruX/luX: ruido Perlin, no senos (ver más abajo,
+// "RUIDO PERLIN 1D" — un producto de senos sigue siendo periódico, aunque no
+// lo parezca a simple vista; el ruido no lo es). bX (respiración) sigue con
+// un seno limpio a propósito: la respiración real SÍ es rítmica, eso no es
+// lo que hacía ver a Rem como un robot.
 function getStatePose(t) {
   // Velocidades de animación por estado
   const SPEEDS = { idle:1.0, talking:1.8, thinking:0.5, happy:1.5, sad:0.4, angry:1.3, surprised:2.0 };
-  const ts = t * (SPEEDS[estado] ?? 1.0); // tiempo escalado por emoción
+  const sp = SPEEDS[estado] ?? 1.0;
+  const ts = t * sp; // tiempo escalado por emoción
 
   // Respiración siempre presente
-  const breath = Math.sin(ts * 0.8 / (SPEEDS[estado] ?? 1.0)) * 0.018;
+  const breath = Math.sin(ts * 0.8 / sp) * 0.018;
 
   switch (estado) {
 
-    case 'idle':
+    case 'idle': {
+      const S = CONFIG.brazos;
       return {
-        hX: Math.sin(ts * 0.3) * Math.sin(ts * 0.71) * 0.025,
-        hY: Math.sin(ts * 0.2) * Math.sin(ts * 0.53) * 0.018,
-        hZ: -0.04 + Math.sin(ts * 0.4) * Math.sin(ts * 0.61) * 0.015,
-        bZ: Math.sin(ts * 0.4) * 0.008,
+        hX: ruido(10, 0.15, ts) * 0.028,
+        hY: ruido(20, 0.12, ts) * 0.020,
+        hZ: -0.04 + ruido(30, 0.13, ts) * 0.016,
+        bZ: ruido(40, 0.10, ts) * 0.009,
         bX: breath,
-        ruZ: -1.28, luZ: 1.28, ruX: 0.05, luX: 0.05,
+        ruZ: -S.separacion + ruido(50, 0.07, ts) * 0.02,
+        luZ:  S.separacion + ruido(51, 0.07, ts) * 0.02,
+        ruX:  S.balanceoDelante + ruido(60, 0.08, ts) * 0.02,
+        luX:  S.balanceoDelante + ruido(61, 0.08, ts) * 0.02,
       };
+    }
 
-    case 'talking':
+    case 'talking': {
+      // Gesticulación con ruido, no senos: cada brazo con su propia fase y
+      // amplitud generosa, para que se lea como alguien hablando con las
+      // manos, no como un metrónomo. gestoAmp combina dos señales (ver
+      // "BRAZOS ACOPLADOS AL CUERPO" más abajo para _hablaEnergia): un
+      // envolvente de ruido lento (Math.max(0,...) pasa ~la mitad del
+      // tiempo en 0 — eso es lo que crea pausas de verdad, no solo menos
+      // amplitud) más la energía real del habla (apertura de mandíbula
+      // suavizada). Con gestoAmp≈0 los brazos vuelven al mismo reposo que
+      // en idle — "gestos que van y vuelven", no oscilación continua.
+      const S = CONFIG.brazos;
+      const envolvente = Math.max(0, ruido(200, 0.18, ts));
+      const gestoAmp = clamp(envolvente * S.gestoRuidoAmp + _hablaEnergia * S.gestoHablaAmp, 0, 1);
       return {
-        hX: Math.sin(ts * 0.45) * Math.sin(ts * 1.27) * 0.09,
-        hY: Math.sin(ts * 0.54) * Math.sin(ts * 0.95) * 0.12,
-        hZ: Math.sin(ts * 0.72) * Math.sin(ts * 1.27) * 0.13,
-        bZ: Math.sin(ts * 1.2)  * 0.025,
+        hX: ruido(10, 0.55, ts) * 0.09,
+        hY: ruido(20, 0.48, ts) * 0.12,
+        hZ: ruido(30, 0.60, ts) * 0.13,
+        bZ: ruido(40, 0.65, ts) * 0.024,
         bX: breath,
-        ruZ: -1.28,
-        luZ: 1.18,  // brazo izquierdo ligeramente elevado (gesto)
-        ruX: Math.sin(ts * 1.1) * 0.04 + 0.05,
-        luX: Math.sin(ts * 1.3) * 0.07 + 0.09,
+        ruZ: -S.separacion + ruido(50, 0.30, ts) * 0.10 * gestoAmp,
+        luZ:  S.separacion + ruido(51, 0.35, ts) * 0.16 * gestoAmp,
+        ruX:  S.balanceoDelante + ruido(60, 0.40, ts) * 0.14 * gestoAmp,
+        luX:  S.balanceoDelante + ruido(61, 0.45, ts) * 0.20 * gestoAmp,
       };
+    }
 
     case 'thinking': {
+      // Pose distinta y reconocible a propósito: mirada arriba a un lado
+      // (ver también updateLook()/updateSaccades()), mano derecha elevada
+      // hacia la cara (upperArm MÁS levantado que antes + codo MÁS
+      // flexionado que la base universal, rlX propio en vez del genérico
+      // de CONFIG.brazos.codoFlexionBase — ver animate()), movimiento más
+      // lento que cualquier otro estado.
+      const S = CONFIG.brazos;
       return {
-        hX:  0.18 + Math.sin(ts * 0.1) * 0.018,
-        hY:  0.15 + Math.sin(ts * 0.13) * 0.012,
-        hZ: -0.22 + Math.sin(ts * 0.2)  * 0.012,
-        bZ: Math.sin(ts * 0.2) * 0.005,
+        hX:  0.18 + ruido(10, 0.045, ts) * 0.016,
+        hY:  0.15 + ruido(20, 0.040, ts) * 0.012,
+        hZ: -0.22 + ruido(30, 0.050, ts) * 0.012,
+        bZ: ruido(40, 0.045, ts) * 0.005,
         bX: breath * 0.7,
-        ruZ: -1.05, // brazo derecho elevado (pensativa, mano cerca de la cara)
-        luZ: 1.28,
-        ruX: 0.15, luX: 0.05,
+        ruZ: -0.85 + ruido(50, 0.03, ts) * 0.02, // brazo derecho bien elevado, hacia la cara
+        luZ: S.separacion,
+        ruX:  0.35 + ruido(60, 0.035, ts) * 0.02, // codo adelantado, no solo el hombro
+        luX: S.balanceoDelante,
+        rlX: -0.95 + ruido(65, 0.03, ts) * 0.03,  // codo bien flexionado — la mano llega a la cara
       };
     }
 
     case 'happy': {
-      const bob = Math.sin(ts * 2.5) * 0.015; // pequeño rebote de cabeza
+      const bob = ruido(5, 1.1, ts) * 0.018; // pequeño rebote de cabeza
       return {
-        hX: bob + Math.sin(ts * 0.6) * 0.03,
-        hY: Math.sin(ts * 0.7) * 0.045,
-        hZ: Math.sin(ts * 0.8) * 0.055,
-        bZ: Math.sin(ts * 0.8) * 0.022,
+        hX: bob + ruido(10, 0.5, ts) * 0.03,
+        hY: ruido(20, 0.6, ts) * 0.045,
+        hZ: ruido(30, 0.7, ts) * 0.055,
+        bZ: ruido(40, 0.7, ts) * 0.02,
         bX: breath * 1.2,
-        ruZ: -1.15, luZ: 1.15, // brazos más abiertos (postura alegre)
-        ruX: 0.09, luX: 0.09,
+        ruZ: -1.15 + ruido(50, 0.3, ts) * 0.03, luZ: 1.15 + ruido(51, 0.3, ts) * 0.03,
+        ruX:  0.09 + ruido(60, 0.3, ts) * 0.02, luX: 0.09 + ruido(61, 0.3, ts) * 0.02,
       };
     }
 
     case 'sad':
       return {
-        hX:  0.25 + Math.sin(ts * 0.15) * 0.012, // cabeza caída
-        hY:  Math.sin(ts * 0.1) * 0.008,
-        hZ:  0.05,
-        bZ:  Math.sin(ts * 0.2) * 0.004,
+        hX:  0.25 + ruido(10, 0.06, ts) * 0.012, // cabeza caída
+        hY:  ruido(20, 0.05, ts) * 0.008,
+        hZ:  0.05 + ruido(30, 0.05, ts) * 0.006,
+        bZ:  ruido(40, 0.05, ts) * 0.004,
         bX:  0.05 + breath * 0.5, // spine ligeramente inclinada
         ruZ: -1.30, luZ: 1.30,
         ruX: 0.02, luX: 0.02,
       };
 
     case 'angry': {
-      // Micro-sacudidas bruscos (sin suavidad)
-      const jZ = Math.sin(ts * 12) * Math.sign(Math.sin(ts * 7)) * 0.018;
-      const jY = Math.sin(ts *  9) * Math.sign(Math.sin(ts * 5)) * 0.012;
+      // Ruido a frecuencia alta en vez de sign(sin())*sin(): igual de
+      // brusco/entrecortado a la vista, pero no forma un patrón que se
+      // repita exacto — antes SÍ era periódico, solo que con un período
+      // largo que lo disimulaba a corto plazo.
       return {
-        hX: 0.06,
-        hY: jY,
-        hZ: jZ,
-        bZ: Math.sin(ts * 1.5) * 0.018,
+        hX: 0.06 + ruido(10, 1.5, ts) * 0.02,
+        hY: ruido(20, 3.5, ts) * 0.014,
+        hZ: ruido(30, 4.0, ts) * 0.020,
+        bZ: ruido(40, 0.6, ts) * 0.018,
         bX: 0.02,
         ruZ: -1.24, luZ: 1.24,
         ruX: 0.08, luX: 0.08,
@@ -869,9 +1030,9 @@ function getStatePose(t) {
     case 'surprised': {
       const snap = clamp(surprisedSnap, 0, 1);
       return {
-        hX: -0.20 * snap + Math.sin(ts * 0.3) * 0.018 * (1 - snap),
-        hY:  Math.sin(ts * 0.2) * 0.015,
-        hZ:  Math.sin(ts * 0.4) * 0.010,
+        hX: -0.20 * snap + ruido(10, 0.12, ts) * 0.018 * (1 - snap),
+        hY:  ruido(20, 0.09, ts) * 0.015,
+        hZ:  ruido(30, 0.15, ts) * 0.010,
         bZ: -0.04 * snap,
         bX: -0.03 * snap + breath,
         ruZ: -1.28 - 0.12 * snap,
@@ -881,60 +1042,287 @@ function getStatePose(t) {
     }
 
     default:
-      return { hX:0, hY:0, hZ:-0.04, bZ:0, bX:0, ruZ:-1.28, luZ:1.28, ruX:0.05, luX:0.05 };
+      return { hX:0, hY:0, hZ:-0.04, bZ:0, bX:0,
+               ruZ:-CONFIG.brazos.separacion, luZ:CONFIG.brazos.separacion,
+               ruX:CONFIG.brazos.balanceoDelante, luX:CONFIG.brazos.balanceoDelante };
   }
 }
 
 // ═══════════════════════════════════════════════════
-// ANIMACIÓN DE CAMINATA ORGÁNICA
+// RUIDO PERLIN 1D — reemplaza los Math.sin() de getStatePose()
 // ═══════════════════════════════════════════════════
-function updateWalking(dt) {
-  const shouldWalk = petEstado === 'walking' && estado !== 'talking' && estado !== 'thinking';
+// El ojo detecta la periodicidad de sumas/productos de senos en pocos
+// segundos (se lee como robot, no como alguien vivo) por más frecuencias
+// que se combinen — siguen siendo, técnicamente, funciones periódicas. El
+// ruido Perlin no lo es: es la misma técnica que "flow noise" para
+// animación procedural de idle en personajes 3D. Implementación chica,
+// clásica (Ken Perlin, tabla de permutación de 256 valores), sin
+// dependencias externas — 1D alcanza: cada canal (cabeza X, cabeza Y, brazo
+// derecho...) es noise1D(t * frecuencia + fase), con una fase fija propia
+// por canal para que no se muevan todos en sincronía.
+const _PERLIN_PERM = (() => {
+  const p = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) p[i] = i;
+  // Barajado con un PRNG determinístico (LCG) — no importa cuál en
+  // particular, solo que la permutación sea siempre la misma entre cargas
+  // de la página (si no, cada recarga tendría una "personalidad" de ruido
+  // distinta, sin que eso aporte nada).
+  let seed = 1337;
+  const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  for (let i = 255; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const tmp = p[i]; p[i] = p[j]; p[j] = tmp;
+  }
+  const perm = new Uint8Array(512);
+  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+  return perm;
+})();
 
-  // Blend con aceleración/desaceleración gradual
-  walkBlend = clamp(walkBlend + (shouldWalk ? dt * 2.5 : -dt * 3.0), 0, 1);
+const _fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+const _gradiente1D = (hash, x) => ((hash & 1) === 0 ? x : -x);
 
-  // Bug 2 fix: charDir=1→derecha=1.45π, charDir=-1→izquierda=0.55π
-  const tgtRotY = walkBlend > 0.01
-    ? (charDir > 0 ? Math.PI * 1.45 : Math.PI * 0.55)
-    : Math.PI;
-  if (vrm) vrm.scene.rotation.y = lerp(vrm.scene.rotation.y, tgtRotY, dt * 5);
+// Devuelve un valor suave en, aproximadamente, [-1, 1].
+function noise1D(x) {
+  const xi = Math.floor(x) & 255;
+  const xf = x - Math.floor(x);
+  const u  = _fade(xf);
+  const a  = _PERLIN_PERM[xi], b = _PERLIN_PERM[xi + 1];
+  return lerp(_gradiente1D(a, xf), _gradiente1D(b, xf - 1), u);
+}
 
-  if (walkBlend < 0.001) return;
+// Un canal de ruido con su propia fase (frecuencia baja = movimiento lento).
+const ruido = (fase, freq, t) => noise1D(t * freq + fase);
 
-  walkPhase = (walkPhase + dt * 2.2 * walkBlend) % 1;
-  const wt = walkPhase * Math.PI * 2;
-  const wb = walkBlend;
-
-  // Caderas: bob vertical vía scene.position.y + rock lateral en hueso
-  const hipBob  = -Math.abs(Math.sin(wt)) * 0.022 * wb;
-  const hipRock =  Math.sin(wt) * 0.055 * wb;
-  if (vrm) vrm.scene.position.y = _modeloPositionY + hipBob;   // bob se SUMA sobre la Y del encuadre, no la reemplaza
+// ═══════════════════════════════════════════════════
+// TRASLADO DE PESO — cadera lenta de un pie a otro, sin caminar
+// ═══════════════════════════════════════════════════
+// Reemplaza el bob/rock de la caminata eliminada: Rem se queda fija en su
+// sitio (sin desplazamiento en X), pero una cadera muerta se ve tan
+// artificial como una cabeza inmóvil. Frecuencia muy baja (periodo ~20s) a
+// propósito — un traslado de peso real es lento y ocasional, no un tic.
+// Devuelve {rock} además de mutar hips/spine — hombros y brazos lo reusan
+// para "acompañar" el traslado de peso (ver BRAZOS ACOPLADOS AL CUERPO en
+// animate()), en vez de tener su propia señal de ruido desconectada.
+function updateTrasladoPeso(dt, t) {
+  const rock = ruido(500, 0.05, t) * 0.035;
+  const lean = ruido(510, 0.05, t) * 0.012; // leve inclinación de vuelta, para el balance
   const hipB = getB('hips');
-  if (hipB) { hipB.rotation.z = hipRock; hipB.rotation.x = Math.sin(wt * 0.5) * 0.015 * wb; }
-
-  // Torso: contra-rotación respecto a caderas (se añade sobre pose del estado)
+  if (hipB) { hipB.rotation.z = rock; hipB.rotation.x = ruido(520, 0.04, t) * 0.01; }
   const spineB = getB('spine');
-  if (spineB) spineB.rotation.z += -hipRock * 0.4;
+  if (spineB) spineB.rotation.z += -rock * 0.35 + lean;
+  return { rock };
+}
 
-  // Piernas
-  const legSwing = 0.32 * wb, kneeFlex = 0.40 * wb;
-  const lul = getB('leftUpperLeg');  if (lul) lul.rotation.x =  Math.sin(wt) * legSwing;
-  const rul = getB('rightUpperLeg'); if (rul) rul.rotation.x = -Math.sin(wt) * legSwing;
-  const lll = getB('leftLowerLeg');  if (lll) lll.rotation.x = Math.max(0, -Math.sin(wt)) * kneeFlex * 1.5;
-  const rll = getB('rightLowerLeg'); if (rll) rll.rotation.x = Math.max(0,  Math.sin(wt)) * kneeFlex * 1.5;
-  const lft = getB('leftFoot');      if (lft) lft.rotation.x =  Math.sin(wt) * 0.15 * wb;
-  const rft = getB('rightFoot');     if (rft) rft.rotation.x = -Math.sin(wt) * 0.15 * wb;
+// ═══════════════════════════════════════════════════
+// MICRO-SACCADES — ojos, vía vrm.lookAt (huesos leftEye/rightEye)
+// ═══════════════════════════════════════════════════
+// Distinto del drift de la cabeza (updateLook(), más abajo): los ojos
+// saltan rápido (20-40ms) cada 0,5-2s a un punto nuevo dentro de un cono
+// pequeño alrededor de hacia dónde ya está mirando la cabeza — igual que el
+// ojo humano real, que no permanece perfectamente fijo entre movimientos
+// grandes. vrm.lookAt.yaw/pitch están en grados; se escriben acá y
+// vrm.update() los aplica a los huesos de los ojos a través del applier
+// configurado por three-vrm al cargar el modelo (rem.vrm sí trae
+// leftEye/rightEye mapeados, ver CLAUDE.md).
+let _saccadeYaw = 0, _saccadePitch = 0;      // objetivo actual
+let _saccadeYawIni = 0, _saccadePitchIni = 0; // punto de partida del salto en curso
+let _saccadeT = 1, _saccadeDur = 0.03;        // progreso 0..1 del salto actual, y su duración
+let _saccadeTimer = 0.5 + Math.random() * 1.5;
 
-  // Brazos: swing opuesto a piernas (brazo derecho con pierna izquierda)
-  const armSwing = 0.22 * wb;
+function updateSaccades(dt) {
+  _saccadeTimer -= dt;
+  if (_saccadeTimer <= 0) {
+    _saccadeYawIni = _saccadeYaw;
+    _saccadePitchIni = _saccadePitch;
+    // Cono de la saccade: centrado en (0,0) salvo en 'thinking', donde Rem
+    // mira arriba a un lado — ahí las saccades ocurren alrededor de ESE
+    // punto, no del centro, para que el ojo no se pierda del gesto.
+    const centroYaw   = estado === 'thinking' ? -10 : 0;
+    const centroPitch = estado === 'thinking' ?   8 : 0;
+    _saccadeYaw   = centroYaw   + (Math.random() - 0.5) * 14;
+    _saccadePitch = centroPitch + (Math.random() - 0.5) * 8;
+    _saccadeDur   = 0.02 + Math.random() * 0.02;  // 20-40ms, como pide la especificación
+    _saccadeT     = 0;
+    _saccadeTimer = 0.5 + Math.random() * 1.5;    // próxima saccade en 0,5-2s
+  }
+  if (_saccadeT < 1) {
+    _saccadeT = Math.min(1, _saccadeT + dt / _saccadeDur);
+    const u = _fade(_saccadeT); // mismo suavizado que el ruido — un salto, no un tirón lineal
+    if (vrm?.lookAt) {
+      vrm.lookAt.yaw   = lerp(_saccadeYawIni,   _saccadeYaw,   u);
+      vrm.lookAt.pitch = lerp(_saccadePitchIni, _saccadePitch, u);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// DEDOS — curvatura de reposo (30 huesos, 5 dedos × 3 falanges × 2 manos)
+// ═══════════════════════════════════════════════════
+// Sin esto las manos quedan completamente abiertas y rectas — una de las
+// señales más claras de "muñeco" en un modelo por lo demás bien animado.
+// Curvatura decreciente hacia la punta (proximal > intermedio > distal,
+// ver CONFIG.dedos) + una única deriva de ruido muy lenta por mano (no una
+// por dedo — con una alcanza para que no se vean congeladas, sin que cada
+// dedo se mueva por su cuenta como una araña). Eje de curvado: rotation.z,
+// con signo espejado entre manos (confirmado en vivo con captura de
+// pantalla — si algún día el modelo cambia y las manos se ven mal, es acá
+// donde revisar el signo).
+const _DEDOS_NOMBRE = ['Index', 'Middle', 'Ring', 'Little'];
+const _FALANGES = ['Proximal', 'Intermediate', 'Distal'];
+
+function aplicarCurvaturaDedos(t) {
+  const D = CONFIG.dedos;
+  const curls = { Proximal: D.curlProximal, Intermediate: D.curlIntermedio, Distal: D.curlDistal };
+  for (const lado of ['left', 'right']) {
+    const signo = lado === 'left' ? -1 : 1;
+    const deriva = ruido(lado === 'left' ? 900 : 901, D.derivaFreq, t) * D.derivaAmp;
+    for (const dedo of _DEDOS_NOMBRE) {
+      for (const falange of _FALANGES) {
+        const bone = getB(`${lado}${dedo}${falange}`);
+        if (bone) bone.rotation.z = signo * (curls[falange] + deriva);
+      }
+    }
+    // Pulgar: se curva menos que el resto (curlPulgar < curlProximal) y se
+    // opone — rotation.y extra, para que no quede en el mismo plano que
+    // los demás dedos.
+    const derivaPulgar = deriva * 0.6;
+    for (const falange of _FALANGES) {
+      const bone = getB(`${lado}Thumb${falange}`);
+      if (bone) {
+        bone.rotation.z = signo * (D.curlPulgar + derivaPulgar);
+        bone.rotation.y = -signo * 0.25;
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// GIRO DE BAILARINA — animación de reposo puntual, no un loop
+// ═══════════════════════════════════════════════════
+// Tras un rato de calma real (idle, sin audio) Rem da una vuelta completa
+// sobre su eje: se dispara una vez, termina, y espera un intervalo nuevo y
+// al azar antes de poder repetirse — no es un ciclo que se repite solo.
+// Interrumpible en cualquier momento (audio o cambio de estado): en vez de
+// cortar en seco, pasa a 'volviendo' e interpola de vuelta a la orientación
+// frontal, nunca un salto. Todos los tiempos/ángulos en CONFIG.giro.
+const easeInOutCubic = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+
+function _sortearIntervaloGiro() {
+  const { intervaloMinS, intervaloMaxS } = CONFIG.giro;
+  return intervaloMinS + Math.random() * (intervaloMaxS - intervaloMinS);
+}
+
+// Math.PI es la orientación frontal (fijada al cargar el VRM) — el giro le
+// suma 2π completos, así que puede terminar en Math.PI + 2π*k. Al volver
+// hace falta el múltiplo de 2π más cercano al ángulo actual, para no pegar
+// un salto ni dar una vuelta de más de la cuenta.
+function _anguloFrontalMasCercano(actual) {
+  const vueltas = Math.round((actual - Math.PI) / (2 * Math.PI));
+  return Math.PI + vueltas * 2 * Math.PI;
+}
+
+let _giroFase = 'esperando';   // 'esperando' | 'girando' | 'volviendo'
+let _giroTimer = _sortearIntervaloGiro();
+let _giroProgreso = 0;         // 0..1 dentro de 'girando'
+let _giroDireccion = 1;        // ±1, sorteada en cada disparo (variedad)
+let _giroVolverT = 0;          // progreso 0..1 dentro de 'volviendo'
+let _giroVolverDesdeY = Math.PI;
+
+const _giroElegible = () => estado === 'idle' && !_audioActivo;
+
+// Tick + aplicación en una sola función, llamada al final de animate() (ver
+// más abajo) para que tenga la última palabra sobre los huesos que toca —
+// el resto del cuerpo se sigue posando con normalidad todo el tiempo por
+// detrás (los springs de cabeza/brazos no se congelan), así que al volver
+// a 'esperando' la transición es contra valores ya razonables, no contra
+// un hueco. Devuelve true si este frame lo controló el giro (informativo,
+// no lo usa nada todavía).
+function updateGiroBailarina(dt) {
+  const G = CONFIG.giro;
+
+  if (_giroFase === 'esperando') {
+    if (!_giroElegible()) {
+      _giroTimer = _sortearIntervaloGiro(); // cualquier actividad reinicia la espera
+      return false;
+    }
+    _giroTimer -= dt;
+    if (_giroTimer <= 0) {
+      _giroFase = 'girando';
+      _giroProgreso = 0;
+      _giroDireccion = Math.random() < 0.5 ? 1 : -1;
+      console.log(`[Giro] arranca, dirección ${_giroDireccion > 0 ? 'horaria' : 'antihoraria'}`);
+    }
+    return false;
+  }
+
+  if (_giroFase === 'girando') {
+    if (!_giroElegible()) {
+      // Interrupción a mitad de camino: nunca pisa el lipsync ni las poses
+      // de talking/thinking — se aborta ACÁ, antes de escribir nada más.
+      console.log(`[Giro] interrumpido en progreso=${_giroProgreso.toFixed(2)}, volviendo a frontal`);
+      _giroFase = 'volviendo';
+      _giroVolverT = 0;
+      _giroVolverDesdeY = vrm.scene.rotation.y;
+      return updateGiroBailarina(dt); // mismo frame, ya en 'volviendo'
+    }
+
+    _giroProgreso = Math.min(1, _giroProgreso + dt / G.duracionS);
+    const e = easeInOutCubic(_giroProgreso);
+    vrm.scene.rotation.y = Math.PI + _giroDireccion * 2 * Math.PI * e;
+
+    // Envolvente compartida por pie/cabeza/brazos: 0 en los extremos, 1 a
+    // mitad del giro — entran y salen de forma gradual, como pide la
+    // especificación, todos sincronizados al mismo punto.
+    const env = Math.sin(_giroProgreso * Math.PI);
+
+    const rul = getB('rightUpperLeg'), rll = getB('rightLowerLeg');
+    const lul = getB('leftUpperLeg'),  lll = getB('leftLowerLeg');
+    if (rul) rul.rotation.x = -G.alturaPieRad * env;      // pierna trasera se eleva
+    if (rll) rll.rotation.x =  G.flexionRodillaRad * env; // rodilla flexionada
+    if (lul) lul.rotation.x = 0;                          // pierna de apoyo, recta
+    if (lll) lll.rotation.x = 0;
+
+    const headB = getB('head'), neckB = getB('neck');
+    if (headB) { headB.rotation.x = G.inclinacionCabezaRad * env; headB.rotation.z = G.ladeoCabezaRad * env; }
+    if (neckB) { neckB.rotation.x = G.inclinacionCabezaRad * env * 0.3; neckB.rotation.z = G.ladeoCabezaRad * env * 0.3; }
+
+    const rua = getB('rightUpperArm'), lua = getB('leftUpperArm');
+    if (rua) rua.rotation.z = -CONFIG.brazos.separacion - G.separacionBrazosRad * env;
+    if (lua) lua.rotation.z =  CONFIG.brazos.separacion + G.separacionBrazosRad * env;
+
+    if (_giroProgreso >= 1) {
+      _giroFase = 'esperando';
+      _giroTimer = _sortearIntervaloGiro();
+      console.log(`[Giro] completo, próximo en ~${_giroTimer.toFixed(1)}s`);
+    }
+    return true;
+  }
+
+  // 'volviendo': interpola de vuelta en G.volverDuracionS (~400ms por
+  // defecto) arrancando desde donde esté AHORA (nunca un valor fijo), así
+  // que no hay salto sea cual sea el punto del giro en el que se abortó.
+  _giroVolverT = Math.min(1, _giroVolverT + dt / G.volverDuracionS);
+  const u = _fade(_giroVolverT);
+  const objetivoY = _anguloFrontalMasCercano(_giroVolverDesdeY);
+  vrm.scene.rotation.y = lerp(_giroVolverDesdeY, objetivoY, u);
+
+  const rul = getB('rightUpperLeg'), rll = getB('rightLowerLeg');
+  if (rul) rul.rotation.x = lerp(rul.rotation.x, 0, u);
+  if (rll) rll.rotation.x = lerp(rll.rotation.x, 0, u);
+  const headB = getB('head'), neckB = getB('neck');
+  if (headB) { headB.rotation.x = lerp(headB.rotation.x, 0, u); headB.rotation.z = lerp(headB.rotation.z, 0, u); }
+  if (neckB) { neckB.rotation.x = lerp(neckB.rotation.x, 0, u); neckB.rotation.z = lerp(neckB.rotation.z, 0, u); }
   const rua = getB('rightUpperArm'), lua = getB('leftUpperArm');
-  if (rua) rua.rotation.x += Math.sin(wt + Math.PI) * armSwing;
-  if (lua) lua.rotation.x += Math.sin(wt) * armSwing;
+  if (rua) rua.rotation.z = lerp(rua.rotation.z, -CONFIG.brazos.separacion, u);
+  if (lua) lua.rotation.z = lerp(lua.rotation.z,  CONFIG.brazos.separacion, u);
 
-  // Cabeza: mira levemente hacia donde camina
-  const headB = getB('head');
-  if (headB) headB.rotation.y += charDir * 0.04 * wb;
+  if (_giroVolverT >= 1) {
+    _giroFase = 'esperando';
+    _giroTimer = _sortearIntervaloGiro();
+    console.log(`[Giro] de vuelta en frontal, próximo en ~${_giroTimer.toFixed(1)}s`);
+    return false;
+  }
+  return true;
 }
 
 // ═══════════════════════════════════════════════════
@@ -957,12 +1345,16 @@ function animate() {
   // Decaer snap de sorpresa
   if (surprisedSnap > 0) surprisedSnap = Math.max(0, surprisedSnap - dt * 1.8);
 
-  // ── Sistemas de expresión / parpadeo / mirada / caminata ──
+  // ── Sistemas de expresión / parpadeo / mirada / saccades ──
   updateExpressions(dt);
   updateBlink(dt);
   aplicarVisemesPreUpdate(); // vía fallback: expressionManager necesita el valor ANTES de vrm.update()
   updateLook(dt, t);
-  tickPet(dt);
+  updateSaccades(dt);
+  // _jawApertura es del frame anterior acá (se recalcula al final de este
+  // mismo animate(), en aplicarVisemesPostUpdate) — un frame de atraso es
+  // imperceptible para algo tan lento como _hablaEnergia.
+  actualizarHablaEnergia(dt);
 
   // ── Pose procedural del estado actual ──
   const pose = getStatePose(t);
@@ -989,18 +1381,68 @@ function animate() {
   const bZ = spr.bZ.step(pose.bZ, dt);
   const bX = spr.bX.step(pose.bX, dt);
   if (spineB) { spineB.rotation.z = bZ; spineB.rotation.x = bX; }
-  if (chestB) { chestB.rotation.x = Math.sin(t * 0.8) * 0.018; } // respiración visible en pecho
 
-  // Brazos — pose natural + variaciones emocionales
+  // Traslado de peso PRIMERO: hombros y brazos lo necesitan para
+  // acompañarlo (ver más abajo) — reemplaza el bob/rock que aportaba la
+  // caminata eliminada, para que la cadera no se vea muerta estando quieta.
+  const { rock: pesoRock } = updateTrasladoPeso(dt, t);
+
+  // Respiración visible en pecho y hombros — mismo seno base (breath, ver
+  // getStatePose). Los hombros también acompañan el traslado de peso: el
+  // lado que "pesa más" baja un poco, como alguien real recargado de un
+  // costado — no solo suben con la inhalación (Math.max(0,...), no bajan
+  // de la base, para que se lea como elevación real y no una oscilación
+  // simétrica).
+  const respFase = Math.sin(t * 0.8);
+  if (chestB) chestB.rotation.x = respFase * 0.018;
+  const lShoulderB = getB('leftShoulder'), rShoulderB = getB('rightShoulder');
+  if (lShoulderB) lShoulderB.rotation.z =  Math.max(0, respFase) * 0.013 - pesoRock * 0.4;
+  if (rShoulderB) rShoulderB.rotation.z = -Math.max(0, respFase) * 0.013 - pesoRock * 0.4;
+
+  // ── BRAZOS ACOPLADOS AL CUERPO ──────────────────────────────────────
+  // No son ruido independiente: el target del upperArm suma una fracción
+  // de spr.bX.v/spr.bZ.v (el TORSO ya resuelto por su propio spring, que
+  // ya tiene su propio retardo) — así, cuando el cuerpo se inclina, el
+  // brazo lo sigue con un retardo sobre otro retardo (el suyo propio, al
+  // pasar de nuevo por spr.ruX/luX). Rangos en CONFIG.brazos.
+  const S = CONFIG.brazos;
+  const acopleCuerpo = spr.bX.v * S.acopleRespiracion + spr.bZ.v * S.acopleInclinacion;
+
   const rua = getB('rightUpperArm'), lua = getB('leftUpperArm');
   const rla = getB('rightLowerArm'), lla = getB('leftLowerArm');
-  if (rua) { rua.rotation.z = spr.ruZ.step(pose.ruZ, dt); rua.rotation.x = spr.ruX.step(pose.ruX, dt); }
-  if (lua) { lua.rotation.z = spr.luZ.step(pose.luZ, dt); lua.rotation.x = spr.luX.step(pose.luX, dt); }
-  if (rla) { rla.rotation.x = -0.15; rla.rotation.z = -0.08; }
-  if (lla) { lla.rotation.x = -0.15; lla.rotation.z =  0.08; }
+  if (rua) {
+    rua.rotation.z = spr.ruZ.step(pose.ruZ, dt);
+    rua.rotation.x = spr.ruX.step(pose.ruX + acopleCuerpo, dt);
+  }
+  if (lua) {
+    lua.rotation.z = spr.luZ.step(pose.luZ, dt);
+    lua.rotation.x = spr.luX.step(pose.luX + acopleCuerpo, dt);
+  }
 
-  // Caminata: se añade SOBRE los valores ya aplicados (+=)
-  updateWalking(dt);
+  // Antebrazos: flexión base (nunca brazos rectos) + deriva de ruido, con
+  // el mismo acoplamiento al cuerpo (a la mitad de fuerza que el upperArm).
+  // pose.rlX/llX (solo 'thinking' los define, ver getStatePose) reemplazan
+  // la base universal cuando el estado necesita algo distinto — la mano
+  // hacia la cara, en ese caso.
+  const codoR = pose.rlX ?? (S.codoFlexionBase + ruido(70, 0.09, t) * S.codoDerivaAmp);
+  const codoL = pose.llX ?? (S.codoFlexionBase + ruido(72, 0.09, t) * S.codoDerivaAmp);
+  if (rla) {
+    rla.rotation.x = spr.rlX.step(codoR + acopleCuerpo * 0.5, dt);
+    rla.rotation.z = -0.08 + ruido(71, 0.07, t) * 0.02;
+  }
+  if (lla) {
+    lla.rotation.x = spr.llX.step(codoL + acopleCuerpo * 0.5, dt);
+    lla.rotation.z =  0.08 + ruido(73, 0.07, t) * 0.02;
+  }
+
+  aplicarCurvaturaDedos(t);
+
+  // Giro de bailarina: se llama al final, después de que todo lo demás ya
+  // se posó con normalidad — así, si está activo, tiene la última palabra
+  // sobre cabeza/brazos/piernas/scene.rotation.y sin pelear con nada, y el
+  // resto del cuerpo (springs incluidos) sigue vivo por detrás para que la
+  // vuelta a 'esperando' no sea contra un hueco.
+  updateGiroBailarina(dt);
 
   vrm.update(dt); // spring bones + morphs internos del VRM — después de posar los huesos
 
@@ -1035,8 +1477,9 @@ animate();
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   renderer.setSize(window.innerWidth, window.innerHeight);
-  // charX y anchorY son fracciones normalizadas — se preservan solas. Solo hay
-  // que recalcular a qué coordenada de mundo corresponden con el nuevo aspect.
+  // anchorX/anchorY son fracciones normalizadas — se preservan solas. Solo hay
+  // que recalcular a qué coordenada de mundo corresponden con el nuevo aspect
+  // (y reposicionar el suelo synthwave si está activo).
   recalcularEncuadre();
 });
 

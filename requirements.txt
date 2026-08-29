@@ -82,10 +82,12 @@ praat-parselmouth==0.4.7
 propcache==0.5.2
 psutil==7.2.2
 PyAudio==0.2.14
+pycairo==1.29.1
 pycparser==3.0
 pydantic==2.13.4
 pydantic_core==2.46.4
 pydub==0.25.1
+PyGObject==3.58.0
 Pygments==2.20.0
 python-dateutil==2.9.0.post0
 python-multipart==0.0.32

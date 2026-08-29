@@ -22,8 +22,10 @@ sudo pacman -S --needed \
     nvidia nvidia-utils
 ```
 
-> Si no tienes GPU NVIDIA, omite `cuda cudnn nvidia nvidia-utils`.  
-> El overlay GTK necesita **system Python** (3.12+) con `python-gobject` y `webkit2gtk-4.1`.
+> Si no tienes GPU NVIDIA, omite `cuda cudnn nvidia nvidia-utils`.
+> `python-gobject`/`webkit2gtk-4.1`/`gtk3` son las libs y headers del **sistema** contra los que se
+> compilan `pygobject`/`pycairo` en el paso 4 — el overlay (`rem_overlay.py`) y la ventana
+> (`rem_chat.py`) corren igual con `venv/bin/python`, no necesitan un Python del sistema aparte.
 
 ---
 
@@ -108,8 +110,14 @@ pip install \
     huggingface_hub \
     ffmpeg-python \
     pyxdg \
-    rich
+    rich \
+    pygobject \
+    pycairo
 ```
+
+`pygobject`/`pycairo` son los bindings de Python a GTK3/WebKit2 que usan `rem_overlay.py` y
+`rem_chat.py` — compilan contra las libs de sistema instaladas en el paso 1
+(`python-gobject`/`webkit2gtk-4.1`/`gtk3`), sin depender de un intérprete de Python aparte.
 
 ---
 
@@ -257,8 +265,8 @@ Rem.py                  ← App principal (Tkinter UI, IA, voz, acciones)
   └── rem_avatar_server.py
         ├── HTTP :18765 → sirve rem_avatar.html + rem.vrm
         ├── WS   :18766 → envía estados (idle/talking/thinking/happy/sad...)
-        └── rem_overlay.py (system Python 3.12)
-              └── GTK3 + WebKit2 4.1 (overlay transparente fullscreen)
+        └── rem_overlay.py (venv/bin/python, vía sys.executable)
+              └── GTK3 + WebKit2 4.1 (overlay transparente)
                     └── Three.js + @pixiv/three-vrm (renderiza rem.vrm)
 ```
 
@@ -268,7 +276,7 @@ Rem.py                  ← App principal (Tkinter UI, IA, voz, acciones)
 
 ### El avatar 3D no aparece
 - Verifica que `webkit2gtk-4.1` esté instalado: `pacman -Qi webkit2gtk-4.1`
-- Lanza el overlay manualmente para ver errores: `/usr/bin/python3 rem_overlay.py`
+- Lanza el overlay manualmente para ver errores: `venv/bin/python rem_overlay.py`
 - El compositor (KWin/Mutter) debe soportar RGBA — en KDE activa "Efectos de escritorio"
 
 ### Error de audio / PortAudio crash

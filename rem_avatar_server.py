@@ -7,7 +7,9 @@ Servidor para el avatar 3D de Rem.
 import asyncio
 import threading
 import subprocess
+import socket
 import os
+import sys
 import time
 import json
 import logging
@@ -173,17 +175,77 @@ async def _ws_handler(websocket):
             _ws_clients.discard(websocket)
 
 
+_ws_bind_error = None  # excepción del bind, si falló — para que iniciar_servidor_avatar() la reporte
+
 async def _iniciar_ws():
-    global _ws_loop
+    """`_ws_ready.set()` va DESPUÉS de que websockets.serve() tenga éxito, no
+    antes. El bug original: si el puerto ya estaba ocupado (segunda instancia
+    de Rem/bench_chat corriendo), websockets.serve() lanzaba OSError dentro de
+    este hilo daemon — que muere en silencio, sin propagarse — pero
+    _ws_ready ya había quedado en True desde antes de intentar el bind, así
+    que iniciar_avatar() nunca se enteraba del fallo y lanzaba el overlay
+    igual, apuntando a un WS que en ESTE proceso nunca llegó a levantar (ver
+    CLAUDE.md, "Riesgo de conflicto de puertos"). Ahora _iniciar_ws() no
+    silencia el fallo: lo guarda en _ws_bind_error y deja _ws_ready sin
+    activar, para que el llamador lo note."""
+    global _ws_loop, _ws_bind_error
     _ws_loop = asyncio.get_running_loop()
-    _ws_ready.set()
     import websockets
-    async with websockets.serve(_ws_handler, "127.0.0.1", WS_PORT):
+    try:
+        server = await websockets.serve(_ws_handler, "127.0.0.1", WS_PORT)
+    except OSError as e:
+        _ws_bind_error = e
+        logger.error("[Avatar] no se pudo abrir el WebSocket en :%d (%s)", WS_PORT, e)
+        return
+    _ws_ready.set()
+    async with server:
         await asyncio.Future()
 
 
 def _thread_ws():
     asyncio.run(_iniciar_ws())
+
+
+def _puerto_activo(host: str, port: int, timeout: float = 0.3) -> bool:
+    """True si algo ya está escuchando en host:port. Se usa para detectar un
+    servidor de avatar ya corriendo en otro proceso, en vez de intentar
+    levantar uno nuevo y competir por el mismo puerto — la causa raíz del bug
+    de _ws_ready de arriba."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def iniciar_servidor_avatar() -> bool:
+    """Levanta HTTP (:18765) + WS (:18766) si no están corriendo ya en otro
+    proceso — sin lanzar el overlay (a diferencia de iniciar_avatar()).
+    Pensado para clientes como rem_chat.py que necesitan el servidor pero no
+    quieren spawnear el overlay transparente: pueden arrancar solos (levantan
+    el servidor ellos mismos) o junto a Rem.py/bench_chat.py/el overlay
+    (detectan que el servidor ya está arriba vía _puerto_activo() y se
+    conectan directo, sin competir por el puerto).
+
+    Devuelve True si el servidor (este proceso u otro) queda disponible."""
+    if _puerto_activo("127.0.0.1", HTTP_PORT):
+        print(f"[Avatar] Servidor ya corriendo en :{HTTP_PORT} — reusando, no se levanta uno nuevo.")
+        return True
+
+    th_http = threading.Thread(target=_iniciar_http, daemon=True, name="AvatarHTTP")
+    th_http.start()
+
+    th_ws = threading.Thread(target=_thread_ws, daemon=True, name="AvatarWS")
+    th_ws.start()
+
+    if not _ws_ready.wait(timeout=5.0):
+        print(f"[Avatar] el WebSocket no pudo levantar en :{WS_PORT} "
+              f"({_ws_bind_error or 'timeout esperando el bind'}) — "
+              "el avatar puede no sincronizar estado/audio.")
+        return False
+
+    print(f"[Avatar] Servidor propio levantado: HTTP :{HTTP_PORT}, WS :{WS_PORT}")
+    return True
 
 
 # ── Lanzar overlay GTK transparente ──────────────────────────────────
@@ -203,8 +265,15 @@ def _lanzar_overlay(layer: str = 'top'):
         # Diagnóstico: inspector remoto de WebKit — abrir http://127.0.0.1:9222
         # en un navegador normal para depurar el overlay como cualquier página.
         env['WEBKIT_INSPECTOR_SERVER'] = '127.0.0.1:9222'
+        # sys.executable, no una ruta hardcodeada al python3 del sistema: el
+        # venv sí puede tener GTK3/WebKit2/GtkLayerShell (ver rem_chat.py y
+        # CLAUDE.md, "el venv sí puede tener GTK") — pip install pygobject
+        # pycairo compila sin problema contra las libs ya instaladas en el
+        # sistema. Lanzar el overlay con el mismo intérprete que ya está
+        # corriendo este proceso (normalmente venv/bin/python) evita
+        # depender de qué haya en /usr/bin/python3 en absoluto.
         proc = subprocess.Popen(
-            ["/usr/bin/python3", overlay_script, "--layer", layer],
+            [sys.executable, overlay_script, "--layer", layer],
             stdout=_overlay_log,
             stderr=_overlay_log,
             env=env,
@@ -218,7 +287,8 @@ def _lanzar_overlay(layer: str = 'top'):
 
 # ── Iniciar todo ─────────────────────────────────────────────────────
 def iniciar_avatar(screen_w=1920, screen_h=1080):
-    """Llamar una vez al arrancar Rem."""
+    """Llamar una vez al arrancar Rem: servidor (o reusa uno ya corriendo,
+    ver iniciar_servidor_avatar()) + overlay GTK transparente."""
     global _overlay_proc
 
     # Capa configurable via REM_LAYER=top|overlay en el .env del proyecto
@@ -226,14 +296,7 @@ def iniciar_avatar(screen_w=1920, screen_h=1080):
     if layer not in ('top', 'overlay'):
         layer = 'top'
 
-    th_http = threading.Thread(target=_iniciar_http, daemon=True, name="AvatarHTTP")
-    th_http.start()
-
-    th_ws = threading.Thread(target=_thread_ws, daemon=True, name="AvatarWS")
-    th_ws.start()
-
-    # Esperar a que el WS esté listo (máx 5s) antes de lanzar el overlay
-    _ws_ready.wait(timeout=5.0)
+    iniciar_servidor_avatar()
 
     _overlay_proc = _lanzar_overlay(layer=layer)
     if _overlay_proc:

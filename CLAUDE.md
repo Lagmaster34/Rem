@@ -21,7 +21,7 @@ no basta con copiar la carpeta.
 | STT | `speech_recognition` + Google |
 | GUI | Tkinter (Python 3.10 en venv) |
 | Avatar 3D | Three.js + `@pixiv/three-vrm` en WebGL |
-| Overlay | GTK3 + WebKit2 (Python **system** 3.12, NO el venv) |
+| Overlay / ventana | GTK3 + WebKit2, `venv/bin/python` (PyGObject/pycairo instalados ahí, ver "El venv sí puede tener GTK" más abajo) |
 | fairseq | v0.12.2 con shim de compatibilidad (`fairseq_shim/`) |
 
 ## Archivos principales
@@ -29,8 +29,9 @@ no basta con copiar la carpeta.
 |---------|----------|
 | `Rem.py` | App principal: GUI Tkinter, chat, TTS/RVC, acciones, memoria |
 | `rem_avatar_server.py` | Servidor HTTP `:18765` + WebSocket `:18766` para el avatar |
-| `rem_overlay.py` | Overlay GTK transparente (usa `python3` del sistema, NO el venv) |
-| `rem_avatar.html` | Frontend Three.js/VRM del avatar — animación procedural |
+| `rem_overlay.py` | Overlay GTK transparente click-through (`?modo=overlay`) |
+| `rem_chat.py` | Ventana GTK decorada y con foco (`?modo=ventana`) — ver "Ventana de escritorio" más abajo |
+| `rem_avatar.html` | Frontend Three.js/VRM del avatar — animación procedural, un motor para los dos modos |
 | `fairseq_shim/__init__.py` | Shim que reemplaza el `__init__.py` de fairseq para compatibilidad PyTorch |
 | `fairseq_shim/checkpoint_utils.py` | Fork de fairseq con `torch.load(weights_only=False)` |
 | `apply_shim.py` | Copia `fairseq_shim/` sobre el fairseq instalado en `venv/`. Ejecutar tras cualquier reinstalación de fairseq |
@@ -313,7 +314,7 @@ Rem.py — hilo principal (Tkinter mainloop)
 rem_avatar_server.py (daemon thread desde Rem.py)
 ├── AvatarHTTP (daemon thread)          — sirve archivos en :18765
 ├── AvatarWS (daemon thread)            — WebSocket en :18766
-└── rem_overlay.py (subprocess hijo)    — Python system, GTK3 + WebKit2
+└── rem_overlay.py (subprocess hijo)    — sys.executable (venv/bin/python), GTK3 + WebKit2
 ```
 
 ## Locks de threading (en Rem.py)
@@ -397,11 +398,13 @@ python Rem.py
 Equivalente sin activar el venv: `venv/bin/python Rem.py`.
 
 **El intérprete correcto es siempre `venv/bin/python` (Python 3.10.14, con torch/fairseq/RVC
-instalados) — nunca el `python`/`python3` del sistema.** El `python3` del sistema (≥3.12) es solo
-para `rem_overlay.py` (GTK3 + WebKit2, ver más abajo) y no tiene ninguna de las dependencias del
-proyecto instaladas.
+instalados) — nunca el `python`/`python3` del sistema.** Esto ya incluye a `rem_overlay.py` y
+`rem_chat.py`: el `python3` del sistema no tiene ningún rol especial en el proyecto (ver "El venv sí
+puede tener GTK" más abajo) — PyGObject/pycairo están en `requirements.txt` igual que el resto.
 
-El overlay (`rem_overlay.py`) lo lanza Rem.py automáticamente usando `python3` del sistema.
+El overlay (`rem_overlay.py`) lo lanza `Rem.py`/`bench_chat.py`/`rem_chat.py` automáticamente vía
+`rem_avatar_server._lanzar_overlay()`, con `sys.executable` (el mismo intérprete del proceso que lo
+llama, normalmente `venv/bin/python`) — no una ruta hardcodeada.
 
 ## Problemas conocidos
 - **fairseq + PyTorch moderno**: los archivos en `fairseq_shim/` solucionan la incompatibilidad. Ver `INSTALL.md`.
@@ -411,7 +414,6 @@ El overlay (`rem_overlay.py`) lo lanza Rem.py automáticamente usando `python3` 
 - **RVC tarda en cargar**: los 30-60s solo aplican si cae a CPU (`only_cpu=True` o sin CUDA disponible). Con GPU (CUDA disponible) la carga es prácticamente instantánea, ~0,7s medidos en esta máquina. El TTS funciona sin RVC (sin conversión de voz).
 - **Avatar overlay no aparece**: verificar `webkit2gtk-4.1` instalado y compositor con soporte RGBA.
 - **Error de audio**: verificar que PipeWire esté corriendo (`systemctl --user status pipewire`).
-- **Python dual**: `rem_overlay.py` DEBE usar el `python3` del sistema (≥3.12 con GTK), NO el venv 3.10.
 
 ## Configuración de voz ganadora (comparación A/B)
 `VOZ_REM=es-VE-PaolaNeural`, `TTS_RATE=-8%`, `pitch_lvl=4`, `index_influence=0.75` — probado con
@@ -851,8 +853,17 @@ antes de ese fallo. `iniciar_avatar()` nunca se entera: `_lanzar_overlay()` se l
 overlay termina intentando hablarle a un WebSocket que en ESTE proceso nunca llegó a levantar (aunque
 sí puede haber uno ajeno, del otro proceso, sirviendo ese mismo puerto). Si dos instancias de
 Rem/bench_chat corren en simultáneo, la segunda puede terminar así — con un overlay que se ve
-"no funcionar" sin ningún error visible. No se tocó porque no se confirmó que sea la causa real del
-reporte; si vuelve a pasar, revisar primero si hay más de un proceso corriendo a la vez.
+"no funcionar" sin ningún error visible. En su momento no se tocó porque no se había confirmado que
+fuera la causa real de aquel reporte.
+
+**Arreglado al construir `rem_chat.py`** (ver más abajo), que sí necesitaba detectar de verdad si el
+servidor ya estaba arriba — no alcanzaba con seguir sin tocarlo. `_iniciar_ws()` ahora solo llama a
+`_ws_ready.set()` **después** de que `websockets.serve()` tiene éxito; si falla, guarda la excepción
+en `_ws_bind_error` y deja `_ws_ready` sin activar. La función nueva `iniciar_servidor_avatar()`
+(HTTP+WS, sin el overlay) primero prueba con un connect a `127.0.0.1:18765` si ya hay algo
+escuchando — si lo hay, ni intenta levantar un server nuevo, evitando la carrera de raíz en vez de
+solo manejarla mejor. `iniciar_avatar()` (la usada por `Rem.py`) ahora llama a
+`iniciar_servidor_avatar()` en vez de tener su propia copia de esa lógica.
 
 ## Segunda regresión del overlay: no es el bug de _ws_ready, es un crash interno de WebKit
 Investigado tras un nuevo reporte de que el overlay volvió a no aparecer. Revisando
@@ -909,6 +920,250 @@ recién hechos al archivo si no se limpia):
 3. Falla persistente (archivo ausente durante toda la ventana de prueba): se ven los 5 intentos
    con backoff creciente (1000, 2000, 4000, 5000, y el quinto ya sin más espera) y el mensaje final
    de rendición — confirma que no reintenta indefinidamente.
+
+## Ventana de escritorio (`rem_chat.py`) — un motor, dos modos
+Primera etapa de un frontend de chat aparte del overlay: solo la ventana y la escena 3D, sin el
+chat en sí todavía (viene después). `rem_chat.py` es GTK3 + WebKit2 igual que `rem_overlay.py`, pero
+lo opuesto a propósito: ventana normal decorada, opaca, con foco de teclado — sin
+`gtk-layer-shell`, sin transparencia, sin click-through. Tamaño por defecto 1100×620,
+redimensionable, título "Rem".
+
+**El venv sí puede tener GTK.** La suposición previa ("`rem_overlay.py` DEBE usar el python3 del
+sistema, NO el venv") seguía siendo cierta *porque nadie lo había intentado*, no porque fuera
+imposible: `pip install pygobject pycairo` en el venv compiló sin problema contra las libs
+GTK3/WebKit2GTK-4.1 (y `GtkLayerShell` — se probó aparte, también disponible) ya instaladas en el
+sistema (Arch no separa paquetes `-dev`, así que los headers/`.pc` ya estaban ahí). Verificado en
+vivo, ventana real renderizando. `pygobject`/`pycairo` quedaron agregados a `requirements.txt`.
+
+**`rem_overlay.py` también pasó al venv** — no se quedó atrás una vez confirmado que podía moverse.
+`rem_avatar_server._lanzar_overlay()` lanzaba el overlay con una ruta hardcodeada,
+`"/usr/bin/python3"`; ahora usa `sys.executable` — el mismo intérprete que ya está corriendo el
+proceso que llama a `_lanzar_overlay()` (normalmente `venv/bin/python`, sea `Rem.py`,
+`bench_chat.py` o `rem_chat.py`), sin asumir nada sobre qué hay instalado en el `python3` del
+sistema. Verificado en vivo: el overlay corre como
+`/mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_overlay.py --layer top` (confirmado con
+`ps aux`), carga igual que siempre (mismos números de encuadre, `[Modo] activo: overlay`, sin
+ninguna línea `[Suelo]`) — cero diferencia de comportamiento, solo cambió qué intérprete lo hospeda.
+La nota vieja de "Python dual" (`rem_overlay.py` DEBE usar el python3 del sistema) ya no es cierta y
+se sacó de "Problemas conocidos" — los dos scripts (`rem_overlay.py` y `rem_chat.py`) corren con
+`venv/bin/python` ahora. El `python3` del sistema (≥3.12) queda sin ningún rol especial en el
+proyecto salvo que alguien decida usarlo a mano.
+
+**Un solo `rem_avatar.html`, no duplicado.** `?modo=overlay|ventana` en la URL decide la escena
+(`overlay` por defecto si el parámetro falta o no se reconoce): `overlay` es el comportamiento de
+siempre (fondo transparente, sin suelo, `anchorX=0.5`, pensado para la superficie angosta 520×860
+del overlay real); `ventana` agrega el suelo synthwave y centra a Rem en el tercio izquierdo del
+ancho (`anchorX = 1/6`). `CONFIG.modos.{overlay,ventana}.anchorX` reemplaza el viejo
+`anchorX`/`walkLeft`/`walkRight` fijos — sin caminata (ver más abajo) alcanza con un valor por modo.
+`_ajustarAnclasPorAspect()` se mantiene para el caso general (una superficie angosta y vertical
+sigue necesitando colapsar a 0,5, sea cual sea el modo) pero ya no toca nada de caminata.
+
+**Log propio (`rem_chat.log`) — `os.dup2`, no `sys.stdout = archivo`.** Primer intento (reasignar
+`sys.stdout`/`sys.stderr` a nivel de Python) no funcionó: WebKit2 escribe su volcado de consola
+(`set_enable_write_console_messages_to_stdout`) directo al file descriptor 1 nativo del proceso, sin
+pasar por el objeto `sys.stdout` de Python — reasignar solo ese objeto capturaba los `print()`
+propios pero dejaba afuera justo el volcado de consola, que es lo que más importa poder ver.
+Confirmado en vivo: con la reasignación simple, `rem_chat.log` solo tenía los `print()` de Python;
+el volcado de WebKit se iba a donde estuviera apuntando el fd 1 original (la terminal, si se lanza
+directo). Arreglado con `os.dup2(log_file.fileno(), sys.stdout.fileno())` (y lo mismo para stderr) —
+mismo efecto que `subprocess.Popen(..., stdout=archivo)` logra para el overlay, pero hecho desde
+adentro del propio proceso, porque `rem_chat.py` no se spawnea a sí mismo.
+
+**Inspector remoto en un puerto distinto al del overlay**: `WEBKIT_INSPECTOR_SERVER=127.0.0.1:9223`
+(el overlay usa `:9222`) para que las dos ventanas puedan correr juntas sin pisarse el puerto del
+inspector — mismo motivo que el resto de este apartado.
+
+**Solo servidor, sin overlay**: `rem_avatar_server.iniciar_servidor_avatar()` (nueva función, ver
+"Riesgo de conflicto de puertos" más arriba) levanta HTTP+WS o detecta que ya están corriendo — a
+diferencia de `iniciar_avatar()`, no lanza `rem_overlay.py` como subproceso. Así `rem_chat.py` puede
+arrancar solo (levanta el servidor él mismo) o junto al overlay/`Rem.py`/`bench_chat.py` (se conecta
+al servidor que ya esté arriba). Verificado en vivo: `rem_overlay.py` lanzado por separado, apuntando
+al servidor que `rem_chat.py` ya había levantado, cargó y funcionó igual que siempre (mismos números
+de encuadre que antes de este cambio: `z≈7.23 anchoVisible≈2.18`, sin ninguna línea `[Suelo]` en su
+log — modo overlay intacto).
+
+**Tiling de Hyprland ignora `set_default_size()`** — no es un bug de `rem_chat.py`, es la política
+por defecto de un WM tiling: sin una `windowrulev2` para floatear la clase `rem_chat.py`, Hyprland
+igual tiling-ea la ventana al tile que le toque en vez de respetar 1100×620. La escena ya lo tolera
+bien (el listener de `resize` recalcula el encuadre solo, probado en vivo con la ventana en
+~1808×1018), pero si se quiere el tamaño real pedido hace falta algo como
+`windowrulev2 = float, class:^(rem_chat.py)$` en la config de Hyprland — eso es decisión/config del
+usuario, no algo para forzar desde el código Python.
+
+## Suelo de cuadrícula synthwave y fin de la caminata
+`crearSueloSynthwave()` (solo si `MODO === 'ventana'`) arma un `THREE.GridHelper` (líneas cian,
+`CONFIG.suelo.colorLinea`) más una `THREE.Line` de horizonte aparte, más brillante
+(`colorHorizonte`) y con `fog: false` (no se apaga con la distancia — es la marca de "hasta acá se
+ve", tiene que quedar siempre legible). La perspectiva hacia el horizonte la da `THREE.Fog`
+(`nieblaCerca`/`nieblaLejos`), no geometría extra — nada de reflejos ni post-procesado, la GPU de
+esta máquina ya anda justa (ver la calibración de `num_gpu` más arriba). `posicionarSuelo()` alinea
+el suelo con los pies de Rem (`_modeloPositionY + (_modeloCentroLocal - _modeloAlturaLocal / 2)`),
+llamado desde `recalcularEncuadre()` cada vez que cambia la medición.
+
+**Bug encontrado en vivo, no obvio**: la línea de horizonte no aparecía en pantalla, sin ningún error
+en consola. Causa: `camera.far` estaba en `20` (valor pensado solo para el overlay sin suelo), pero
+la línea de horizonte queda a `camera.position.z + CONFIG.suelo.tamano/2` de la cámara — con los
+valores por defecto, ~27 unidades — **más allá del plano de recorte lejano**, así que WebGL la
+descartaba en silencio antes de llegar a rasterizar nada. Subido a `far=45`. Verificado en vivo con
+captura de pantalla: sin el fix, cuadrícula visible pero sin horizonte; con el fix, línea de
+horizonte cian claramente visible en el punto de fuga.
+
+**Caminata eliminada por completo**: `tickPet()`, `updateWalking()`, `charDir`, `walkBlend`,
+`walkPhase`, `petEstado`, `petTimer` y los anclajes `walkLeft`/`walkRight` — Rem queda fija en su
+sitio (`CONFIG.pet.anchorX`, ya no un `charX` mutable). Esto simplificó bastante
+`recalcularEncuadre()`, que ya no necesita decidir si colapsar un rango de caminata además de la
+posición de reposo.
+
+## Animación natural con ruido Perlin, en vez de sumas de senos
+`getStatePose()` — las poses de brazos/cabeza/torso de cada estado emocional eran productos de
+`Math.sin()` a distintas frecuencias, que técnicamente **siguen siendo periódicas** aunque no lo
+parezca a simple vista, y el ojo detecta esa periodicidad en pocos segundos (se lee como robot, no
+como alguien vivo). Reemplazado por ruido Perlin 1D embebido (`noise1D()`, tabla de permutación
+clásica de Ken Perlin, sin dependencias externas — la misma técnica que "flow noise" para animación
+idle procedural): cada canal (`hX`/`hY`/`hZ`/`bZ`/`ruZ`/`luZ`/`ruX`/`luX`) es
+`noise1D(t * frecuencia + fase)`, con una fase fija propia por canal (`ruido(fase, freq, t)`) para
+que no se muevan todos en sincronía. La respiración (`bX`, y ahora también pecho/hombros
+directamente en `animate()`) se dejó con un seno limpio a propósito — la respiración real SÍ es
+rítmica, eso no era lo que hacía ver a Rem como un robot.
+
+- **Respiración en pecho y hombros**: `chestB.rotation.x` (ya existía) más `leftShoulder`/
+  `rightShoulder.rotation.z` (nuevo), todos del mismo `Math.sin(t * 0.8)` — los hombros solo suben
+  en la inhalación (`Math.max(0, ...)`), no oscilan simétricos, para que se lea como una elevación
+  real. Confirmado en vivo que este modelo trae los huesos `leftShoulder`/`rightShoulder` mapeados
+  (log `[VRM] lookAt... leftShoulder/rightShoulder: true true`).
+- **Traslado de peso** (`updateTrasladoPeso()`): reemplaza el bob/rock que aportaba la caminata
+  eliminada — sin esto, una cadera perfectamente inmóvil se ve tan artificial como una cabeza que no
+  se mueve nunca. Ruido a frecuencia muy baja (`freq=0.05`, período ~20s) a propósito: un traslado de
+  peso real es lento y ocasional, no un tic constante.
+- **Micro-saccades** (`updateSaccades()`): distinto del drift de cabeza que ya existía
+  (`updateLook()`) — los ojos saltan cada 0,5-2s a un punto nuevo dentro de un cono chico, con
+  duración de salto de 20-40ms (usando el mismo `_fade()` del ruido para el suavizado del salto, no
+  un tirón lineal). Vía `vrm.lookAt.yaw`/`.pitch` (grados), que `vrm.update()` aplica a los huesos
+  `leftEye`/`rightEye` a través del applier que three-vrm arma solo al cargar el modelo — confirmado
+  en vivo que `vrm.lookAt` existe en este VRM (mismo log de arriba). En estado `thinking` el cono de
+  saccades se centra en el mismo punto arriba-a-un-lado que ya mira la cabeza, no en el centro, para
+  que el ojo no se pierda del gesto.
+- **Gesticulación al hablar con ruido**: el caso `talking` de `getStatePose()` ya no usa
+  `Math.sin()` para los brazos — cada brazo tiene su propio canal de ruido con amplitud generosa,
+  para que se lea como alguien hablando con las manos, no como un metrónomo.
+- **Pose de `thinking` distinta a propósito**: mirada arriba a un lado (cabeza vía `updateLook()` Y
+  ahora también los ojos vía el sesgo del cono de saccades), mano derecha elevada cerca de la cara
+  (`ruZ: -1.05`), y el multiplicador de velocidad más bajo de todos los estados (`SPEEDS.thinking =
+  0.5`) — ya existía en germen antes de este cambio, se conservó y se reforzó con las dos capas de
+  mirada coincidiendo en el mismo punto.
+- `angry` pasó de `sign(Math.sin())*Math.sin()` (brusco pero igual de periódico, con un período largo
+  que lo disimulaba a corto plazo) a ruido de frecuencia alta — mismo carácter entrecortado a la
+  vista, sin el patrón exacto repitiéndose.
+
+**Verificado en vivo**: los 7 estados (`idle/talking/thinking/happy/sad/angry/surprised`) probados en
+secuencia vía WebSocket, sin ningún error nuevo en `rem_chat.log` más allá de los crashes conocidos
+del Network Process de WebKit (ver "Segunda regresión del overlay" más arriba, no relacionados).
+
+## Brazos, manos y giro de bailarina
+Los brazos estaban en gran parte estáticos (antebrazo con valores fijos que nunca cambiaban, brazos
+pegados al cuerpo, dedos sin usar — "señal de muñeco"). Se les dio acople al cuerpo, curvatura de
+dedos, gesticulación al hablar, y se agregó una animación de reposo puntual (giro de 360°). Todo en
+`rem_avatar.html`, sin tocar Python.
+
+- **Antebrazos**: pasaron de `rla.rotation.x = -0.15` fijo a una flexión base
+  (`CONFIG.brazos.codoFlexionBase`) más deriva de ruido Perlin, con `spr.rlX`/`spr.llX` (nuevos
+  canales de `Spring`) suavizando el objetivo. También reciben la mitad del acople al cuerpo que el
+  upperArm (ver más abajo), para que el antebrazo no se quede rígido mientras el brazo entero se
+  inclina.
+- **Separación del cuerpo**: `ruZ`/`luZ` en reposo pasaron de ±1,28 (pegados) a
+  `CONFIG.brazos.separacion` (±1,20 por defecto), con `CONFIG.brazos.balanceoDelante` sumado al
+  `rotation.x` del upperArm para que cuelguen hacia delante en vez de planos contra el costado.
+- **Hombros**: `leftShoulder`/`rightShoulder` (mapeados pero sin usar hasta ahora) suben/bajan con la
+  fase de respiración y se inclinan con `pesoRock` (el valor de traslado de peso que ahora devuelve
+  `updateTrasladoPeso()`, antes no devolvía nada).
+- **Acople brazo-cuerpo**: en vez de ruido independiente, el objetivo de `rotation.x` de cada
+  upperArm suma `acopleCuerpo = spr.bX.v * CONFIG.brazos.acopleRespiracion + spr.bZ.v *
+  CONFIG.brazos.acopleInclinacion` — los valores ya amortiguados (`.v`, la velocidad/posición actual
+  del spring del torso, no el objetivo crudo) del spring de respiración/inclinación del torso. Como
+  los brazos tienen su propio spring encima, el resultado es un retardo compuesto (el spring del
+  torso ya atrasa la respiración real, y el del brazo atrasa aún más ese valor) sin necesidad de un
+  sistema de lag aparte — es lo que hace que, cuando el cuerpo se inclina, los brazos se lean
+  "yendo detrás" en vez de moverse a la vez.
+- **Dedos**: las 30 cadenas de falange (28 realmente presentes en este modelo — el pulgar solo tiene
+  Proximal/Distal, sin Intermediate, confirmado en vivo: `28/30 mapeados — faltan:
+  leftThumbIntermediate, rightThumbIntermediate`) tenían rotación en 0 siempre. `aplicarCurvaturaDedos()`
+  aplica una curvatura de reposo decreciente hacia la punta (`CONFIG.dedos.curlProximal >
+  curlIntermedio > curlDistal`) sobre `rotation.z`, con el pulgar ligeramente opuesto
+  (`curlPulgar` + un `rotation.y` fijo) y una deriva de ruido muy lenta (`derivaFreq = 0.025`) para
+  que no se vean congelados. **Verificado en vivo con captura ampliada de ambas manos**: la
+  curvatura se ve natural (dedos plegados hacia la palma, no un abanico ni una torsión rara) — el eje
+  (`rotation.z`) y el signo espejado (`signo = left?-1:1`) confirmados correctos a simple vista, no
+  quedó como una suposición sin probar.
+- **Gesticulación al hablar**: el caso `talking` de `getStatePose()` combina dos señales para la
+  amplitud del gesto (`gestoAmp`, 0..1): un envolvente de ruido con `Math.max(0, ruido(...))` (da
+  pausas reales de arranca/para, no oscilación continua) y `_hablaEnergia` (una señal nueva, suavizada
+  con `lerp(..., dt*8)` hacia `_jawApertura*1.3` mientras hay audio sonando — reusa la apertura de
+  mandíbula que ya alimenta el lipsync como proxy barato de "energía del habla", sin agregar ningún
+  análisis de audio nuevo). Las dos se combinan (`clamp(envolvente*gestoRuidoAmp +
+  _hablaEnergia*gestoHablaAmp, 0, 1)`) en vez de elegir una sola, así que el gesto tiene both un
+  arranque/parada visible y responde a si Rem está realmente vocalizando fuerte en ese instante.
+- **Pose de `thinking`**: reescrita para que el brazo acompañe la idea de "mano hacia la cara" — codo
+  flexionado fuerte (`rlX: -0.95`), upperArm elevado (`ruX: 0.35`) y rotado hacia el centro
+  (`ruZ: -0.85`, notablemente menos separado que el reposo normal).
+- **Giro de bailarina** (`updateGiroBailarina()`, máquina de estados `esperando → girando →
+  volviendo → esperando`, mismo patrón que `updateSaccades()`/`updateBlink()`): tras un intervalo
+  aleatorio en `[CONFIG.giro.intervaloMinS, intervaloMaxS]` de estado `idle` sin audio
+  (`_giroElegible()`), da una vuelta completa en `vrm.scene.rotation.y` con `easeInOutCubic` (nunca
+  velocidad constante), con pierna trasera elevándose (`rightUpperLeg`/`rightLowerLeg`), cabeza
+  mirando hacia abajo y ladeada, y brazos separándose — todo modulado por un mismo envolvente
+  `Math.sin(progreso * Math.PI)` (0 en los extremos, 1 a mitad de giro) para que entren y salgan
+  sincronizados. **Falda y pelo no se tocan a propósito** — las cadenas de spring bones del modelo
+  (48 falda / 43 pelo) reaccionan solas a la aceleración de la curva de giro.
+  - Interrupción: si deja de cumplirse `_giroElegible()` a mitad de `girando` (llega audio o cambia
+    el estado), pasa a `volviendo` e interpola de vuelta a la orientación frontal más cercana
+    (`_anguloFrontalMasCercano()`, el múltiplo de 2π más próximo a `Math.PI` desde el ángulo actual —
+    nunca un salto, sea cual sea el punto del giro en el que se abortó) en
+    `CONFIG.giro.volverDuracionS` (~400ms).
+  - `updateGiroBailarina()` corre al final de `animate()`, después de que el resto del cuerpo ya se
+    posó con normalidad — tiene la última palabra sobre los huesos que controla, pero no congela los
+    springs de fondo, así que al volver a `esperando` la transición parte de valores ya razonables.
+  - **Verificado en vivo end-to-end** (con `CONFIG.giro.intervaloMinS/MaxS` bajados temporalmente a
+    3-5s solo para la prueba, revertidos a 20/30 después) con logs de transición de fase agregados a
+    cada cambio de `_giroFase`: ciclo autónomo completo (`arranca → completo → arranca...`) sin
+    intervención, capturas de pantalla a mitad de giro confirmando la falda volando por inercia sola
+    y la cabeza/pierna en posición, e interrupción real disparada por WebSocket
+    (`enviar_estado("talking")` a mitad de un giro en progreso 0.25) confirmando el aborto limpio y
+    el reencendido del temporizador de espera (`[Giro] interrumpido en progreso=0.25, volviendo a
+    frontal` → `[Giro] de vuelta en frontal, próximo en ~4.7s`).
+
+**Bug encontrado y corregido durante la implementación**: el bloque de antebrazos en `animate()`
+usaba `ts` (la variable de tiempo escalada por emoción, que solo existe como local dentro de
+`getStatePose(t)`) en vez de `t` (tiempo bruto, la única variable de tiempo real en el scope de
+`animate()`) — `ReferenceError: Can't find variable: ts` en cada frame, capturado en `rem_chat.log`
+antes de arreglarse. `t` es suficiente para una deriva sutil de codo, no hacía falta el escalado por
+emoción ahí.
+
+**Rangos de valores** (todo en `CONFIG`, sin tocar el resto del código):
+
+| Bloque | Clave | Controla |
+|---|---|---|
+| `brazos` | `separacion` (1.20) | Ángulo de reposo de `ruZ`/`luZ` — más alto separa más los brazos del cuerpo |
+| | `balanceoDelante` (0.14) | Inclinación hacia delante del upperArm en reposo |
+| | `codoFlexionBase` (-0.30) | Flexión de codo en reposo — más negativo, brazo más doblado |
+| | `codoDerivaAmp` (0.05) | Amplitud de la deriva de ruido del codo |
+| | `acopleRespiracion` (0.35) | Cuánto de la respiración del torso se filtra al balanceo del brazo |
+| | `acopleInclinacion` (0.25) | Cuánto del traslado de peso del torso se filtra al brazo |
+| | `gestoRuidoAmp` (1.6) | Cuánto empuja el envolvente de ruido la amplitud del gesto al hablar |
+| | `gestoHablaAmp` (0.5) | Cuánto empuja la energía real del habla (apertura de mandíbula) |
+| `dedos` | `curlProximal` (0.55) | Curvatura de la falange proximal (la más cercana a la mano) |
+| | `curlIntermedio` (0.42) | Curvatura de la falange intermedia |
+| | `curlDistal` (0.28) | Curvatura de la falange distal (la punta) |
+| | `curlPulgar` (0.32) | Curvatura del pulgar (solo tiene proximal/distal en este modelo) |
+| | `derivaAmp` (0.05) | Amplitud de la micro-variación lenta de los dedos |
+| | `derivaFreq` (0.025) | Frecuencia de esa deriva — más bajo, más lenta |
+| `giro` | `intervaloMinS`/`intervaloMaxS` (20/30) | Rango de segundos en idle+sin audio antes de poder disparar |
+| | `duracionS` (3.5) | Duración del giro completo, en segundos |
+| | `alturaPieRad` (0.55) | Cuánto se eleva el pie trasero (rad) |
+| | `flexionRodillaRad` (0.9) | Flexión de la rodilla de la pierna que se eleva |
+| | `inclinacionCabezaRad` (0.35) | Inclinación de cabeza hacia abajo durante el giro |
+| | `ladeoCabezaRad` (0.18) | Ladeo lateral de cabeza durante el giro |
+| | `separacionBrazosRad` (0.35) | Cuánto se separan más los brazos (encima de `brazos.separacion`) |
+| | `volverDuracionS` (0.4) | Duración de la interpolación de vuelta si se interrumpe |
 
 
     # IMPORTANTE: 
