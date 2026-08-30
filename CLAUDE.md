@@ -31,7 +31,9 @@ no basta con copiar la carpeta.
 | `rem_avatar_server.py` | Servidor HTTP `:18765` + WebSocket `:18766` para el avatar |
 | `rem_overlay.py` | Overlay GTK transparente click-through (`?modo=overlay`) |
 | `rem_chat.py` | Ventana GTK decorada y con foco (`?modo=ventana`) — ver "Ventana de escritorio" más abajo |
-| `rem_avatar.html` | Frontend Three.js/VRM del avatar — animación procedural, un motor para los dos modos |
+| `rem_avatar.html` | Frontend Three.js/VRM del avatar — animación procedural + panel de chat HTML/CSS/JS (solo modo ventana), un motor para los dos modos |
+| `chat_sesion.py` | `SesionChat` + `procesar_turno()` — estado de una conversación y el turno "en crudo" contra el LLM, compartido entre `bench_chat.py` y el panel de chat de `rem_chat.py`. Ver "Panel de chat" más abajo |
+| `habla.py` | Pipeline de voz de un turno (TTS -> RVC -> `enviar_audio()`), compartido entre `bench_chat.py` y el panel de chat. Ver "Voz en la ventana de chat" más abajo |
 | `fairseq_shim/__init__.py` | Shim que reemplaza el `__init__.py` de fairseq para compatibilidad PyTorch |
 | `fairseq_shim/checkpoint_utils.py` | Fork de fairseq con `torch.load(weights_only=False)` |
 | `apply_shim.py` | Copia `fairseq_shim/` sobre el fairseq instalado en `venv/`. Ejecutar tras cualquier reinstalación de fairseq |
@@ -739,7 +741,10 @@ controla un mecanismo distinto de `media-playback-requires-user-gesture`.
 - Se eliminó el mensaje `{"tipo": "audio_bloqueado"}` que el frontend mandaba de vuelta por
   WebSocket y el fallback a `sounddevice` en `rem_avatar_server.py` que dependía de él — ya no hace
   falta, `_ws_handler` volvió a descartar todo lo que llega del cliente (solo le importa el cierre
-  de conexión, para el log breve en vez de traceback).
+  de conexión, para el log breve en vez de traceback). **Ya no es así**: `_ws_handler` sí procesa
+  mensajes del cliente desde que existe el panel de chat (`chat_message`/`cambiar_modo`/`reset`) —
+  ver "WebSocket bidireccional y chat_sesion.py" más abajo. Este bullet queda como registro de por
+  qué el WS empezó siendo de una sola vía, no como descripción del estado actual.
 
 ## Regresión repetida de la política de autoplay
 `play()` volvió a rechazarse con `NotAllowedError` una segunda vez, con el mismo síntoma que la
@@ -1164,6 +1169,298 @@ emoción ahí.
 | | `ladeoCabezaRad` (0.18) | Ladeo lateral de cabeza durante el giro |
 | | `separacionBrazosRad` (0.35) | Cuánto se separan más los brazos (encima de `brazos.separacion`) |
 | | `volverDuracionS` (0.4) | Duración de la interpolación de vuelta si se interrumpe |
+
+## Panel de chat en la ventana de escritorio (solo modo "ventana")
+`rem_chat.py` ya tenía la ventana y la escena 3D; faltaba el chat en sí. Se agregó como
+HTML/CSS/JS vanilla dentro de `rem_avatar.html` (nada de frameworks ni dependencias externas,
+como pide el proyecto) — ocupa la mitad derecha de la ventana, opaca, encima del canvas. En modo
+overlay no se crea nada: `crearPanelChat()` arranca con `if (MODO !== 'ventana') return;`, mismo
+patrón de guarda que ya usaba `crearSueloSynthwave()`.
+
+**Por qué el canvas se deja a tamaño completo en vez de reducirlo a la mitad izquierda**: se
+evaluaron dos diseños — (a) canvas a ancho completo con el panel como `<div>` opaco encima
+(`position:fixed; right:0; width:50%`), o (b) redimensionar de verdad el renderer/cámara a la
+mitad izquierda. Se eligió (a): más simple, cero riesgo de romper `_ajustarAnclasPorAspect()` (que
+colapsa `anchorX` a 0,5 para superficies angostas — una mitad de ventana normal, ~550×620, cae en
+ese umbral y hubiera recentrado a Rem en su propia mitad en vez de mantener la composición "tercio
+izquierdo" pensada para el ancho completo) y sin cambios a `recalcularEncuadre()`/el listener de
+`resize`, ya probados. El costo (renderizar píxeles que quedan tapados por el panel) es
+insignificante para esta escena (una malla + una cuadrícula, sin post-procesado) — no es
+comparable al problema real de rendimiento que motivó acotar la layer surface del overlay (ver
+"Layer surface acotada" más arriba), que era un canvas del tamaño del MONITOR ENTERO
+permanentemente, no la mitad de una ventana normal.
+
+**Estructura**: header (selector de modo ia/eco + botón de reset) → lista de mensajes (scrolleable)
+→ línea de estado (pensando/hablando) → input + botón de enviar. Burbujas diferenciadas: `.msg.user`
+alineada a la derecha, fondo sólido; `.msg.rem` alineada a la izquierda, con borde y glow cian sutil
+(`box-shadow`) a tono con el suelo synthwave (reusa los mismos tonos que `CONFIG.suelo.colorLinea`/
+`colorFondo`, hardcodeados en el CSS del `<head>` porque el CSS no puede leer `CONFIG`, que se
+define recién en el `<script type="module">`). Tipografía: pila del sistema
+(`-apple-system, ..., sans-serif`) — sin cargar ninguna fuente externa.
+
+**Streaming palabra a palabra**: cada `chat_delta` que llega por WebSocket se concatena directo al
+`textContent` de la burbuja de Rem en curso (`burbujaRemActual`), sin esperar a que dividir_en_
+oraciones() ni ningún otro agrupador termine — confirmado en vivo que el backend manda fragmentos
+sub-palabra reales (`"Est"`, `"oy"`, `" prob"`, ...), no oraciones completas de una. La burbuja de
+Rem se crea recién con el PRIMER `chat_delta` (no al mandar el mensaje), así el estado "pensando"
+(sin burbuja todavía) se distingue visualmente de "hablando" (burbuja creciendo).
+
+**Indicador de estado, en sintonía con el estado real del avatar**: el panel no inventa un estado
+propio — dispara los mismos `enviar_estado()` que ya mueven el cuerpo de Rem (thinking al arrancar
+el turno, talking con el primer fragmento, idle al terminar o si algo falla), así que el indicador
+de texto del panel (con un punto que pulsa) y la pose/gesticulación del avatar quedan
+sincronizados sin necesidad de audio real — este panel es solo texto, no pasa por TTS/RVC/lipsync
+en absoluto (el pipeline de voz no se tocó).
+
+## WebSocket bidireccional y `chat_sesion.py`
+Antes el WS de `:18766` era de una sola vía (Python → browser: estado/audio). `_ws_handler()` en
+`rem_avatar_server.py` ahora también procesa lo que manda el cliente, con mensajes tipados por un
+campo `tipo`:
+
+| Dirección | tipo | Payload | Qué hace |
+|---|---|---|---|
+| browser → Python | `chat_message` | `{texto}` | Corre un turno completo contra el LLM activo |
+| browser → Python | `cambiar_modo` | `{modo: "ia"\|"eco"}` | Cambia el provider de la sesión de chat compartida |
+| browser → Python | `reset` | — | Limpia el historial de la sesión de chat compartida |
+| Python → browser | `chat_delta` | `{texto}` | Un fragmento de la respuesta, tal como llega del LLM |
+| Python → browser | `chat_done` | — | Fin del turno |
+| Python → browser | `modo_actual` | `{modo}` | El modo activo — se manda tras cualquier cambio real, venga de donde venga |
+| Python → browser | `error` | `{mensaje}` | Algo falló (turno ya en curso, falta API key, excepción del provider, modo inválido) |
+
+Los tipos ya existentes (`estado`, `{tipo: "audio", ...}`) siguen igual — el frontend solo agregó
+más ramas al mismo `if/else if` de `_ws.onmessage`, no se tocó el pipeline de audio/lipsync.
+
+**`SesionChat` se extrajo de `bench_chat.py` a `chat_sesion.py`** (junto con una función nueva,
+`procesar_turno()`) para que el REPL y el panel de chat usen la misma clase en vez de dos copias.
+`procesar_turno()` es una versión "en crudo" del turno: emite cada `TextDelta` tal como llega vía
+un callback `on_delta`, sin agrupar por oración — a propósito distinta de `_chat()` en
+`bench_chat.py`, que sigue intacta (agrupa con `dividir_en_oraciones()` para encolar hacia
+TTS/RVC/avatar). No se tocó `_chat()` ni nada del pipeline de voz: el panel de chat es un consumidor
+nuevo y separado, no un reemplazo.
+
+**La sesión de chat es un singleton compartido, no uno por consumidor**: `rem_avatar_server.
+obtener_sesion_chat()` construye (perezoso, recién en el primer uso real) una única `SesionChat` +
+snapshot de memoria por proceso, y tanto `_ws_handler()` (panel HTML) como `repl()` en
+`bench_chat.py` la usan — la MISMA instancia cuando ambos corren en el mismo proceso (que es el caso
+normal: `bench_chat.py` levanta `iniciar_avatar()`, que es este mismo módulo). Por eso cambiar de
+modo desde el botón del panel también lo ve el comando `modo` del REPL y viceversa: no son dos
+estados sincronizados por mensajes, son el mismo objeto. `cambiar_modo_chat()` es el punto de
+entrada único para cambiar de modo (lo llaman tanto `_ws_handler` como el comando `modo` del REPL) —
+además de mutar la sesión, manda `modo_actual` por WebSocket, así que un cambio disparado desde el
+REPL también sincroniza el selector del panel.
+
+Perezoso a propósito: `Rem.py` también importa `rem_avatar_server` pero tiene su propio pipeline de
+conversación aparte (Tkinter, `preguntar_groq()`) y no usa nada de esto — construir la sesión
+recién en el primer `chat_message`/`cambiar_modo`/`reset` real evita pagar `get_provider()` (que
+puede lanzar sin API key) o leer `memoria_larga.json`/`memoria_sistema.json` para quien no la pide.
+
+**Turnos serializados con un flag, no una cola**: `_procesar_mensaje_chat()` rechaza un
+`chat_message` nuevo con un `error` si ya hay un turno en curso (`_chat_turno_activo`, guardado con
+un `threading.Lock` normal, nunca sostenido a través de un `await` — sostener un `threading.Lock`
+mientras se espera algo en un loop de asyncio de un solo hilo puede colgar ese mismo hilo si otra
+tarea del mismo loop necesita el mismo lock antes de que se libere). Suficiente para el caso real
+(un usuario, un panel) y evita interlear dos streams de `chat_delta` en la misma lista de mensajes,
+que sería confuso incluso sin ningún problema de concurrencia real de por medio.
+
+**Verificado en vivo, end to end**: cliente WebSocket de prueba conectado al mismo `:18766` que usa
+`rem_chat.py` — `cambiar_modo` a `eco` sincronizó el selector del panel real (con la nota de
+sistema "Modo: Eco" y el historial limpio) sin tocar nada de la ventana directamente; `chat_message`
+en modo `ia` (provider real, Ollama) devolvió fragmentos sub-palabra reales por `chat_delta` y
+terminó en `chat_done`, con la burbuja de Rem creciendo en la ventana real a medida que llegaban;
+turnos repetidos en secuencia (varios `chat_message` uno tras otro) generaron una burbuja nueva por
+turno sin errores ni mezclarse. Corregido en el camino: la primera versión de
+`_procesar_mensaje_chat()` no pasaba `incluir_contexto=False` en modo eco, así que el panel iba a
+repetir en voz—en texto, acá—el bloque de fecha/hora/CPU en vez de lo que se escribió (mismo bug
+que ya se había corregido una vez en `bench_chat.py`, reintroducido acá por no compartir esa
+decisión con `procesar_turno()`; ahora `_procesar_mensaje_chat()` calcula
+`incluir_contexto = sesion.modo != "eco"` igual que `repl()`).
+
+## Voz en la ventana de chat
+El panel de chat (ver arriba) arrancó siendo solo texto — `_procesar_mensaje_chat()` llamaba a
+`chat_sesion.procesar_turno()` sin `cola_habla`, así que escribir en la ventana nunca producía voz,
+aunque la ventana existe justamente para hablar con Rem. `_chat()` (REPL de `bench_chat.py`) y
+`_procesar_mensaje_chat()` (panel) eran casi idénticas salvo el destino del texto/audio — se
+unificó la parte común (armar el turno, consumir el stream, hablar por oración) en
+`chat_sesion.procesar_turno()`, y el pipeline de voz en sí (antes atado al REPL) se extrajo a
+`habla.py`.
+
+**`habla.py`**: `cargar_rvc()`/`precargar_rvc()`/`decir()`/`worker_habla()`/`TurnoHabla`, todo lo
+que antes vivía en `bench_chat.py` con el prefijo `_` (`_obtener_rvc`, `_decir`, `_worker_habla`,
+`_TurnoHabla`, etc.) — mismos cuerpos, solo movidos y sin el guion bajo en lo que ahora es API
+pública del módulo. `_rvc_cache`/`_rvc_lock` siguen siendo module-level (una sola instancia de RVC
+por proceso, cargada una vez) — importante porque ahora hay DOS consumidores posibles en el mismo
+proceso (la cola del REPL y la del panel, ver más abajo) que no deben cargar el modelo por
+duplicado ni pisarse entre conversiones concurrentes, mismo motivo que ya tenía el lock antes de
+este cambio.
+
+**`chat_sesion.procesar_turno()` ahora cubre los dos casos** (con y sin voz) vía parámetros
+opcionales: `on_delta` (cada fragmento de texto, como antes), `on_tool_call` (preservado por si
+`stream_chat()` alguna vez se llama con `tools=`, hoy no aplica) y `cola_habla` (si no es `None`,
+encola cada oración completa apenas `dividir_en_oraciones()` la detecta — igual que hacía `_chat()`
+antes de la extracción). Devuelve `(texto_completo, done_chunk, turno_habla)` — `turno_habla` es la
+instancia de `habla.TurnoHabla` si se pidió voz, o `None` si no. `_pasar_por()` (el tee que permite
+consumir el stream dos veces — para deltas/tool_calls y para partir oraciones a la vez) también se
+movió a este módulo.
+
+**`bench_chat.py._chat()` quedó como envoltorio de consola**: arma los callbacks de impresión
+(`on_delta` imprime, `on_tool_call` imprime `[tool_call] ...`) y llama a `procesar_turno()` —
+ya no tiene lógica de turno propia. El REPL sigue con su propia cola/worker de voz
+(`asyncio.Queue` + `habla.worker_habla()`, creados en `repl()`), sin cambios de comportamiento
+para quien ya lo usaba.
+
+**El panel tiene su PROPIA cola/worker de voz, separada de la del REPL** —
+`rem_avatar_server._obtener_cola_habla()` crea (perezoso, en el primer turno con voz) un
+`asyncio.Queue` + una tarea `habla.worker_habla()` propios del panel, corriendo en `_ws_loop` (la
+llamada a `asyncio.create_task()` liga la tarea al loop que esté corriendo en ese momento — por
+eso `_obtener_cola_habla()` solo puede llamarse desde dentro de una coroutine que ya corre en
+`_ws_loop`, que es exactamente lo que es `_procesar_mensaje_chat()`). No comparten cola con el REPL
+a propósito: cada turno se habla desde la cola de quien lo disparó, así que un mensaje escrito en
+un lado nunca termina también encolado en el worker del otro — ver más abajo, "verificado en vivo",
+por qué esto importa para no duplicar audio.
+
+**Interruptor de voz del panel** (`voz_chat_activa()`/`set_voz_chat_activa()` en
+`rem_avatar_server.py`, mensaje WS `{tipo: "voz", activa: bool}`): equivalente a `voz on|off` del
+REPL, pero **independiente** — no hay sincronización entre los dos, cada uno controla si SUS
+PROPIOS turnos hablan. Arranca en `True` (a diferencia de `voz_activa` del REPL, que arranca en
+`False`): la ventana existe para hablar con Rem, así que el botón (🔊/🔇 en el header del panel) es
+para silenciarla, no para tener que activarla primero. Es puramente local en el frontend — a
+diferencia de `cambiar_modo`, no hay confirmación del backend ni un tipo `voz_actual` que
+sincronizar (un on/off no puede fallar, y no hay ningún otro cliente cuyo estado deba reflejar).
+
+**`rem_chat.py` ahora también precarga RVC al arrancar** (`habla.precargar_rvc()` en un hilo de
+fondo, antes de `iniciar_servidor_avatar()`, mismo patrón que `bench_chat.py`) — sin flag `--no-rvc`
+propio: a diferencia del REPL (donde la voz es opcional, detrás de `voz on`), en la ventana es una
+capacidad de primera clase, así que siempre precarga.
+
+**Verificado en vivo, los cuatro escenarios**:
+1. Panel con voz activa, modo eco: `chat_message` por WS produjo exactamente una línea `hablando:
+   "..."` en el log, conversión RVC, `enviado por WebSocket`, y el navegador real (`rem_chat.py`)
+   registró `[Lipsync] mensaje de audio recibido` + `play() resuelto` — la ventana efectivamente
+   habla.
+2. Interruptor en `False`: el mismo `chat_message` completó `chat_delta`/`chat_done` normalmente
+   (el texto se sigue viendo) pero sin ninguna línea `hablando:` nueva en el log — cero turnos de
+   síntesis cuando la voz está apagada.
+3. **Doble cliente, la prueba pedida explícitamente** ("con la ventana y el REPL abiertos a la
+   vez"): se lanzó `bench_chat.py` primero (dueño real del servidor WS + su propio overlay como
+   cliente) y `rem_chat.py` segundo (detecta el servidor existente, se conecta como otro cliente
+   más — ver "Riesgo de conflicto de puertos" más arriba). Un `chat` + `voz on` desde el REPL
+   produjo **una sola** línea `hablando:` para ese turno (con la cola/worker del REPL); un
+   `chat_message` inyectado por WebSocket (simulando al panel) produjo **una sola** línea
+   `hablando:` para ESE turno (con la cola/worker del panel, cargando su propia instancia de RVC
+   perezosamente la primera vez que le tocó hablar — reutilizando el mismo `_rvc_cache` después).
+   Total de la sesión: 2 líneas `hablando:` para 2 turnos — ninguno duplicado.
+   - Nota sobre alcance: `enviar_audio()` igual **difunde** cada turno a todos los clientes WS
+     conectados (así ya funcionaba antes de este cambio, ver "Riesgo de conflicto de puertos" y
+     "Ninguna llamada al LLM sin intervención del usuario" — es una propiedad del diseño de
+     broadcast, no algo que este cambio haya tocado): con el overlay del REPL y la ventana los dos
+     conectados al mismo servidor, un turno con voz suena en los dos, cada uno una vez. Lo que se
+     verificó (y lo que pedía el punto 1) es que el BACKEND nunca sintetiza/encola el mismo turno
+     dos veces — no que un segundo cliente conectado deje de escuchar la misma reproducción
+     legítima, que es un comportamiento distinto (y deseable: si alguien tiene el overlay en un
+     monitor y la ventana en otro, esperaría que ambos hablen a la vez).
+4. Interacción con `iniciar_servidor_avatar()`: al reusar el servidor de otro proceso, ese segundo
+   proceso NUNCA corre su propio `_ws_handler` — sus propios `_ws_clients`/`_chat_sesion`/etc.
+   quedan vacíos para siempre (son globals de módulo, uno por proceso). Confirmado en vivo: con
+   `rem_chat.py` como segundo proceso, un `enviar_audio()` disparado DESDE ESE proceso cayó al
+   fallback local de `sounddevice` ("nadie conectado al WS") pese a que la ventana real sí estaba
+   conectada — porque la ventana está conectada al servidor real (el del OTRO proceso), no al
+   `_ws_clients` (vacío) de la suya propia. No es un bug de esta tarea: es la razón por la que el
+   escenario 3 se armó con `bench_chat.py` primero (dueño real del servidor) — así el turno del
+   REPL sí llega a `_ws_clients` reales. Documentado acá para que quede claro por qué el orden de
+   arranque importa en este escenario específico.
+
+## Encuadre 3D consciente del panel de chat, y tamaño por modo
+Con el panel de chat ocupando la mitad derecha de la ventana (ver arriba), Rem quedaba descentrada:
+`recalcularEncuadre()` seguía calculando `anchorX` como fracción del ANCHO TOTAL de la ventana, no
+del área 3D realmente visible (la mitad izquierda, la que no tapa el panel) — con `anchorX=1/6`
+(pensado para el ancho completo, "tercio izquierdo" de antes de que existiera el panel) Rem
+terminaba pegada al borde izquierdo de su propia mitad, no centrada en ella.
+
+**`fraccionAreaVisible3D()`** devuelve qué fracción del CANVAS COMPLETO ocupa el área 3D visible:
+`1 - CONFIG.chat.anchoFrac` en modo ventana, `1` en overlay (sin panel, sin cambios). `worldX(n)`
+en sí no cambió — sigue midiendo en fracciones del canvas completo, a propósito: `camera.aspect`
+tiene que seguir atado al tamaño REAL del render, o la imagen se distorsiona. Lo que cambió es qué
+se le pasa: `recalcularEncuadre()` ahora hace `worldX(CONFIG.pet.anchorX * fraccionAreaVisible3D())`
+en vez de `worldX(CONFIG.pet.anchorX)` — `anchorX` pasó a ser una fracción DEL ÁREA VISIBLE
+(0=su borde izquierdo, 1=justo donde empieza el panel), no del canvas completo. Con eso,
+`CONFIG.modos.ventana.anchorX` pasó de `1/6` a `0.5` (centrada en su área, como pide la
+especificación) — `overlay.anchorX` sigue en `0.5` (sin panel, área visible = canvas completo, sin
+cambio de comportamiento).
+
+**`CONFIG.chat.anchoFrac` es la única fuente de verdad para el ancho del panel** — la lee tanto
+`fraccionAreaVisible3D()` (encuadre) como `crearPanelChat()`, que fija el custom property CSS
+`--chat-panel-width` (`${CONFIG.chat.anchoFrac * 100}%`) ANTES de crear el `<div>` del panel. El
+CSS del `<head>` usa `width: var(--chat-panel-width, 50%)` — el `50%` es solo el valor de respaldo
+por si el custom property no llegara a fijarse (no debería notarse nunca, se fija sincrónicamente
+muy temprano en el mismo `<script type="module">`). Antes el 50% estaba hardcodeado en dos lugares
+(el CSS y, implícitamente, en cualquier cálculo de encuadre que lo asumiera) — ahora un cambio a
+`CONFIG.chat.anchoFrac` mueve los dos a la vez, no pueden desincronizarse.
+
+**`alturaPantalla` pasó de `CONFIG.pet` (un solo valor) a `CONFIG.modos.{overlay,ventana}`** (cada
+modo con el suyo) — mismo patrón que ya tenía `anchorX`, resuelto una vez al cargar
+(`CONFIG.pet.alturaPantalla = CONFIG.modos[MODO].alturaPantalla`, junto a la resolución de
+`anchorX` que ya existía). `overlay` se quedó en `0.45` (sin cambios); `ventana` subió a `0.65`
+(pedido explícito: "empieza en 0,65") — cada modo necesita un encuadre distinto porque el overlay es
+una superficie angosta dedicada solo a Rem, mientras que la ventana reparte el espacio con el panel
+de chat.
+
+**Verificado en vivo**: captura de pantalla con la ventana real mostró a Rem centrada
+horizontalmente en la mitad izquierda (ya no pegada al borde) y notablemente más grande que antes
+— y el log de `[Encuadre]` confirmó la aritmética exacta (`anchoVisible=1.077`, `anchorX=0.5` →
+`position.x=-0.269`, que es `(0.5*0.5 - 0.5) * 1.077`, coincide byte a byte con lo calculado a
+mano).
+
+## Mirada a cámara, con saccades y "apartar la mirada" superpuestos
+Antes las saccades (`updateSaccades()`) eran todo el control de los ojos: saltos aleatorios
+alrededor de un centro FIJO en `(0,0)` grados (o un offset fijo en `thinking`) — nunca miraba
+realmente a la cámara/usuario, solo alrededor de un punto arbitrario.
+
+**API real de `VRMLookAt` (three-vrm), confirmada leyendo el bundle fuente** (no documentación de
+memoria — se bajó `@pixiv/three-vrm@2.1.3` de esm.sh y se inspeccionó la clase minificada): el
+método público `lookAt(posiciónMundo)` calcula `_yaw`/`_pitch` (grados) para mirar exactamente a esa
+posición desde la orientación ACTUAL de la cabeza — es lo mismo que el auto-tracking interno usaría
+si `target`/`autoUpdate` estuvieran en su modo automático (`update(dt)`: `if (target && autoUpdate)
+this.lookAt(target.getWorldPosition())`). Como este proyecto ya escribía `vrm.lookAt.yaw`/`.pitch` a
+mano cada frame (para las saccades), la solución fue llamar a `vrm.lookAt.lookAt(camera.
+getWorldPosition())` directo, en vez de depender del auto-tracking — con `target=camera` fijado
+solo como documentación viva (nadie más lo lee) y `autoUpdate=false` a propósito: si quedara en
+`true` (el default), `vrm.update()` volvería a llamar a `lookAt()` por su cuenta DESPUÉS de que este
+código ya escribió el valor final (saccades + apartar-la-mirada incluidos), pisándolo.
+
+**Se recalcula cada frame, no una vez** — importante porque la orientación de la cabeza cambia todo
+el tiempo (el drift de `updateLook()`, y durante el giro de bailarina el cuerpo entero rota):
+`vrm.lookAt.lookAt()` usa la matriz de mundo ACTUAL del hueso `head` en el momento en que se llama,
+así que los ojos compensan solos cualquier movimiento de cabeza sin que este código sepa nada de
+`updateLook()`/`updateGiroBailarina()`. Se llama antes de que `headB.rotation` se escriba con el
+valor de ESTE frame (mismo punto donde ya vivía `updateSaccades()`) — un frame de atraso en la base
+de la mirada, igual de imperceptible que otros casos ya documentados de esta clase en el archivo
+(p.ej. `_jawApertura`).
+
+**Tres capas, de la más lenta a la más rápida**:
+1. **Base**: sigue a la cámara (`vrm.lookAt.lookAt()` × `CONFIG.mirada.intensidadSeguimiento`,
+   1.0 = mirada directa). En `thinking` la base es fija arriba-a-un-lado (`yaw=-10, pitch=8`, el
+   mismo punto de siempre) — Rem está pensando, no mirando al usuario.
+2. **Apartar la mirada** (`_miradaFase`: `'siguiendo' ↔ 'apartando'`, mismo patrón de máquina de
+   estados que `updateGiroBailarina()`): cada `apartarIntervaloMinS`-`apartarIntervaloMaxS`
+   segundos (nunca en `thinking`, que ya tiene su propio desvío), se suma un offset aleatorio
+   (`apartarAmpYaw`/`apartarAmpPitch`) con envolvente entra-sostiene-sale (`_envolventeApartar()`,
+   con `_fade()` en las rampas) — mirar fijo sin parpadear tampoco es natural.
+3. **Saccades**: como antes (saltos rápidos de 20-40ms cada 0,5-2s), pero ahora RELATIVOS a la base
+   de las capas 1+2 en vez de a un centro fijo — se separaron `_saccadeYaw/_saccadePitch` (el
+   desvío actual) de `_saccadeYawObjetivo/_saccadePitchObjetivo` (el objetivo del salto en curso),
+   y `vrm.lookAt.yaw/pitch` se escribe SIEMPRE (`base + saccade`), no solo mientras hay un salto en
+   curso — a diferencia de la versión vieja (centro fijo, no hacía falta reescribir entre saltos),
+   la base ahora se mueve todo el tiempo.
+
+**`CONFIG.mirada`**: `intensidadSeguimiento` (0..1, cuánto gira hacia la cámara) y
+`apartarIntervaloMinS/MaxS`/`apartarAmpYaw/Pitch`/`apartarEntradaS/SostenS/SalidaS` (frecuencia,
+amplitud y timing de apartar la mirada) — pedidos explícitamente en CONFIG para poder afinarse.
+
+**Verificado en vivo**: con `apartarIntervaloMinS/MaxS` bajados temporalmente a 2-3s (revertidos a
+4/9 después) y logs de transición agregados, se vieron varios ciclos completos
+(`[Mirada] apartando (yaw=..., pitch=...)` → `[Mirada] de vuelta a cámara, próximo apartado en
+~Ns`) sin errores, con capturas de pantalla confirmando que el mecanismo corre sin romper nada del
+resto de la animación (respiración, brazos, dedos, giro).
 
 
     # IMPORTANTE: 

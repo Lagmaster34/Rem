@@ -6,6 +6,201 @@
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:transparent; overflow:hidden; width:100vw; height:100vh; pointer-events:none; }
   canvas { display:block; }
+
+  /* ── Panel de chat — solo modo "ventana" (ver crearPanelChat() en el
+     script) ── mitad derecha de la ventana, opaca, con foco de teclado
+     real (pointer-events:auto propio, aunque <body> sea none para que el
+     overlay siga siendo click-through). Paleta a tono con el suelo
+     synthwave (CONFIG.suelo): mismo cian, mismo fondo casi negro. */
+  #chat-panel {
+    position: fixed;
+    top: 0; right: 0;
+    /* --chat-panel-width la fija crearPanelChat() a partir de
+       CONFIG.chat.anchoFrac — única fuente de verdad, compartida con el
+       cálculo del encuadre 3D (fraccionAreaVisible3D()) para que no puedan
+       desincronizarse. 50% es solo el valor de respaldo antes de que el
+       script corra (nunca debería notarse, se fija sincrónicamente muy
+       temprano). */
+    width: var(--chat-panel-width, 50%);
+    height: 100%;
+    min-width: 300px;
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(165deg, #070212 0%, #04000c 60%);
+    border-left: 1px solid rgba(43,232,255,0.22);
+    box-shadow: -28px 0 56px -28px rgba(0,0,0,0.65);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #eaf6ff;
+    pointer-events: auto;
+    z-index: 10;
+  }
+
+  #chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 14px 16px 12px;
+    border-bottom: 1px solid rgba(43,232,255,0.16);
+    flex: 0 0 auto;
+  }
+
+  #chat-modeselect {
+    display: flex;
+    gap: 4px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(43,232,255,0.22);
+    border-radius: 999px;
+    padding: 3px;
+  }
+  #chat-modeselect button {
+    appearance: none; border: none; background: transparent;
+    color: #7d94a3; font: inherit; font-size: 12px; font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 5px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease;
+  }
+  #chat-modeselect button:hover { color: #eaf6ff; }
+  #chat-modeselect button.activo {
+    background: #2be8ff;
+    color: #04141a;
+    box-shadow: 0 0 12px rgba(43,232,255,0.35);
+  }
+
+  #chat-header-actions {
+    display: flex;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+  #chat-voz, #chat-reset {
+    appearance: none;
+    border: 1px solid rgba(43,232,255,0.22);
+    background: transparent;
+    color: #7d94a3;
+    width: 30px; height: 30px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color .15s ease, color .15s ease;
+    flex: 0 0 auto;
+  }
+  #chat-voz:hover, #chat-reset:hover { color: #2be8ff; border-color: #2be8ff; }
+
+  #chat-messages {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 16px;
+  }
+  #chat-messages::-webkit-scrollbar { width: 8px; }
+  #chat-messages::-webkit-scrollbar-thumb { background: #244047; border-radius: 4px; }
+  #chat-messages::-webkit-scrollbar-track { background: transparent; }
+
+  .msg {
+    max-width: 82%;
+    padding: 9px 13px;
+    border-radius: 14px;
+    font-size: 14px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .msg.user {
+    align-self: flex-end;
+    background: #182430;
+    border-bottom-right-radius: 3px;
+  }
+  .msg.rem {
+    align-self: flex-start;
+    background: #0c1c22;
+    border: 1px solid rgba(43,232,255,0.28);
+    border-bottom-left-radius: 3px;
+    box-shadow: 0 0 14px rgba(43,232,255,0.07);
+  }
+  .msg.sistema {
+    align-self: center;
+    background: transparent;
+    color: #7d94a3;
+    font-size: 12px;
+    font-style: italic;
+    max-width: 100%;
+    text-align: center;
+  }
+
+  #chat-status {
+    flex: 0 0 auto;
+    min-height: 26px;
+    padding: 0 16px;
+    font-size: 12px;
+    color: #7d94a3;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  #chat-status::before {
+    content: '';
+    width: 6px; height: 6px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: #2be8ff;
+    opacity: 0;
+    transition: opacity .15s ease;
+  }
+  #chat-status.pensando::before,
+  #chat-status.hablando::before {
+    opacity: 1;
+    animation: chat-pulse 1s ease-in-out infinite;
+  }
+  @keyframes chat-pulse {
+    0%, 100% { transform: scale(0.7); opacity: 0.4; }
+    50%      { transform: scale(1.25); opacity: 1; }
+  }
+
+  #chat-inputbar {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 8px;
+    padding: 10px 16px 16px;
+  }
+  #chat-input {
+    flex: 1 1 auto;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(43,232,255,0.22);
+    border-radius: 10px;
+    color: #eaf6ff;
+    font: inherit;
+    font-size: 14px;
+    padding: 10px 12px;
+    outline: none;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  #chat-input:focus {
+    border-color: #2be8ff;
+    box-shadow: 0 0 0 3px rgba(43,232,255,0.18);
+  }
+  #chat-input::placeholder { color: #56707d; }
+  #chat-input:disabled { opacity: 0.5; }
+
+  #chat-send {
+    appearance: none;
+    border: none;
+    background: #2be8ff;
+    color: #04141a;
+    width: 40px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    transition: filter .15s ease, transform .1s ease, opacity .15s ease;
+  }
+  #chat-send:hover { filter: brightness(1.1); }
+  #chat-send:active { transform: scale(0.94); }
+  #chat-send:disabled { opacity: 0.4; cursor: default; }
 </style>
 </head>
 <body>
@@ -35,14 +230,27 @@ const CONFIG = {
   camera:  { fov: 28 },
   pet:     {
     anchorY: 0.55,           // altura de reposo, fracción de pantalla (0=arriba, 1=abajo)
-    alturaPantalla: 0.45,    // fracción del alto de pantalla que debe ocupar Rem
   },
-  // anchorX por modo: sin caminata (ver "eliminar la caminata" en CLAUDE.md),
-  // la posición horizontal es fija, así que alcanza con un valor por modo en
-  // vez de un rango de caminata.
+  // anchorX/alturaPantalla por modo: sin caminata (ver "eliminar la caminata"
+  // en CLAUDE.md), la posición horizontal es fija, así que alcanza con un
+  // valor por modo en vez de un rango de caminata. alturaPantalla también es
+  // por modo porque cada encuadre es distinto: el overlay es una superficie
+  // angosta dedicada solo a Rem, la ventana tiene además el panel de chat al
+  // lado — mismo motivo por el que no puede ser un solo número para los dos.
+  // anchorX de "ventana" es una fracción del ÁREA 3D VISIBLE (el ancho de la
+  // ventana menos CONFIG.chat.anchoFrac), no de la ventana completa — ver
+  // fraccionAreaVisible3D()/worldX() más abajo.
   modos: {
-    overlay: { anchorX: 0.5,   suelo: false },  // superficie angosta dedicada, centrado
-    ventana: { anchorX: 1 / 6, suelo: true  },  // centrada en el tercio izquierdo del ancho
+    overlay: { anchorX: 0.5, alturaPantalla: 0.45, suelo: false },  // superficie angosta dedicada, centrado
+    ventana: { anchorX: 0.5, alturaPantalla: 0.65, suelo: true  },  // centrada en el área 3D visible (no tapada por el panel)
+  },
+  // Ancho del panel de chat (solo modo "ventana"), como fracción del ancho
+  // total de la ventana — ÚNICA fuente de verdad: tanto el CSS del panel
+  // (var(--chat-panel-width), fijada desde JS al arrancar, ver
+  // crearPanelChat()) como el encuadre 3D (fraccionAreaVisible3D(), más
+  // abajo) leen este mismo número, para que no puedan desincronizarse.
+  chat: {
+    anchoFrac: 0.5,
   },
   // Suelo de cuadrícula synthwave — solo en modo "ventana" (ver crearSueloSynthwave()).
   // Nada de reflejos ni post-procesado: GPU justa (ver CLAUDE.md, calibración de VRAM).
@@ -98,6 +306,17 @@ const CONFIG = {
     separacionBrazosRad: 0.35, // cuánto se separan los brazos del cuerpo durante el giro
     volverDuracionS:  0.4,  // segundos para interpolar de vuelta si se interrumpe a mitad de camino
   },
+  // Mirada a cámara — ver "MIRADA A CÁMARA + MICRO-SACCADES" más abajo.
+  mirada: {
+    intensidadSeguimiento: 1.0,  // 0..1 — 1 = mirada directa a la cámara, más bajo = seguimiento más contenido
+    apartarIntervaloMinS: 4,     // cada cuánto puede "apartar la mirada" un momento — mínimo, en segundos
+    apartarIntervaloMaxS: 9,     // máximo
+    apartarAmpYaw: 26,           // cuánto se aparta en yaw (grados)
+    apartarAmpPitch: 14,         // cuánto se aparta en pitch (grados)
+    apartarEntradaS: 0.35,       // segundos para entrar al desvío
+    apartarSostenS: 0.8,         // segundos que se mantiene apartada
+    apartarSalidaS: 0.4,         // segundos para volver a la cámara
+  },
 };
 
 // Valor de anchorX del modo activo, antes de cualquier ajuste por aspect —
@@ -105,6 +324,7 @@ const CONFIG = {
 // después de haberlo sido, o viceversa (ver _ajustarAnclasPorAspect()).
 const _anchorXOriginal = CONFIG.modos[MODO].anchorX;
 CONFIG.pet.anchorX = _anchorXOriginal;
+CONFIG.pet.alturaPantalla = CONFIG.modos[MODO].alturaPantalla;
 
 // ═══════════════════════════════════════════════════
 // RENDERER + ESCENA
@@ -177,6 +397,20 @@ let _modeloPositionY = 0;
 
 const worldX = n => (n - 0.5) * _anchoVisible;
 
+// En modo "ventana" el panel de chat tapa el CONFIG.chat.anchoFrac derecho
+// de la ventana — el área 3D realmente visible es más angosta que
+// window.innerWidth. worldX() de arriba sigue midiendo en fracciones del
+// CANVAS COMPLETO (a propósito: camera.aspect tiene que seguir atado al
+// tamaño real del render, si no la imagen se distorsiona) — esta función
+// devuelve qué fracción del canvas completo ocupa el área 3D visible, para
+// convertir un anchorX pensado "dentro de esa área" (0=su borde izquierdo,
+// 1=su borde derecho, justo donde empieza el panel) a la fracción real del
+// canvas completo que worldX() espera. En overlay no hay panel: 1 (el área
+// visible es toda la ventana, sin cambios respecto de antes).
+function fraccionAreaVisible3D() {
+  return MODO === 'ventana' ? (1 - CONFIG.chat.anchoFrac) : 1;
+}
+
 // Box3.setFromObject() sobre un VRM con SkinnedMesh da la caja de la geometría
 // SIN aplicar el skinning (el shader deforma los vértices en GPU, no en los
 // datos de la geometría en CPU) — en este modelo eso da ~la mitad de la altura
@@ -230,7 +464,12 @@ function recalcularEncuadre() {
 
   // Sin caminata, la X es fija: CONFIG.pet.anchorX (ya resuelto por modo y
   // por _ajustarAnclasPorAspect() arriba) — no hay un charX mutable que leer.
-  const posX = worldX(CONFIG.pet.anchorX);
+  // CONFIG.pet.anchorX es una fracción del ÁREA 3D VISIBLE, no del canvas
+  // completo — fraccionAreaVisible3D() la convierte a fracción de canvas
+  // completo antes de pasarla a worldX() (ver esa función más arriba). En
+  // overlay fraccionAreaVisible3D()===1, así que esto es un no-op idéntico
+  // a antes.
+  const posX = worldX(CONFIG.pet.anchorX * fraccionAreaVisible3D());
   if (vrm) {
     vrm.scene.position.y = _modeloPositionY;
     vrm.scene.position.x = posX;
@@ -344,6 +583,19 @@ function _cargarVRM(intento = 1) {
       console.log('[VRM] lookAt (micro-saccades):', vrm.lookAt ? 'sí' : 'no',
                   '| leftShoulder/rightShoulder (respiración en hombros):',
                   !!getB('leftShoulder'), !!getB('rightShoulder'));
+      if (vrm.lookAt) {
+        // target=camera es solo documentación viva (vrm.lookAt.target dice
+        // "mira a la cámara" a quien lea/inspeccione esto en consola) —
+        // autoUpdate=false porque el cálculo real lo dispara a mano
+        // updateSaccades() (más abajo, "MIRADA A CÁMARA + MICRO-SACCADES"),
+        // llamando a vrm.lookAt.lookAt(...) él mismo para poder sumarle
+        // encima las saccades y el apartar-la-mirada antes de que
+        // vrm.update() aplique el resultado a los huesos de los ojos. Con
+        // autoUpdate en true (el default), vrm.update() volvería a llamar a
+        // este mismo lookAt() por su cuenta y pisaría ese trabajo.
+        vrm.lookAt.target = camera;
+        vrm.lookAt.autoUpdate = false;
+      }
       {
         const dedosFaltantes = [];
         for (const lado of ['left', 'right']) {
@@ -1114,33 +1366,101 @@ function updateTrasladoPeso(dt, t) {
 }
 
 // ═══════════════════════════════════════════════════
-// MICRO-SACCADES — ojos, vía vrm.lookAt (huesos leftEye/rightEye)
+// MIRADA A CÁMARA + MICRO-SACCADES — ojos, vía vrm.lookAt (huesos leftEye/rightEye)
 // ═══════════════════════════════════════════════════
-// Distinto del drift de la cabeza (updateLook(), más abajo): los ojos
-// saltan rápido (20-40ms) cada 0,5-2s a un punto nuevo dentro de un cono
-// pequeño alrededor de hacia dónde ya está mirando la cabeza — igual que el
-// ojo humano real, que no permanece perfectamente fijo entre movimientos
-// grandes. vrm.lookAt.yaw/pitch están en grados; se escriben acá y
-// vrm.update() los aplica a los huesos de los ojos a través del applier
-// configurado por three-vrm al cargar el modelo (rem.vrm sí trae
-// leftEye/rightEye mapeados, ver CLAUDE.md).
-let _saccadeYaw = 0, _saccadePitch = 0;      // objetivo actual
-let _saccadeYawIni = 0, _saccadePitchIni = 0; // punto de partida del salto en curso
-let _saccadeT = 1, _saccadeDur = 0.03;        // progreso 0..1 del salto actual, y su duración
+// Antes las saccades eran TODO el control de los ojos: saltos aleatorios
+// alrededor de un centro fijo (0,0) en grados, sin relación con dónde está
+// el usuario. Ahora hay una base real (_miradaBase(), justo abajo) — sigue
+// a la cámara de verdad vía vrm.lookAt.lookAt(posición de la cámara), el
+// mismo método que usaría el auto-tracking de three-vrm si target/autoUpdate
+// estuvieran en el modo automático (ver el callback de carga del VRM, más
+// arriba: se dejan target=camera + autoUpdate=false a propósito, así este
+// código controla CUÁNDO se recalcula y puede sumarle encima saccades y
+// apartar-la-mirada antes de que vrm.update() aplique el resultado a los
+// huesos). Las saccades (rápidas, 20-40ms) y el apartar-la-mirada (más
+// lento, con sostén) son DESVIACIONES sobre esa base, no un centro fijo —
+// updateSaccades() sigue siendo el punto de entrada llamado desde animate().
+let _saccadeYaw = 0, _saccadePitch = 0;                 // desvío actual (relativo a la base), no un ángulo absoluto
+let _saccadeYawIni = 0, _saccadePitchIni = 0;           // punto de partida del salto en curso
+let _saccadeYawObjetivo = 0, _saccadePitchObjetivo = 0; // punto de llegada del salto en curso
+let _saccadeT = 1, _saccadeDur = 0.03;                  // progreso 0..1 del salto actual, y su duración
 let _saccadeTimer = 0.5 + Math.random() * 1.5;
 
+const _miradaCamPos = new THREE.Vector3(); // reusado cada frame, evita basura de GC
+
+let _miradaFase = 'siguiendo';  // 'siguiendo' | 'apartando'
+let _miradaTimer = CONFIG.mirada.apartarIntervaloMinS
+                  + Math.random() * (CONFIG.mirada.apartarIntervaloMaxS - CONFIG.mirada.apartarIntervaloMinS);
+let _miradaT = 0;
+let _miradaOffsetYaw = 0, _miradaOffsetPitch = 0;
+
+// Envolvente de "apartar la mirada": entra (fade), se sostiene plana, sale
+// (fade) — no es un pulso simétrico tipo seno (necesita el sostén en el
+// medio), así que se arma a mano con _fade() en los dos tramos.
+function _envolventeApartar(p) {
+  const M = CONFIG.mirada;
+  const dur = M.apartarEntradaS + M.apartarSostenS + M.apartarSalidaS;
+  const fEntrada = M.apartarEntradaS / dur, fSalida = M.apartarSalidaS / dur;
+  if (p < fEntrada) return _fade(p / fEntrada);
+  if (p > 1 - fSalida) return _fade((1 - p) / fSalida);
+  return 1;
+}
+
+// Base de la mirada (antes de sumarle las saccades): sigue a la cámara con
+// vrm.lookAt.lookAt(), salvo en 'thinking' (mismo punto fijo arriba-a-un-
+// lado de siempre — Rem está pensando, no mirando al usuario, y las
+// saccades de esa pose ya orbitaban ese punto). "Apartar la mirada" se
+// superpone encima del seguimiento normal, nunca durante 'thinking' (que ya
+// tiene su propio desvío). Devuelve {yaw, pitch} en grados.
+function _miradaBase(dt) {
+  const M = CONFIG.mirada;
+
+  if (estado === 'thinking') return { yaw: -10, pitch: 8 };
+
+  let yaw = 0, pitch = 0;
+  if (vrm?.lookAt) {
+    vrm.lookAt.lookAt(camera.getWorldPosition(_miradaCamPos));
+    yaw   = vrm.lookAt.yaw   * M.intensidadSeguimiento;
+    pitch = vrm.lookAt.pitch * M.intensidadSeguimiento;
+  }
+
+  _miradaTimer -= dt;
+  if (_miradaFase === 'siguiendo' && _miradaTimer <= 0) {
+    _miradaFase = 'apartando';
+    _miradaT = 0;
+    const angulo = Math.random() * Math.PI * 2; // dirección al azar, no siempre "hacia el mismo lado"
+    _miradaOffsetYaw   = Math.cos(angulo) * M.apartarAmpYaw;
+    _miradaOffsetPitch = Math.sin(angulo) * M.apartarAmpPitch;
+    console.log(`[Mirada] apartando (yaw=${_miradaOffsetYaw.toFixed(1)}, pitch=${_miradaOffsetPitch.toFixed(1)})`);
+  }
+  if (_miradaFase === 'apartando') {
+    const dur = M.apartarEntradaS + M.apartarSostenS + M.apartarSalidaS;
+    _miradaT += dt;
+    const p = Math.min(1, _miradaT / dur);
+    const env = _envolventeApartar(p);
+    yaw   += _miradaOffsetYaw   * env;
+    pitch += _miradaOffsetPitch * env;
+    if (p >= 1) {
+      _miradaFase = 'siguiendo';
+      _miradaTimer = M.apartarIntervaloMinS + Math.random() * (M.apartarIntervaloMaxS - M.apartarIntervaloMinS);
+      console.log(`[Mirada] de vuelta a cámara, próximo apartado en ~${_miradaTimer.toFixed(1)}s`);
+    }
+  }
+
+  return { yaw, pitch };
+}
+
 function updateSaccades(dt) {
+  const { yaw: yawBase, pitch: pitchBase } = _miradaBase(dt);
+
   _saccadeTimer -= dt;
   if (_saccadeTimer <= 0) {
     _saccadeYawIni = _saccadeYaw;
     _saccadePitchIni = _saccadePitch;
-    // Cono de la saccade: centrado en (0,0) salvo en 'thinking', donde Rem
-    // mira arriba a un lado — ahí las saccades ocurren alrededor de ESE
-    // punto, no del centro, para que el ojo no se pierda del gesto.
-    const centroYaw   = estado === 'thinking' ? -10 : 0;
-    const centroPitch = estado === 'thinking' ?   8 : 0;
-    _saccadeYaw   = centroYaw   + (Math.random() - 0.5) * 14;
-    _saccadePitch = centroPitch + (Math.random() - 0.5) * 8;
+    // Relativo a la base (ya no a un centro fijo): un salto pequeño desde
+    // donde sea que esté mirando en este momento (cámara, o apartada).
+    _saccadeYawObjetivo   = (Math.random() - 0.5) * 14;
+    _saccadePitchObjetivo = (Math.random() - 0.5) * 8;
     _saccadeDur   = 0.02 + Math.random() * 0.02;  // 20-40ms, como pide la especificación
     _saccadeT     = 0;
     _saccadeTimer = 0.5 + Math.random() * 1.5;    // próxima saccade en 0,5-2s
@@ -1148,10 +1468,18 @@ function updateSaccades(dt) {
   if (_saccadeT < 1) {
     _saccadeT = Math.min(1, _saccadeT + dt / _saccadeDur);
     const u = _fade(_saccadeT); // mismo suavizado que el ruido — un salto, no un tirón lineal
-    if (vrm?.lookAt) {
-      vrm.lookAt.yaw   = lerp(_saccadeYawIni,   _saccadeYaw,   u);
-      vrm.lookAt.pitch = lerp(_saccadePitchIni, _saccadePitch, u);
-    }
+    _saccadeYaw   = lerp(_saccadeYawIni,   _saccadeYawObjetivo,   u);
+    _saccadePitch = lerp(_saccadePitchIni, _saccadePitchObjetivo, u);
+  }
+
+  // Se escribe SIEMPRE, no solo mientras hay un salto en curso: a diferencia
+  // de la versión vieja (centro fijo, no hacía falta reescribir entre
+  // saltos), la base ahora se mueve todo el tiempo (sigue a la cámara/la
+  // cabeza) y hay que reaplicarla cada frame o los ojos se quedan pegados al
+  // último valor hasta la próxima saccade.
+  if (vrm?.lookAt) {
+    vrm.lookAt.yaw   = yawBase   + _saccadeYaw;
+    vrm.lookAt.pitch = pitchBase + _saccadePitch;
   }
 }
 
@@ -1484,6 +1812,186 @@ window.addEventListener('resize', () => {
 });
 
 // ═══════════════════════════════════════════════════
+// PANEL DE CHAT — solo modo "ventana" (ver también el CSS en <head>)
+// ═══════════════════════════════════════════════════
+// HTML/CSS/JS vanilla, sin frameworks ni dependencias externas. El envío usa
+// _ws directo (declarado más abajo, en WEBSOCKET) — los handlers de click
+// solo lo LEEN al momento del click, mucho después de que el módulo entero
+// ya terminó de evaluarse, así que el orden de declaración no importa acá.
+// La recepción es al revés: window.__remChat se define ACÁ (antes de la
+// sección WEBSOCKET) para que _ws.onmessage, más abajo, ya lo encuentre
+// armado desde el primer mensaje que llegue.
+function crearPanelChat() {
+  if (MODO !== 'ventana') return;
+
+  // Única fuente de verdad para el ancho del panel: CONFIG.chat.anchoFrac.
+  // fraccionAreaVisible3D() (encuadre 3D) lee ese mismo número directo de
+  // CONFIG; el CSS del <head> no puede leer CONFIG (vive en el JS de acá
+  // abajo), así que un custom property es el único puente entre los dos —
+  // fijado acá, antes de crear el panel, para que ambos queden atados al
+  // mismo valor sin poder desincronizarse.
+  document.documentElement.style.setProperty('--chat-panel-width', `${CONFIG.chat.anchoFrac * 100}%`);
+
+  const panel = document.createElement('div');
+  panel.id = 'chat-panel';
+  panel.innerHTML = `
+    <div id="chat-header">
+      <div id="chat-modeselect">
+        <button data-modo="ia" class="activo" type="button">IA</button>
+        <button data-modo="eco" type="button">Eco</button>
+      </div>
+      <div id="chat-header-actions">
+        <button id="chat-voz" type="button" title="Silenciar voz">🔊</button>
+        <button id="chat-reset" type="button" title="Limpiar conversación">🗑</button>
+      </div>
+    </div>
+    <div id="chat-messages"></div>
+    <div id="chat-status"></div>
+    <div id="chat-inputbar">
+      <input id="chat-input" type="text" placeholder="Escribile algo a Rem..." autocomplete="off">
+      <button id="chat-send" type="button" title="Enviar">➤</button>
+    </div>
+  `;
+  document.body.appendChild(panel);
+
+  const $mensajes = panel.querySelector('#chat-messages');
+  const $status   = panel.querySelector('#chat-status');
+  const $input    = panel.querySelector('#chat-input');
+  const $send     = panel.querySelector('#chat-send');
+  const $voz      = panel.querySelector('#chat-voz');
+  const $reset    = panel.querySelector('#chat-reset');
+  const $modoBtns = panel.querySelectorAll('#chat-modeselect button');
+
+  let modoActivo = 'ia';
+  let esperandoRespuesta = false;
+  let burbujaRemActual = null; // <div> de la respuesta en curso (streaming), o null
+  // Arranca en true — el backend también arranca con la voz activa por
+  // defecto (ver rem_avatar_server._chat_voz_activa), este botón es para
+  // silenciarla, no para tener que prenderla primero. Puramente local: a
+  // diferencia del modo, no hay confirmación del backend ni sincronización
+  // con el REPL — "voz on|off" del REPL controla SUS PROPIOS turnos, este
+  // botón los del panel (ver CLAUDE.md, "Voz en la ventana de chat").
+  let vozActiva = true;
+
+  function alFondo() { $mensajes.scrollTop = $mensajes.scrollHeight; }
+
+  function agregarBurbuja(texto, clase) {
+    const div = document.createElement('div');
+    div.className = `msg ${clase}`;
+    div.textContent = texto;
+    $mensajes.appendChild(div);
+    alFondo();
+    return div;
+  }
+
+  function agregarSistema(texto) {
+    agregarBurbuja(texto, 'sistema');
+  }
+
+  function setEstadoUI(texto, clase) {
+    $status.textContent = texto || '';
+    $status.className = clase || '';
+  }
+
+  function actualizarInputHabilitado() {
+    $input.disabled = esperandoRespuesta;
+    $send.disabled = esperandoRespuesta;
+  }
+
+  function enviarMensaje() {
+    const texto = $input.value.trim();
+    if (!texto || esperandoRespuesta) return;
+    if (!_ws || _ws.readyState !== WebSocket.OPEN) {
+      agregarSistema('Sin conexión con Rem — reintentando...');
+      return;
+    }
+    agregarBurbuja(texto, 'user');
+    _ws.send(JSON.stringify({ tipo: 'chat_message', texto }));
+    $input.value = '';
+    esperandoRespuesta = true;
+    burbujaRemActual = null;
+    actualizarInputHabilitado();
+    setEstadoUI('Rem está pensando…', 'pensando');
+  }
+
+  $send.addEventListener('click', enviarMensaje);
+  $input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMensaje(); }
+  });
+
+  $modoBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const modo = btn.dataset.modo;
+      if (modo === modoActivo || !_ws || _ws.readyState !== WebSocket.OPEN) return;
+      _ws.send(JSON.stringify({ tipo: 'cambiar_modo', modo }));
+    });
+  });
+
+  // Interruptor de voz — equivalente a "voz on|off" del REPL, para poder
+  // silenciar el panel sin cerrar la ventana. Optimista (no espera
+  // confirmación del backend, a diferencia del modo): un simple on/off no
+  // puede fallar, y esto es puramente local al panel — no hay "voz_actual"
+  // que sincronizar con nadie más.
+  $voz.addEventListener('click', () => {
+    vozActiva = !vozActiva;
+    $voz.textContent = vozActiva ? '🔊' : '🔇';
+    $voz.title = vozActiva ? 'Silenciar voz' : 'Activar voz';
+    if (_ws && _ws.readyState === WebSocket.OPEN) {
+      _ws.send(JSON.stringify({ tipo: 'voz', activa: vozActiva }));
+    }
+  });
+
+  $reset.addEventListener('click', () => {
+    if (_ws && _ws.readyState === WebSocket.OPEN) {
+      _ws.send(JSON.stringify({ tipo: 'reset' }));
+    }
+    $mensajes.innerHTML = '';
+    burbujaRemActual = null;
+    esperandoRespuesta = false;
+    actualizarInputHabilitado();
+    setEstadoUI('', '');
+  });
+
+  // Llamado desde _ws.onmessage (ver WEBSOCKET más abajo) — traduce los
+  // tipos del protocolo de chat a cambios concretos del panel.
+  window.__remChat = {
+    onDelta(fragmento) {
+      if (!burbujaRemActual) {
+        burbujaRemActual = agregarBurbuja('', 'rem');
+        setEstadoUI('Rem está hablando…', 'hablando');
+      }
+      burbujaRemActual.textContent += fragmento;
+      alFondo();
+    },
+    onDone() {
+      esperandoRespuesta = false;
+      burbujaRemActual = null;
+      actualizarInputHabilitado();
+      setEstadoUI('', '');
+    },
+    onError(mensaje) {
+      esperandoRespuesta = false;
+      burbujaRemActual = null;
+      actualizarInputHabilitado();
+      setEstadoUI('', '');
+      agregarSistema(`⚠ ${mensaje}`);
+    },
+    onModoActual(modo) {
+      const cambioReal = modo !== modoActivo;
+      modoActivo = modo;
+      $modoBtns.forEach(b => b.classList.toggle('activo', b.dataset.modo === modo));
+      if (cambioReal) {
+        $mensajes.innerHTML = '';
+        agregarSistema(`Modo: ${modo === 'ia' ? 'IA' : 'Eco'}`);
+      }
+    },
+  };
+
+  $input.focus();
+}
+crearPanelChat();
+
+// ═══════════════════════════════════════════════════
 // WEBSOCKET — con límite de reintentos
 // ═══════════════════════════════════════════════════
 let _wsRetries = 0;
@@ -1505,6 +2013,14 @@ let _ws = null;
       if (d.tipo === 'audio') {
         console.log('[Lipsync] mensaje de audio recibido, url=', d.url, '| eventos de timeline:', d.timeline?.length);
         encolarAudio(d.url, d.timeline);
+      } else if (d.tipo === 'chat_delta') {
+        window.__remChat?.onDelta(d.texto ?? '');
+      } else if (d.tipo === 'chat_done') {
+        window.__remChat?.onDone();
+      } else if (d.tipo === 'modo_actual') {
+        window.__remChat?.onModoActual(d.modo);
+      } else if (d.tipo === 'error') {
+        window.__remChat?.onError(d.mensaje ?? 'error desconocido');
       } else if (d.estado) {
         estado = d.estado;
       }

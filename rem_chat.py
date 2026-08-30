@@ -27,6 +27,7 @@ falta el python3 del sistema para esto, a diferencia de lo que se pensaba.
 """
 import os
 import sys
+import threading
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -86,6 +87,16 @@ def main():
     os.dup2(log_file.fileno(), sys.stderr.fileno())
 
     config.cargar_dotenv()
+
+    # Precarga de RVC en un hilo de fondo, antes de levantar el servidor —
+    # se solapa con ese arranque en vez de sumarse después, igual que en
+    # bench_chat.py (ver CLAUDE.md, "Precarga de RVC y fin de la recarga del
+    # .pth en cada frase"). La ventana existe para hablar con Rem (ver panel
+    # de chat en rem_avatar.html), así que la voz es una capacidad de
+    # primera clase acá, no algo opcional como en el REPL (que la tiene
+    # detrás de --no-rvc): no hace falta un flag propio, siempre precarga.
+    import habla
+    threading.Thread(target=habla.precargar_rvc, daemon=True).start()
 
     import rem_avatar_server
     rem_avatar_server.iniciar_servidor_avatar()
