@@ -1462,6 +1462,78 @@ amplitud y timing de apartar la mirada) — pedidos explícitamente en CONFIG pa
 ~Ns`) sin errores, con capturas de pantalla confirmando que el mecanismo corre sin romper nada del
 resto de la animación (respiración, brazos, dedos, giro).
 
+## Mirada a cámara, segunda pasada: la cámara no estaba alineada con Rem
+La mirada a cámara (ver más arriba) seguía sin verse directa. La causa no estaba en `vrm.lookAt`
+sino en el encuadre: en modo ventana Rem está desplazada del centro de la ventana (`posX`, para
+dejarle sitio al panel de chat), pero `camera.position.x` se quedaba siempre en 0. El vector
+cámara→Rem tenía entonces una componente en X — la cámara la veía en tres cuartos, no de frente —
+y los ojos tenían que girar para compensar ESE ángulo estructural además de cualquier seguimiento
+real, compitiendo con un rango de giro bastante angosto (ver el punto siguiente).
+
+**Cámara alineada con Rem en X, más `setViewOffset()` para no perder el encuadre.**
+`recalcularEncuadre()` ahora hace `camera.position.x = posX` y `camera.lookAt(posX, 0, 0)` (mismo
+`posX` que ya se usa para `vrm.scene.position.x`) — el vector cámara→Rem queda puramente `-Z`,
+vista frontal de verdad. Como el punto que mira la cámara siempre proyecta al centro de la imagen,
+esto por sí solo centraría a Rem en el medio del CANVAS COMPLETO (en modo ventana, debajo del
+panel) — se corrige con `camera.setViewOffset(window.innerWidth, window.innerHeight, offsetX, 0,
+window.innerWidth, window.innerHeight)`, con `offsetX = (0.5 - fracXCanvas) * window.innerWidth`:
+un corrimiento de "lente descentrado" (el mismo truco que un objetivo tilt-shift o un corrimiento
+de cámara de arquitectura) que reencuadra la imagen ya renderizada sin volver a rotar la cámara
+(rotar la reintroduciría el ángulo que se acaba de eliminar). En overlay, `fracXCanvas=0.5` siempre
+(sin panel), así que `offsetX=0` — no-op, confirmado en vivo (`position.x=0.000 viewOffsetX=0.0px`,
+sin cambios de comportamiento).
+
+**El punto de fuga de la cuadrícula se repositiona con la cámara.** `posicionarSuelo()` ahora
+también centra el grid/horizonte en `posX` (antes solo ajustaba la Y) — el punto de fuga lo
+determina el eje óptico REAL de la cámara (`camera.position.x`, no dónde termina apareciendo Rem en
+pantalla tras el `setViewOffset`), así que centrar el suelo en `posX` pone el punto de fuga
+exactamente detrás de Rem en vez de en el `x=0` fijo de antes (que ya no significaba nada
+particular). Verificado en vivo con captura: las líneas de la cuadrícula convergen justo bajo sus
+pies, más coherente que antes.
+
+**Límites reales de `lookAt` en este modelo — investigado, no solo sospechado.** Se bajó
+`@pixiv/three-vrm@2.1.3` de esm.sh y se leyó el parser VRM 0.x (`_v0ImportDegreeMap`) para confirmar
+qué hace exactamente con `firstPerson.lookAt{Horizontal,Vertical}{Inner,Outer,Down,Up}` de
+`rem.vrm` (inspeccionado también con `dump_vrm.py` sobre el glTF crudo): las cuatro curvas son
+`[0,0,0,1,1,1,1,0]` — la única curva que three-vrm soporta para VRM 0.x, que resulta ser
+**exactamente lineal** (ambas tangentes de Hermite en los extremos igualan la pendiente de la
+secante, así que la curva de Bezier se reduce a una recta) — con `xRange=90, yRange=10` en las
+cuatro. Eso da `map(e) = 10 * clamp(e/90, 0, 1)`: el ojo real gira **exactamente 1/9 de lo que se le
+pide**, hasta un tope de 10° en cualquier dirección. Confirma la sospecha del reporte: las saccades
+(±14°/±8° de pedido) y el apartar-la-mirada (±26°/±14°) ya venían recortados a apenas 1-3° reales
+de giro de ojo, independientemente del problema de la cámara — los dos problemas se sumaban.
+`[VRM] rangos de lookAt` (nuevo log al cargar el modelo, lee `vrm.lookAt.applier.rangeMap*` en vivo
+— no hace falta volver a correr `dump_vrm.py` para redescubrir esto si el modelo cambia) y
+`[Mirada] pedido yaw/pitch` (nuevo log cada 2s desde `updateSaccades()`) dejan esto verificable sin
+salir del navegador. No se retocaron las amplitudes de saccades/apartar — quedó reportado para que
+se ajusten a mano si hace falta, mismo criterio que "mostrame los rangos para afinarlos yo después".
+
+**La cabeza (y el cuello) ahora acompañan la mirada.** Antes solo los ojos seguían a la cámara — una
+persona real también gira un poco la cabeza. `updateSaccades()` calcula `_cabezaMiradaYaw/Pitch`,
+una versión CON RETARDO (`lerp` a `CONFIG.mirada.cabezaVelocidad` por segundo — más lento que la
+respuesta instantánea de los ojos, que se escriben sin demora arriba en la misma función: los ojos
+llegan primero, la cabeza detrás) de la mirada final (base de cámara + saccade + apartar, ya
+combinadas). `animate()` sólo la aplica fuera de `'thinking'` (que ya tiene su propio desvío de
+cabeza fijo vía `updateLook()`, apuntando al mismo punto que usa `_miradaBase()` para los ojos —
+sumar los dos hubiera duplicado el giro) y la suma a `tHX`/`tHY`, escalada por
+`CONFIG.mirada.cabezaFraccion` (empieza en 0,3, pedido explícito). **El cuello ya se repartía
+automáticamente**: `neckB.rotation.{x,y,z}` ya leía una fracción (0,30-0,38) del MISMO spring
+resuelto que usa `headB` — sumar la mirada a `tHX/tHY` (el objetivo del spring, antes de resolverlo)
+hace que la nueva contribución se reparta entre cabeza y cuello sin código nuevo específico para
+eso.
+
+**Verificado en vivo, numéricamente, no solo a ojo**: log temporal de `headB.rotation.y`/
+`neckB.rotation.y`/`_cabezaMiradaYaw` cada 0,3s durante un apartado real (con
+`apartarIntervaloMinS/MaxS` bajados temporalmente a 2-3s, revertidos después). Con
+`[Mirada] apartando (yaw=-25.5, ...)`, se vio `_cabezaMiradaYaw` moverse de +2,5° a -19,5° con
+retardo visible frente al salto instantáneo de los ojos, `head.rotation.y` seguir la MISMA
+dirección (negativa) proporcionalmente (~un tercio de `_cabezaMiradaYaw`, coincide con
+`cabezaFraccion=0.3` más el retardo propio del spring), y `neck.rotation.y` seguir a `head.rotation.y`
+en la proporción 0,30 ya existente — confirma signo y magnitud correctos, no una suposición sin
+probar. Capturas de pantalla del encuadre completo confirmaron además que Rem sigue apareciendo en
+la mitad izquierda (no debajo del panel) y con una mirada visiblemente más directa a cámara que
+antes de esta pasada.
+
 
     # IMPORTANTE: 
     AL MOMENTO DE HACER COMMIT NO PONGAS TU AUDITORIA Claude/Anthropic DETRO DEL COMMIT

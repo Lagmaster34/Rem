@@ -316,6 +316,8 @@ const CONFIG = {
     apartarEntradaS: 0.35,       // segundos para entrar al desvío
     apartarSostenS: 0.8,         // segundos que se mantiene apartada
     apartarSalidaS: 0.4,         // segundos para volver a la cámara
+    cabezaFraccion: 0.3,         // 0..1 — cuánto de la mirada (grados, ya convertidos a rad) gira también la cabeza/cuello
+    cabezaVelocidad: 6,          // lerp/s de la cabeza hacia la mirada — más alto = menos retardo respecto a los ojos
   },
 };
 
@@ -469,17 +471,44 @@ function recalcularEncuadre() {
   // completo antes de pasarla a worldX() (ver esa función más arriba). En
   // overlay fraccionAreaVisible3D()===1, así que esto es un no-op idéntico
   // a antes.
-  const posX = worldX(CONFIG.pet.anchorX * fraccionAreaVisible3D());
+  const fracXCanvas = CONFIG.pet.anchorX * fraccionAreaVisible3D();
+  const posX = worldX(fracXCanvas);
   if (vrm) {
     vrm.scene.position.y = _modeloPositionY;
     vrm.scene.position.x = posX;
   }
 
-  posicionarSuelo();
+  // Cámara alineada con Rem en X — antes quedaba siempre en x=0 mientras
+  // Rem estaba desplazada a un costado (posX), así que la veía en tres
+  // cuartos: su cuerpo mira al frente de la escena (-Z), pero el vector
+  // cámara->Rem tenía una componente en X, y los ojos (ver "MIRADA A
+  // CÁMARA" más abajo) tenían que girar para compensar ESE ángulo
+  // estructural además de cualquier seguimiento real — y ese giro extra
+  // competía con el rango de mirada bastante angosto que trae el modelo
+  // (ver CONFIG.mirada y el log de rangos al cargar el VRM). Con
+  // camera.position.x y el lookAt en el mismo X que el modelo, el vector
+  // cámara->Rem es puramente -Z: vista frontal de verdad.
+  //
+  // Como el punto que mira la cámara siempre proyecta al centro de la
+  // imagen, esto por sí solo centraría a Rem en el medio del CANVAS
+  // COMPLETO — en modo ventana, debajo del panel de chat. setViewOffset()
+  // corrige eso sin volver a rotar la cámara (que reintroduciría el
+  // ángulo que se acaba de eliminar): es un corrimiento de "lente
+  // descentrado" (el mismo truco que un objetivo tilt-shift o un
+  // corrimiento de cámara de arquitectura) que reencuadra la imagen ya
+  // renderizada para que Rem siga apareciendo en fracXCanvas del canvas,
+  // como antes.
+  camera.position.x = posX;
+  camera.lookAt(posX, 0, 0);
+  const offsetX = (0.5 - fracXCanvas) * window.innerWidth;
+  camera.setViewOffset(window.innerWidth, window.innerHeight, offsetX, 0, window.innerWidth, window.innerHeight);
+  camera.updateProjectionMatrix();
+
+  posicionarSuelo(posX);
 
   console.log(`[Encuadre] z=${camera.position.z.toFixed(3)} anchoVisible=${_anchoVisible.toFixed(3)} `
             + `alturaVisible=${_alturaVisible.toFixed(3)} position.y=${_modeloPositionY.toFixed(3)} `
-            + `position.x=${posX.toFixed(3)} (anchorX=${CONFIG.pet.anchorX})`);
+            + `position.x=${posX.toFixed(3)} (anchorX=${CONFIG.pet.anchorX}) viewOffsetX=${offsetX.toFixed(1)}px`);
 }
 
 // ═══════════════════════════════════════════════════
@@ -523,13 +552,19 @@ function crearSueloSynthwave() {
   console.log('[Suelo] synthwave creado:', cfg);
 }
 
-// Alinea el suelo con los pies de Rem — se llama desde recalcularEncuadre()
-// cada vez que cambia _modeloPositionY (carga, remedición por huesos, resize).
-function posicionarSuelo() {
+// Alinea el suelo con los pies de Rem (Y) y con la cámara (X) — se llama
+// desde recalcularEncuadre() cada vez que cambia _modeloPositionY/posX
+// (carga, remedición por huesos, resize). El punto de fuga de la cuadrícula
+// lo determina el eje óptico REAL de la cámara (camera.position.x, no dónde
+// termina apareciendo Rem en pantalla tras el setViewOffset) — como ahora
+// la cámara mira exactamente a posX (ver recalcularEncuadre()), centrar
+// también el suelo en posX pone el punto de fuga justo detrás de Rem, en
+// vez de en el x=0 fijo de antes (que ya no significa nada particular).
+function posicionarSuelo(posX = 0) {
   if (!_grid) return;
   const pieY = _modeloPositionY + (_modeloCentroLocal - _modeloAlturaLocal / 2);
-  _grid.position.y = pieY;
-  if (_horizonte) _horizonte.position.y = pieY;
+  _grid.position.set(posX, pieY, 0);
+  if (_horizonte) _horizonte.position.set(posX, pieY, 0);
 }
 
 crearSueloSynthwave();
@@ -595,6 +630,29 @@ function _cargarVRM(intento = 1) {
         // este mismo lookAt() por su cuenta y pisaría ese trabajo.
         vrm.lookAt.target = camera;
         vrm.lookAt.autoUpdate = false;
+
+        // Rangos reales del lookAt de ESTE modelo (extensión VRM 0.x
+        // firstPerson.lookAt{Horizontal,Vertical}{Inner,Outer,Down,Up}):
+        // cada uno define inputMaxValue/outputScale — el ángulo pedido
+        // (yaw/pitch en grados) se recorta a outputScale grados de rotación
+        // real de ojo, en proporción lineal hasta inputMaxValue grados de
+        // pedido (más allá de eso, se satura en outputScale). Confirmado
+        // para rem.vrm inspeccionando el glTF crudo (dump_vrm.py): las
+        // cuatro curvas son la identidad soportada por three-vrm
+        // ([0,0,0,1,1,1,1,0], sin easing extra), con xRange=90/yRange=10 —
+        // o sea el ojo real solo gira ~1/9 de lo que se le pide, hasta un
+        // tope de 10° en cualquier dirección. Se loguea acá (no solo en el
+        // script de inspección offline) para que quede visible en vivo si
+        // el modelo cambia algún día.
+        const ap = vrm.lookAt.applier;
+        if (ap?.rangeMapHorizontalInner) {
+          const fmt = rm => `in≤${rm.inputMaxValue}° -> out≤${rm.outputScale}°`;
+          console.log('[VRM] rangos de lookAt — horizontal(inner/outer):',
+                      fmt(ap.rangeMapHorizontalInner), '/', fmt(ap.rangeMapHorizontalOuter),
+                      '| vertical(down/up):', fmt(ap.rangeMapVerticalDown), '/', fmt(ap.rangeMapVerticalUp));
+        } else {
+          console.warn('[VRM] no se pudo leer vrm.lookAt.applier.rangeMap* — ¿lookAtTypeName no es "Bone"?');
+        }
       }
       {
         const dedosFaltantes = [];
@@ -1386,6 +1444,13 @@ let _saccadeYawObjetivo = 0, _saccadePitchObjetivo = 0; // punto de llegada del 
 let _saccadeT = 1, _saccadeDur = 0.03;                  // progreso 0..1 del salto actual, y su duración
 let _saccadeTimer = 0.5 + Math.random() * 1.5;
 
+// Versión con retardo de la mirada final (base + saccade), para que la
+// cabeza/cuello la sigan detrás de los ojos — ver "cabeza acompaña a la
+// mirada" más abajo (usado en animate(), no acá).
+let _cabezaMiradaYaw = 0, _cabezaMiradaPitch = 0;
+
+let _miradaLogTimer = 2; // diagnóstico: cada cuántos segundos se loguea el yaw/pitch pedido
+
 const _miradaCamPos = new THREE.Vector3(); // reusado cada frame, evita basura de GC
 
 let _miradaFase = 'siguiendo';  // 'siguiendo' | 'apartando'
@@ -1477,9 +1542,35 @@ function updateSaccades(dt) {
   // saltos), la base ahora se mueve todo el tiempo (sigue a la cámara/la
   // cabeza) y hay que reaplicarla cada frame o los ojos se quedan pegados al
   // último valor hasta la próxima saccade.
+  const yawFinal = yawBase + _saccadeYaw;
+  const pitchFinal = pitchBase + _saccadePitch;
   if (vrm?.lookAt) {
-    vrm.lookAt.yaw   = yawBase   + _saccadeYaw;
-    vrm.lookAt.pitch = pitchBase + _saccadePitch;
+    vrm.lookAt.yaw   = yawFinal;
+    vrm.lookAt.pitch = pitchFinal;
+  }
+
+  // La cabeza (y el cuello, ver animate()) siguen una fracción de ESTA
+  // MISMA mirada final (base de cámara + saccade + apartar, ya combinados
+  // arriba) — pero con un retardo propio: un lerp más lento que la
+  // respuesta instantánea de los ojos (que ya se escribieron sin demora,
+  // arriba), así que la cabeza "llega después". CONFIG.mirada.cabezaVelocidad
+  // más alto = menos retardo. Se actualiza siempre, incluso en 'thinking'
+  // (donde yawFinal/pitchFinal son el punto fijo -10/8 más saccades) — es
+  // animate() quien decide NO aplicar esta contribución en 'thinking',
+  // porque ese estado ya tiene su propio desvío de cabeza fijo vía
+  // updateLook() y sumar los dos duplicaría el giro.
+  _cabezaMiradaYaw   = lerp(_cabezaMiradaYaw,   yawFinal,   dt * CONFIG.mirada.cabezaVelocidad);
+  _cabezaMiradaPitch = lerp(_cabezaMiradaPitch, pitchFinal, dt * CONFIG.mirada.cabezaVelocidad);
+
+  // Diagnóstico pedido explícitamente: el yaw/pitch que se le pide a los
+  // ojos cada 2s, para poder ver a simple vista si se está saturando contra
+  // el rango real del modelo (ver el log de rangos al cargar el VRM, más
+  // arriba — con xRange=90/yRange=10 en las cuatro curvas, un pedido de
+  // 20-30° ya se recorta a apenas 2-3° reales).
+  _miradaLogTimer -= dt;
+  if (_miradaLogTimer <= 0) {
+    _miradaLogTimer = 2;
+    console.log(`[Mirada] pedido yaw=${yawFinal.toFixed(1)}° pitch=${pitchFinal.toFixed(1)}°`);
   }
 }
 
@@ -1687,11 +1778,28 @@ function animate() {
   // ── Pose procedural del estado actual ──
   const pose = getStatePose(t);
 
-  // Cabeza: pose base + mirada + spring
-  const tHX = pose.hX - lookCur.y * 0.32;
-  const tHY = pose.hY - lookCur.x * 0.26;
+  // Cabeza: pose base + drift de updateLook() + "sigue la mirada" (fracción
+  // de hacia dónde miran los ojos — base de cámara + saccade + apartar, ya
+  // con el retardo propio calculado en updateSaccades()) + spring. En
+  // 'thinking' NO se suma la mirada acá: ese estado ya tiene su propio
+  // desvío de cabeza fijo vía lookCur (arriba, en updateLook()) apuntando
+  // al mismo punto que usa _miradaBase() para los ojos — sumar los dos
+  // duplicaría el giro.
+  const S_MIRADA = CONFIG.mirada;
+  const cabezaSigueMirada = estado !== 'thinking';
+  const miradaYawRad   = cabezaSigueMirada ? (_cabezaMiradaYaw   * Math.PI / 180) * S_MIRADA.cabezaFraccion : 0;
+  const miradaPitchRad = cabezaSigueMirada ? (_cabezaMiradaPitch * Math.PI / 180) * S_MIRADA.cabezaFraccion : 0;
+
+  const tHX = pose.hX - lookCur.y * 0.32 - miradaPitchRad;
+  const tHY = pose.hY - lookCur.x * 0.26 + miradaYawRad;
   const tHZ = pose.hZ + lookCur.x * 0.48;
 
+  // headB.rotation.{x,y,z} recibe el spring completo; neckB recibe una
+  // fracción del MISMO spring ya resuelto (spr.hX.v/etc., más abajo) — así
+  // el giro se reparte entre cabeza y cuello (no todo cargado en la
+  // cabeza) automáticamente, para CUALQUIER fuente que alimente tHX/tHY/tHZ
+  // (drift de reposo, mirada nueva, lo que sea) sin necesidad de un reparto
+  // aparte por cada una.
   const headB = getB('head'), neckB = getB('neck');
   if (headB) {
     headB.rotation.x = spr.hX.step(tHX, dt);
