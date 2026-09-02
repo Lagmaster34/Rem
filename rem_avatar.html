@@ -208,6 +208,12 @@
 import * as THREE from 'https://esm.sh/three@0.169.0';
 import { GLTFLoader }    from 'https://esm.sh/three@0.169.0/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from 'https://esm.sh/@pixiv/three-vrm@2';
+// Solo el loader plugin (parser + retargetizador de rotaciones al rig del modelo).
+// NO se usa createVRMAnimationClip: ese además arma pistas de expresión/mirada y
+// auto-crea un VRMLookAtQuaternionProxy en la escena — acá los clips solo mueven
+// huesos de cuerpo (ver "ANIMACIÓN POR CLIPS VRMA" más abajo). Versión 2.1.3:
+// empareja con @pixiv/three-vrm@2 (mismo three-vrm-core, mismo módulo three vía esm.sh).
+import { VRMAnimationLoaderPlugin } from 'https://esm.sh/@pixiv/three-vrm-animation@2.1.3';
 
 // ═══════════════════════════════════════════════════
 // MODO: ?modo=overlay|ventana (overlay por defecto)
@@ -293,18 +299,44 @@ const CONFIG = {
     derivaAmp:       0.05,  // amplitud del ruido de micro-variación, para que no queden congelados
     derivaFreq:      0.025, // muy lento a propósito — es solo para que no se vean muertos
   },
-  // Giro de bailarina — animación de reposo puntual (no un loop). Ver
-  // "GIRO DE BAILARINA (idle puntual)" más abajo. Todo en segundos/radianes.
-  giro: {
-    intervaloMinS:    20,   // mínimo de idle+sin audio antes de poder disparar
-    intervaloMaxS:    30,   // máximo — se sortea un valor al azar en este rango cada vez
-    duracionS:        3.5,  // duración del giro completo (360°), pedido 3-4s
-    alturaPieRad:     0.55, // cuánto se levanta la pierna trasera (rightUpperLeg.rotation.x)
-    flexionRodillaRad:0.9,  // flexión de rightLowerLeg en el punto más alto del giro
-    inclinacionCabezaRad: 0.35, // cuánto mira hacia abajo (head.rotation.x) en el punto más alto
-    ladeoCabezaRad:   0.18, // inclinación lateral de cabeza (head.rotation.z) en el punto más alto
-    separacionBrazosRad: 0.35, // cuánto se separan los brazos del cuerpo durante el giro
-    volverDuracionS:  0.4,  // segundos para interpolar de vuelta si se interrumpe a mitad de camino
+  // Animación de cuerpo con clips VRMA — ver "ANIMACIÓN POR CLIPS VRMA" más
+  // abajo. Los clips controlan SOLO la pose del cuerpo; respiración, parpadeo,
+  // saccades, mirada a cámara y jaw se aplican siempre encima del mixer.
+  animaciones: {
+    carpeta: '/Animaciones/VRMA_MotionPack/',
+    crossfadeS: 0.4,  // toda transición (procedural<->clip, clip<->clip) — 0,3-0,5s
+    // Estado emocional -> clip. talking/idle NO tienen clip (siguen procedurales).
+    //   modo 'bucle'  : el clip se repite. duracionS (opcional) = tope de segundos
+    //                   que el clip controla el cuerpo; al vencer hace crossfade de
+    //                   vuelta a lo procedural. La CARA sigue con la emoción
+    //                   (la maneja updateExpressions() por 'estado', aparte del mixer).
+    //                   Sin duracionS: el clip repite hasta que cambie el estado.
+    //   modo 'unaVez' : LoopOnce; al terminar el clip hace crossfade de vuelta a lo
+    //                   procedural aunque el estado siga activo — nunca deja el
+    //                   cuerpo plantado en el frame final (getStatePose tiene pose
+    //                   procedural para sad/angry/happy/surprised, + EXPR_PROFILES).
+    porEstado: {
+      thinking:  { archivo: 'Thinking.vrma',  modo: 'bucle' },                // sin tope: dura lo que dure thinking
+      sad:       { archivo: 'Sad.vrma',       modo: 'bucle', duracionS: 6 },
+      angry:     { archivo: 'Angry.vrma',     modo: 'bucle', duracionS: 4 },
+      surprised: { archivo: 'Surprised.vrma', modo: 'unaVez' },
+      happy:     { archivo: 'Blush.vrma',     modo: 'unaVez' },
+    },
+    // Gestos de reposo aleatorios — reemplazan el "giro de bailarina" a mano.
+    // Solo se disparan en estado idle + sin audio. Selección ponderada por 'peso';
+    // 'horaDesde'/'horaHasta' (opcionales, hora local 0-23) restringen la franja.
+    gestos: {
+      intervaloMinS: 25,  // mínimo de idle+sin audio antes de poder disparar un gesto
+      intervaloMaxS: 55,  // máximo — se sortea en este rango tras cada gesto
+      repertorio: [
+        { archivo: 'LookAround.vrma', peso: 6 },                              // frecuente
+        { archivo: 'VRMA_05.vrma',    peso: 1 },                              // girar
+        { archivo: 'VRMA_07.vrma',    peso: 1 },                              // flexiones
+        { archivo: 'VRMA_01.vrma',    peso: 1 },                              // mostrar cuerpo entero
+        { archivo: 'Sleepy.vrma',     peso: 3, horaDesde: 0, horaHasta: 6 }, // solo 00:00-06:00
+      ],
+      // disponibles pero sin usar por ahora: Goodbye.vrma, Clapping.vrma, VRMA_02.vrma
+    },
   },
   // Mirada a cámara — ver "MIRADA A CÁMARA + MICRO-SACCADES" más abajo.
   mirada: {
@@ -574,6 +606,9 @@ crearSueloSynthwave();
 // ═══════════════════════════════════════════════════
 const loader = new GLTFLoader();
 loader.register(p => new VRMLoaderPlugin(p));
+// El MISMO loader carga .vrm y .vrma. El plugin de animación es inerte para un
+// .vrm (su afterRoot chequea la extensión VRMC_vrm_animation y sale si no está).
+loader.register(p => new VRMAnimationLoaderPlugin(p));
 
 // Retry con espera exponencial: el WebKit2GTK de este proyecto sufre crashes
 // internos del Network Process (ver CLAUDE.md, "Segunda regresión del
@@ -594,7 +629,12 @@ function _cargarVRM(intento = 1) {
       vrm.scene.rotation.y = Math.PI;
       vrm.scene.scale.set(1, 1, 1);
       vrm.scene.position.set(0, 0, 0); // posición neutra: medir la caja sin offsets propios
+      // Un clip VRMA puede sacar un miembro fuera del bounding box con el que se
+      // subió la geometría — sin esto el frustum culling lo recorta en silencio
+      // a mitad de animación (está en el ejemplo oficial de three-vrm-animation).
+      vrm.scene.traverse(o => { o.frustumCulled = false; });
       scene.add(vrm.scene);
+      inicializarAnimacionClips(); // mixer + lista de huesos normalizados para la mezcla
 
       // Medición inicial por Box3 — placeholder para el primer frame o dos, hasta
       // que la remedición por huesos (más abajo, en animate()) la corrija. Se
@@ -665,7 +705,7 @@ function _cargarVRM(intento = 1) {
         }
         console.log(`[VRM] dedos: ${30 - dedosFaltantes.length}/30 mapeados`,
                     dedosFaltantes.length ? `— faltan: ${dedosFaltantes.join(', ')}` : '');
-        console.log('[VRM] piernas para el giro:',
+        console.log('[VRM] piernas (para clips VRMA):',
                     !!getB('rightUpperLeg'), !!getB('rightLowerLeg'),
                     !!getB('leftUpperLeg'), !!getB('leftLowerLeg'));
       }
@@ -1616,166 +1656,14 @@ function aplicarCurvaturaDedos(t) {
 }
 
 // ═══════════════════════════════════════════════════
-// GIRO DE BAILARINA — animación de reposo puntual, no un loop
+// POSE PROCEDURAL DE CUERPO — pose por estado (getStatePose) + springs
 // ═══════════════════════════════════════════════════
-// Tras un rato de calma real (idle, sin audio) Rem da una vuelta completa
-// sobre su eje: se dispara una vez, termina, y espera un intervalo nuevo y
-// al azar antes de poder repetirse — no es un ciclo que se repite solo.
-// Interrumpible en cualquier momento (audio o cambio de estado): en vez de
-// cortar en seco, pasa a 'volviendo' e interpola de vuelta a la orientación
-// frontal, nunca un salto. Todos los tiempos/ángulos en CONFIG.giro.
-const easeInOutCubic = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-
-function _sortearIntervaloGiro() {
-  const { intervaloMinS, intervaloMaxS } = CONFIG.giro;
-  return intervaloMinS + Math.random() * (intervaloMaxS - intervaloMinS);
-}
-
-// Math.PI es la orientación frontal (fijada al cargar el VRM) — el giro le
-// suma 2π completos, así que puede terminar en Math.PI + 2π*k. Al volver
-// hace falta el múltiplo de 2π más cercano al ángulo actual, para no pegar
-// un salto ni dar una vuelta de más de la cuenta.
-function _anguloFrontalMasCercano(actual) {
-  const vueltas = Math.round((actual - Math.PI) / (2 * Math.PI));
-  return Math.PI + vueltas * 2 * Math.PI;
-}
-
-let _giroFase = 'esperando';   // 'esperando' | 'girando' | 'volviendo'
-let _giroTimer = _sortearIntervaloGiro();
-let _giroProgreso = 0;         // 0..1 dentro de 'girando'
-let _giroDireccion = 1;        // ±1, sorteada en cada disparo (variedad)
-let _giroVolverT = 0;          // progreso 0..1 dentro de 'volviendo'
-let _giroVolverDesdeY = Math.PI;
-
-const _giroElegible = () => estado === 'idle' && !_audioActivo;
-
-// Tick + aplicación en una sola función, llamada al final de animate() (ver
-// más abajo) para que tenga la última palabra sobre los huesos que toca —
-// el resto del cuerpo se sigue posando con normalidad todo el tiempo por
-// detrás (los springs de cabeza/brazos no se congelan), así que al volver
-// a 'esperando' la transición es contra valores ya razonables, no contra
-// un hueco. Devuelve true si este frame lo controló el giro (informativo,
-// no lo usa nada todavía).
-function updateGiroBailarina(dt) {
-  const G = CONFIG.giro;
-
-  if (_giroFase === 'esperando') {
-    if (!_giroElegible()) {
-      _giroTimer = _sortearIntervaloGiro(); // cualquier actividad reinicia la espera
-      return false;
-    }
-    _giroTimer -= dt;
-    if (_giroTimer <= 0) {
-      _giroFase = 'girando';
-      _giroProgreso = 0;
-      _giroDireccion = Math.random() < 0.5 ? 1 : -1;
-      console.log(`[Giro] arranca, dirección ${_giroDireccion > 0 ? 'horaria' : 'antihoraria'}`);
-    }
-    return false;
-  }
-
-  if (_giroFase === 'girando') {
-    if (!_giroElegible()) {
-      // Interrupción a mitad de camino: nunca pisa el lipsync ni las poses
-      // de talking/thinking — se aborta ACÁ, antes de escribir nada más.
-      console.log(`[Giro] interrumpido en progreso=${_giroProgreso.toFixed(2)}, volviendo a frontal`);
-      _giroFase = 'volviendo';
-      _giroVolverT = 0;
-      _giroVolverDesdeY = vrm.scene.rotation.y;
-      return updateGiroBailarina(dt); // mismo frame, ya en 'volviendo'
-    }
-
-    _giroProgreso = Math.min(1, _giroProgreso + dt / G.duracionS);
-    const e = easeInOutCubic(_giroProgreso);
-    vrm.scene.rotation.y = Math.PI + _giroDireccion * 2 * Math.PI * e;
-
-    // Envolvente compartida por pie/cabeza/brazos: 0 en los extremos, 1 a
-    // mitad del giro — entran y salen de forma gradual, como pide la
-    // especificación, todos sincronizados al mismo punto.
-    const env = Math.sin(_giroProgreso * Math.PI);
-
-    const rul = getB('rightUpperLeg'), rll = getB('rightLowerLeg');
-    const lul = getB('leftUpperLeg'),  lll = getB('leftLowerLeg');
-    if (rul) rul.rotation.x = -G.alturaPieRad * env;      // pierna trasera se eleva
-    if (rll) rll.rotation.x =  G.flexionRodillaRad * env; // rodilla flexionada
-    if (lul) lul.rotation.x = 0;                          // pierna de apoyo, recta
-    if (lll) lll.rotation.x = 0;
-
-    const headB = getB('head'), neckB = getB('neck');
-    if (headB) { headB.rotation.x = G.inclinacionCabezaRad * env; headB.rotation.z = G.ladeoCabezaRad * env; }
-    if (neckB) { neckB.rotation.x = G.inclinacionCabezaRad * env * 0.3; neckB.rotation.z = G.ladeoCabezaRad * env * 0.3; }
-
-    const rua = getB('rightUpperArm'), lua = getB('leftUpperArm');
-    if (rua) rua.rotation.z = -CONFIG.brazos.separacion - G.separacionBrazosRad * env;
-    if (lua) lua.rotation.z =  CONFIG.brazos.separacion + G.separacionBrazosRad * env;
-
-    if (_giroProgreso >= 1) {
-      _giroFase = 'esperando';
-      _giroTimer = _sortearIntervaloGiro();
-      console.log(`[Giro] completo, próximo en ~${_giroTimer.toFixed(1)}s`);
-    }
-    return true;
-  }
-
-  // 'volviendo': interpola de vuelta en G.volverDuracionS (~400ms por
-  // defecto) arrancando desde donde esté AHORA (nunca un valor fijo), así
-  // que no hay salto sea cual sea el punto del giro en el que se abortó.
-  _giroVolverT = Math.min(1, _giroVolverT + dt / G.volverDuracionS);
-  const u = _fade(_giroVolverT);
-  const objetivoY = _anguloFrontalMasCercano(_giroVolverDesdeY);
-  vrm.scene.rotation.y = lerp(_giroVolverDesdeY, objetivoY, u);
-
-  const rul = getB('rightUpperLeg'), rll = getB('rightLowerLeg');
-  if (rul) rul.rotation.x = lerp(rul.rotation.x, 0, u);
-  if (rll) rll.rotation.x = lerp(rll.rotation.x, 0, u);
-  const headB = getB('head'), neckB = getB('neck');
-  if (headB) { headB.rotation.x = lerp(headB.rotation.x, 0, u); headB.rotation.z = lerp(headB.rotation.z, 0, u); }
-  if (neckB) { neckB.rotation.x = lerp(neckB.rotation.x, 0, u); neckB.rotation.z = lerp(neckB.rotation.z, 0, u); }
-  const rua = getB('rightUpperArm'), lua = getB('leftUpperArm');
-  if (rua) rua.rotation.z = lerp(rua.rotation.z, -CONFIG.brazos.separacion, u);
-  if (lua) lua.rotation.z = lerp(lua.rotation.z,  CONFIG.brazos.separacion, u);
-
-  if (_giroVolverT >= 1) {
-    _giroFase = 'esperando';
-    _giroTimer = _sortearIntervaloGiro();
-    console.log(`[Giro] de vuelta en frontal, próximo en ~${_giroTimer.toFixed(1)}s`);
-    return false;
-  }
-  return true;
-}
-
-// ═══════════════════════════════════════════════════
-// LOOP PRINCIPAL
-// ═══════════════════════════════════════════════════
-function animate() {
-  requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.05);
-  if (!vrm) { renderer.render(scene, camera); return; }
-
-  const t = clock.getElapsedTime();
-
-  // Detectar cambio de estado
-  if (estado !== prevEstado) {
-    if (estado === 'surprised') surprisedSnap = 1.0;
-    applySpringConfig();
-    prevEstado = estado;
-  }
-
-  // Decaer snap de sorpresa
-  if (surprisedSnap > 0) surprisedSnap = Math.max(0, surprisedSnap - dt * 1.8);
-
-  // ── Sistemas de expresión / parpadeo / mirada / saccades ──
-  updateExpressions(dt);
-  updateBlink(dt);
-  aplicarVisemesPreUpdate(); // vía fallback: expressionManager necesita el valor ANTES de vrm.update()
-  updateLook(dt, t);
-  updateSaccades(dt);
-  // _jawApertura es del frame anterior acá (se recalcula al final de este
-  // mismo animate(), en aplicarVisemesPostUpdate) — un frame de atraso es
-  // imperceptible para algo tan lento como _hablaEnergia.
-  actualizarHablaEnergia(dt);
-
-  // ── Pose procedural del estado actual ──
+// Antes vivía inline en animate(). Se extrajo a una función porque ahora es
+// uno de los dos caminos de pose de cuerpo: se usa cuando NO hay clip VRMA
+// activo, y como fuente de la mezcla durante un crossfade procedural<->clip
+// (ver "ANIMACIÓN POR CLIPS VRMA" abajo). Lógica sin cambios respecto de
+// cuando era inline. Escribe .rotation en los huesos normalizados.
+function aplicarCuerpoProcedural(t, dt) {
   const pose = getStatePose(t);
 
   // Cabeza: pose base + drift de updateLook() + "sigue la mirada" (fracción
@@ -1872,13 +1760,400 @@ function animate() {
   }
 
   aplicarCurvaturaDedos(t);
+}
 
-  // Giro de bailarina: se llama al final, después de que todo lo demás ya
-  // se posó con normalidad — así, si está activo, tiene la última palabra
-  // sobre cabeza/brazos/piernas/scene.rotation.y sin pelear con nada, y el
-  // resto del cuerpo (springs incluidos) sigue vivo por detrás para que la
-  // vuelta a 'esperando' no sea contra un hueco.
-  updateGiroBailarina(dt);
+// ═══════════════════════════════════════════════════
+// ANIMACIÓN POR CLIPS VRMA — pose de cuerpo con THREE.AnimationMixer
+// ═══════════════════════════════════════════════════
+// Los .vrma (formato VRM Animation) reemplazan las poses de cuerpo por estado
+// y el "giro de bailarina" a mano. Regla dura: los clips SOLO mueven huesos
+// de cuerpo — se excluyen leftEye/rightEye/jaw y se ignoran las pistas de
+// expresión/mirada que traiga el .vrma (pelean con el lipsync por índice y el
+// parpadeo, que ya funcionan). Respiración, parpadeo, saccades, mirada a
+// cámara y jaw se aplican SIEMPRE encima del mixer, también durante un clip.
+// Toda transición (procedural<->clip, clip<->clip) va con crossfade
+// (CONFIG.animaciones.crossfadeS, 0,3-0,5s). Carga perezosa + cache; si un
+// clip falta en disco o no parsea, se cae a lo procedural con un aviso.
+// Config: CONFIG.animaciones.
+let _mixer = null;
+let _accionActual = null;      // THREE.AnimationAction en curso, o null (= procedural puro)
+let _accionAnterior = null;    // la de antes, mantenida viva durante un crossfade clip->clip
+let _clipPeso = 0;             // 0 = procedural puro, 1 = clip puro; rampa en actualizarAnimacionClips()
+let _clipPesoObjetivo = 0;
+let _clipTopeTimer = null;     // segundos restantes de un clip 'bucle' con duracionS, o null
+const _clipCache = new Map();  // archivo -> {archivo, clip} | {archivo, error}
+const _huesosNorm = [];        // [{node, q:Quaternion}] — todos los huesos normalizados, para la mezcla
+let _hipsNode = null;
+const _qClipTmp = new THREE.Quaternion();
+const _vClipTmp = new THREE.Vector3();
+const _hipsPosProc = new THREE.Vector3();
+let _tokenClip = 0;            // invalida cargas async pendientes si el estado/gesto cambió mientras tanto
+
+// Gestos de reposo: máquina de estados chica (esperando -> reproduciendo).
+let _gestoTimer = _sortearIntervaloGesto();
+let _gestoActivo = false;      // un gesto de reposo controla el cuerpo (o está cargando)
+
+function _sortearIntervaloGesto() {
+  const { intervaloMinS, intervaloMaxS } = CONFIG.animaciones.gestos;
+  return intervaloMinS + Math.random() * (intervaloMaxS - intervaloMinS);
+}
+
+function inicializarAnimacionClips() {
+  _mixer = new THREE.AnimationMixer(vrm.scene);
+  _mixer.addEventListener('finished', _alTerminarClip);
+  _huesosNorm.length = 0;
+  for (const nombre of Object.keys(vrm.humanoid.humanBones)) {
+    const node = vrm.humanoid.getNormalizedBoneNode(nombre);
+    if (node) _huesosNorm.push({ node, q: new THREE.Quaternion() });
+  }
+  _hipsNode = vrm.humanoid.getNormalizedBoneNode('hips');
+  console.log(`[Anim] mixer listo — ${_huesosNorm.length} huesos normalizados para la mezcla`);
+}
+
+// Los .vrma de tk256ailab no traen extensions.VRMC_vrm_animation.specVersion y
+// VRMAnimationLoaderPlugin@2.1.3 aborta el parseo sin él. Se parchea una COPIA
+// en memoria (specVersion:"1.0") — el archivo en disco queda intacto. El pack
+// oficial VRoid ya lo trae: para esos devuelve la URL original sin tocar nada.
+async function normalizarVrma(url) {
+  const MAGIC = 0x46546c67, JSON_T = 0x4e4f534a, BIN_T = 0x004e4942;
+  let buf;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    buf = await resp.arrayBuffer();
+  } catch (e) {
+    throw new Error(`no se pudo descargar (${e.message})`);
+  }
+  const dv = new DataView(buf);
+  if (buf.byteLength < 20 || dv.getUint32(0, true) !== MAGIC || dv.getUint32(16, true) !== JSON_T) {
+    return url; // no parece un .glb — que GLTFLoader tire su propio error
+  }
+  const version = dv.getUint32(4, true);
+  const jsonLen = dv.getUint32(12, true);
+  const json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jsonLen)));
+  const ext = json.extensions && json.extensions.VRMC_vrm_animation;
+  if (!ext || ext.specVersion != null) return url; // ya está bien
+  ext.specVersion = '1.0';
+
+  const binOff = 20 + jsonLen;
+  let bin = null;
+  if (binOff + 8 <= buf.byteLength && dv.getUint32(binOff + 4, true) === BIN_T) {
+    bin = new Uint8Array(buf, binOff + 8, dv.getUint32(binOff, true));
+  }
+  let jsonBytes = new TextEncoder().encode(JSON.stringify(json));
+  const pad = (4 - (jsonBytes.length % 4)) % 4;
+  if (pad) {
+    const p = new Uint8Array(jsonBytes.length + pad);
+    p.set(jsonBytes); p.fill(0x20, jsonBytes.length);
+    jsonBytes = p;
+  }
+  const total = 12 + 8 + jsonBytes.length + (bin ? 8 + bin.length : 0);
+  const out = new Uint8Array(total);
+  const odv = new DataView(out.buffer);
+  odv.setUint32(0, MAGIC, true); odv.setUint32(4, version, true); odv.setUint32(8, total, true);
+  odv.setUint32(12, jsonBytes.length, true); odv.setUint32(16, JSON_T, true);
+  out.set(jsonBytes, 20);
+  if (bin) {
+    const bp = 20 + jsonBytes.length;
+    odv.setUint32(bp, bin.length, true); odv.setUint32(bp + 4, BIN_T, true);
+    out.set(bin, bp + 8);
+  }
+  console.log(`[Anim] ${url.split('/').pop()}: specVersion ausente → parcheado a "1.0" en memoria`);
+  return URL.createObjectURL(new Blob([out], { type: 'model/gltf-binary' }));
+}
+
+// Arma un THREE.AnimationClip SOLO con las pistas de hueso de cuerpo, replicando
+// la parte humanoid de createVRMAnimationHumanoidTracks (three-vrm-animation
+// v2.1.3) pero con el THREE de esta página (el mismo que el mixer) y sin las
+// pistas de expresión/mirada. El retargetizado real (matrices de mundo del rig
+// origen -> local del rig del modelo) ya lo hizo VRMAnimationLoaderPlugin.
+const _EXCLUIR_HUESOS_CLIP = new Set(['leftEye', 'rightEye', 'jaw']);
+function clipDeVrma(va) {
+  const metaV = vrm.meta?.metaVersion ?? '1';   // '0' para rem.vrm (VRM 0.x)
+  const tracks = [];
+  for (const [name, orig] of va.humanoidTracks.rotation) {
+    if (_EXCLUIR_HUESOS_CLIP.has(name)) continue;
+    const node = vrm.humanoid.getNormalizedBoneNode(name);
+    if (!node) continue;                          // hueso que rem.vrm no tiene → se ignora
+    // VRM0: espejo 180° en Y → negar x,z de cada cuaternión (índices pares del array plano).
+    const values = metaV === '0'
+      ? Float32Array.from(orig.values, (v, i) => (i % 2 === 0 ? -v : v))
+      : Float32Array.from(orig.values);
+    tracks.push(new THREE.QuaternionKeyframeTrack(`${node.name}.quaternion`, orig.times, values));
+  }
+  for (const [name, orig] of va.humanoidTracks.translation) {   // solo hips
+    const node = vrm.humanoid.getNormalizedBoneNode(name);
+    if (!node) continue;
+    const animY = va.restHipsPosition?.y || 1;
+    const humanY = vrm.humanoid.normalizedRestPose?.hips?.position?.[1] ?? animY;
+    const scale = humanY / animY;
+    const values = Float32Array.from(orig.values, (v, i) => (metaV === '0' && i % 3 !== 1 ? -v : v) * scale);
+    tracks.push(new THREE.VectorKeyframeTrack(`${node.name}.position`, orig.times, values));
+  }
+  return new THREE.AnimationClip('cuerpo', va.duration ?? -1, tracks);
+}
+
+// Carga perezosa + cache. Cachea también el fallo, para no reintentar en cada
+// disparo. Nunca lanza: en error devuelve {archivo, error} y el llamador cae a
+// lo procedural.
+async function obtenerClip(archivo) {
+  if (_clipCache.has(archivo)) return _clipCache.get(archivo);
+  let entry;
+  try {
+    const urlUsable = await normalizarVrma(CONFIG.animaciones.carpeta + archivo);
+    let gltf;
+    try {
+      gltf = await loader.loadAsync(urlUsable);
+    } finally {
+      if (urlUsable.startsWith('blob:')) URL.revokeObjectURL(urlUsable);
+    }
+    const va = gltf.userData?.vrmAnimations?.[0];
+    if (!va) throw new Error('sin vrmAnimations (¿glTF sin extensión VRMC_vrm_animation?)');
+    const clip = clipDeVrma(va);
+    if (clip.tracks.length === 0) throw new Error('0 pistas de hueso tras el filtrado');
+    entry = { archivo, clip };
+    console.log(`[Anim] "${archivo}" cargado — ${clip.tracks.length} pistas, ${clip.duration.toFixed(2)}s`);
+  } catch (e) {
+    console.warn(`[Anim] "${archivo}" no disponible: ${e.message} — se mantiene la animación procedural`);
+    entry = { archivo, error: e };
+  }
+  _clipCache.set(archivo, entry);
+  return entry;
+}
+
+function reproducirClip(entry, { modo, duracionS, esGesto }) {
+  if (!_mixer || !entry?.clip) return;
+  const CF = CONFIG.animaciones.crossfadeS;
+  const nueva = _mixer.clipAction(entry.clip);
+  // Ya es el clip activo y a pleno peso (p.ej. thinking re-entrado en el mismo
+  // turno): no reiniciar el loop desde t=0, solo refrescar el tope.
+  if (nueva === _accionActual && _clipPesoObjetivo === 1 && !nueva.paused) {
+    _clipTopeTimer = (duracionS != null) ? duracionS : null;
+    _gestoActivo = !!esGesto;
+    return;
+  }
+  nueva.reset();
+  nueva.setLoop(modo === 'bucle' ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
+  nueva.clampWhenFinished = (modo !== 'bucle'); // sostiene el último frame estable durante el crossfade de salida
+  nueva.enabled = true;
+  nueva.timeScale = 1;
+  nueva.setEffectiveWeight(1);
+  nueva._esGesto = !!esGesto;
+  nueva.play();
+
+  if (_accionActual && _accionActual !== nueva) {
+    // clip -> clip: el mixer hace el crossfade; _clipPeso se queda en 1.
+    if (_accionAnterior && _accionAnterior !== nueva && _accionAnterior !== _accionActual) {
+      _accionAnterior.stop();
+    }
+    _accionActual.crossFadeTo(nueva, CF, false);
+    _accionAnterior = _accionActual;
+  }
+  _accionActual = nueva;
+  _gestoActivo = !!esGesto;
+  _clipTopeTimer = (duracionS != null) ? duracionS : null;
+  _clipPesoObjetivo = 1;
+  console.log(`[Anim] reproduciendo "${entry.archivo}" (${modo}${duracionS != null ? `, tope ${duracionS}s` : ''}${esGesto ? ', gesto' : ''})`);
+}
+
+// No corta el mixer: solo baja el objetivo de mezcla. actualizarAnimacionClips()
+// rampa _clipPeso a 0 y recién ahí para las acciones y resetea la pose. La CARA
+// no se toca — la maneja updateExpressions() por 'estado', así que si el estado
+// emocional sigue activo la expresión se conserva mientras el cuerpo vuelve a
+// respirar/moverse en procedural.
+function volverAProcedural() {
+  _clipPesoObjetivo = 0;
+  _clipTopeTimer = null;
+}
+
+function _alTerminarClip(e) {
+  if (e.action !== _accionActual) return;   // una acción vieja terminando su fade — ignorar
+  // Clip 'unaVez' (surprised/happy/gesto) terminó: crossfade de vuelta a lo
+  // procedural SIEMPRE, aunque el estado emocional siga activo — nunca se deja
+  // el cuerpo plantado en el frame final.
+  const eraGesto = e.action._esGesto;
+  volverAProcedural();
+  if (eraGesto) {
+    _gestoActivo = false;
+    _gestoTimer = _sortearIntervaloGesto();
+  }
+}
+
+// estado -> clip mapeado (CONFIG.animaciones.porEstado). Sin mapeo (talking/idle)
+// -> procedural. Con guarda de carrera: si el estado cambia mientras el clip
+// carga (async), el token no coincide y se descarta.
+function sincronizarClipConEstado() {
+  const m = CONFIG.animaciones.porEstado[estado];
+  const tok = ++_tokenClip;
+  _gestoActivo = false; // un cambio de estado siempre gana sobre un gesto de reposo
+  if (!m) { volverAProcedural(); return; }
+  obtenerClip(m.archivo).then(entry => {
+    if (tok !== _tokenClip) return;                 // el estado cambió mientras cargaba
+    if (entry.error) { volverAProcedural(); return; } // fallback a procedural
+    reproducirClip(entry, { modo: m.modo, duracionS: m.duracionS, esGesto: false });
+  });
+}
+
+function _elegirGestoPorPeso() {
+  const hora = new Date().getHours();
+  const disp = CONFIG.animaciones.gestos.repertorio.filter(g =>
+    g.horaDesde == null || (hora >= g.horaDesde && hora < g.horaHasta));
+  const total = disp.reduce((s, g) => s + g.peso, 0);
+  if (total <= 0) return null;
+  let r = Math.random() * total;
+  for (const g of disp) { r -= g.peso; if (r <= 0) return g; }
+  return disp[disp.length - 1];
+}
+
+function updateGestos(dt) {
+  const hayClipEstado = !!CONFIG.animaciones.porEstado[estado];
+
+  if (_gestoActivo) {
+    // Interrupción (regla: la voz manda): si dejó de ser elegible a mitad de
+    // gesto, crossfade de vuelta a lo procedural.
+    if (estado !== 'idle' || _audioActivo) {
+      volverAProcedural();
+      _gestoActivo = false;
+      _gestoTimer = _sortearIntervaloGesto();
+    }
+    return;
+  }
+
+  if (estado !== 'idle' || _audioActivo || hayClipEstado || _clipPesoObjetivo === 1) {
+    _gestoTimer = _sortearIntervaloGesto();
+    return;
+  }
+
+  _gestoTimer -= dt;
+  if (_gestoTimer > 0) return;
+  _gestoTimer = _sortearIntervaloGesto();
+
+  const g = _elegirGestoPorPeso();
+  if (!g) return;
+  _gestoActivo = true;
+  const tok = ++_tokenClip;
+  obtenerClip(g.archivo).then(entry => {
+    if (tok !== _tokenClip || estado !== 'idle' || _audioActivo) { _gestoActivo = false; return; }
+    if (entry.error) { _gestoActivo = false; return; }
+    reproducirClip(entry, { modo: 'unaVez', esGesto: true });
+  });
+}
+
+// Respiración encima del clip — aditiva (+=), suave. La respiración real es
+// rítmica (seno limpio), no es lo que hacía ver a Rem como un robot. Se escala
+// por k (= _clipPeso): cuando lo procedural domina la mezcla ya trae su propia
+// respiración; cuando el clip domina, esta la reemplaza. Sin doble conteo en
+// la transición.
+function aplicarRespiracionEncima(t, k) {
+  const respFase = Math.sin(t * 0.8) * k;
+  const chestB = getB('upperChest') ?? getB('chest');
+  if (chestB) chestB.rotation.x += respFase * 0.018;
+  const spineB = getB('spine');
+  if (spineB) spineB.rotation.x += respFase * 0.009;
+  const lS = getB('leftShoulder'), rS = getB('rightShoulder');
+  if (lS) lS.rotation.z +=  Math.max(0, respFase) * 0.013;
+  if (rS) rS.rotation.z += -Math.max(0, respFase) * 0.013;
+}
+
+// La cabeza sigue la mirada también durante un clip, pero más contenida (el
+// clip ya posa la cabeza) — mitad de CONFIG.mirada.cabezaFraccion, y escalada
+// por k (= _clipPeso) para no doblar el aporte procedural en la transición.
+// _cabezaMirada* lo actualiza updateSaccades() cada frame, antes de esto.
+function aplicarCabezaSigueMiradaEncima(k) {
+  const f = CONFIG.mirada.cabezaFraccion * 0.5 * k;
+  const headB = getB('head');
+  if (!headB) return;
+  headB.rotation.y += (_cabezaMiradaYaw   * Math.PI / 180) * f;
+  headB.rotation.x -= (_cabezaMiradaPitch * Math.PI / 180) * f;
+}
+
+// Llamada desde animate() en lugar del bloque de pose de cuerpo. Decide entre
+// procedural puro, clip puro, o la mezcla de los dos durante un crossfade.
+function actualizarAnimacionClips(dt, t) {
+  if (!_mixer) { aplicarCuerpoProcedural(t, dt); return; } // aún no cargó el VRM
+  updateGestos(dt);
+
+  if (_clipTopeTimer != null) {
+    _clipTopeTimer -= dt;
+    if (_clipTopeTimer <= 0) { _clipTopeTimer = null; volverAProcedural(); }
+  }
+
+  const cf = CONFIG.animaciones.crossfadeS;
+  _clipPeso += clamp(_clipPesoObjetivo - _clipPeso, -dt / cf, dt / cf);
+
+  if (_clipPeso <= 0.001) {
+    _clipPeso = 0;
+    if (_accionActual || _accionAnterior) {
+      _mixer.stopAllAction();
+      _accionActual = _accionAnterior = null;
+      vrm.humanoid.resetNormalizedPose(); // huesos que el clip movió y el procedural no toca (piernas, hips.position)
+    }
+    aplicarCuerpoProcedural(t, dt);
+    return;
+  }
+
+  const mezclando = _clipPeso < 0.999;
+  if (mezclando) {
+    aplicarCuerpoProcedural(t, dt);                          // escribe .rotation (pose procedural)
+    for (const h of _huesosNorm) h.q.copy(h.node.quaternion); // snapshot procedural
+    if (_hipsNode) _hipsPosProc.copy(_hipsNode.position);
+  }
+
+  _mixer.update(dt);                                          // el clip escribe .quaternion
+
+  if (mezclando) {
+    for (const h of _huesosNorm) {
+      _qClipTmp.copy(h.node.quaternion);
+      h.node.quaternion.slerpQuaternions(h.q, _qClipTmp, _clipPeso);
+    }
+    if (_hipsNode) {
+      _vClipTmp.copy(_hipsNode.position);
+      _hipsNode.position.lerpVectors(_hipsPosProc, _vClipTmp, _clipPeso);
+    }
+  }
+
+  aplicarRespiracionEncima(t, _clipPeso);
+  if (estado !== 'thinking') aplicarCabezaSigueMiradaEncima(_clipPeso);
+}
+
+// ═══════════════════════════════════════════════════
+// LOOP PRINCIPAL
+// ═══════════════════════════════════════════════════
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (!vrm) { renderer.render(scene, camera); return; }
+
+  const t = clock.getElapsedTime();
+
+  // Detectar cambio de estado
+  if (estado !== prevEstado) {
+    if (estado === 'surprised') surprisedSnap = 1.0;
+    applySpringConfig();
+    sincronizarClipConEstado(); // mapea estado -> clip VRMA (o crossfade a procedural)
+    prevEstado = estado;
+  }
+
+  // Decaer snap de sorpresa
+  if (surprisedSnap > 0) surprisedSnap = Math.max(0, surprisedSnap - dt * 1.8);
+
+  // ── Sistemas de expresión / parpadeo / mirada / saccades ──
+  updateExpressions(dt);
+  updateBlink(dt);
+  aplicarVisemesPreUpdate(); // vía fallback: expressionManager necesita el valor ANTES de vrm.update()
+  updateLook(dt, t);
+  updateSaccades(dt);
+  // _jawApertura es del frame anterior acá (se recalcula al final de este
+  // mismo animate(), en aplicarVisemesPostUpdate) — un frame de atraso es
+  // imperceptible para algo tan lento como _hablaEnergia.
+  actualizarHablaEnergia(dt);
+
+  // ── Pose de cuerpo: clip VRMA, procedural, o mezcla de los dos ──
+  // Reemplaza el bloque de pose procedural inline + el giro de bailarina a
+  // mano. Ver "ANIMACIÓN POR CLIPS VRMA" más arriba: cuando hay un clip
+  // activo lo aplica el mixer y la respiración/mirada van encima; si no,
+  // corre aplicarCuerpoProcedural() tal cual antes.
+  actualizarAnimacionClips(dt, t);
 
   vrm.update(dt); // spring bones + morphs internos del VRM — después de posar los huesos
 

@@ -31,7 +31,8 @@ no basta con copiar la carpeta.
 | `rem_avatar_server.py` | Servidor HTTP `:18765` + WebSocket `:18766` para el avatar |
 | `rem_overlay.py` | Overlay GTK transparente click-through (`?modo=overlay`) |
 | `rem_chat.py` | Ventana GTK decorada y con foco (`?modo=ventana`) — ver "Ventana de escritorio" más abajo |
-| `rem_avatar.html` | Frontend Three.js/VRM del avatar — animación procedural + panel de chat HTML/CSS/JS (solo modo ventana), un motor para los dos modos |
+| `rem_avatar.html` | Frontend Three.js/VRM del avatar — animación (clips VRMA para el cuerpo + procedural para respiración/mirada/gestos) + panel de chat HTML/CSS/JS (solo modo ventana), un motor para los dos modos |
+| `Animaciones/` | Clips `.vrma` del avatar — no van al repo, se descargan a mano. Ver `Animaciones/README.md` y "Animación de cuerpo con clips VRMA" más abajo |
 | `chat_sesion.py` | `SesionChat` + `procesar_turno()` — estado de una conversación y el turno "en crudo" contra el LLM, compartido entre `bench_chat.py` y el panel de chat de `rem_chat.py`. Ver "Panel de chat" más abajo |
 | `habla.py` | Pipeline de voz de un turno (TTS -> RVC -> `enviar_audio()`), compartido entre `bench_chat.py` y el panel de chat. Ver "Voz en la ventana de chat" más abajo |
 | `fairseq_shim/__init__.py` | Shim que reemplaza el `__init__.py` de fairseq para compatibilidad PyTorch |
@@ -299,6 +300,7 @@ usuario escribe o habla.
 | `models/Rem_600e_6600s/Rem_600e_6600s.pth` | — | Google Drive (ver README) |
 | `models/Rem_600e_6600s/Rem.index` | — | Google Drive (ver README) |
 | `rem.vrm` | — | Incluido en el repo |
+| `Animaciones/VRMA_MotionPack/*.vrma` | — | `tk256ailab/vrm-viewer` (MIT) + pack VRoid Project — ver `Animaciones/README.md` |
 
 ## Arquitectura de concurrencia
 
@@ -1064,7 +1066,7 @@ rítmica, eso no era lo que hacía ver a Rem como un robot.
 secuencia vía WebSocket, sin ningún error nuevo en `rem_chat.log` más allá de los crashes conocidos
 del Network Process de WebKit (ver "Segunda regresión del overlay" más arriba, no relacionados).
 
-## Brazos, manos y giro de bailarina
+## Brazos, manos y pose procedural de cuerpo
 Los brazos estaban en gran parte estáticos (antebrazo con valores fijos que nunca cambiaban, brazos
 pegados al cuerpo, dedos sin usar — "señal de muñeco"). Se les dio acople al cuerpo, curvatura de
 dedos, gesticulación al hablar, y se agregó una animación de reposo puntual (giro de 360°). Todo en
@@ -1110,31 +1112,14 @@ dedos, gesticulación al hablar, y se agregó una animación de reposo puntual (
 - **Pose de `thinking`**: reescrita para que el brazo acompañe la idea de "mano hacia la cara" — codo
   flexionado fuerte (`rlX: -0.95`), upperArm elevado (`ruX: 0.35`) y rotado hacia el centro
   (`ruZ: -0.85`, notablemente menos separado que el reposo normal).
-- **Giro de bailarina** (`updateGiroBailarina()`, máquina de estados `esperando → girando →
-  volviendo → esperando`, mismo patrón que `updateSaccades()`/`updateBlink()`): tras un intervalo
-  aleatorio en `[CONFIG.giro.intervaloMinS, intervaloMaxS]` de estado `idle` sin audio
-  (`_giroElegible()`), da una vuelta completa en `vrm.scene.rotation.y` con `easeInOutCubic` (nunca
-  velocidad constante), con pierna trasera elevándose (`rightUpperLeg`/`rightLowerLeg`), cabeza
-  mirando hacia abajo y ladeada, y brazos separándose — todo modulado por un mismo envolvente
-  `Math.sin(progreso * Math.PI)` (0 en los extremos, 1 a mitad de giro) para que entren y salgan
-  sincronizados. **Falda y pelo no se tocan a propósito** — las cadenas de spring bones del modelo
-  (48 falda / 43 pelo) reaccionan solas a la aceleración de la curva de giro.
-  - Interrupción: si deja de cumplirse `_giroElegible()` a mitad de `girando` (llega audio o cambia
-    el estado), pasa a `volviendo` e interpola de vuelta a la orientación frontal más cercana
-    (`_anguloFrontalMasCercano()`, el múltiplo de 2π más próximo a `Math.PI` desde el ángulo actual —
-    nunca un salto, sea cual sea el punto del giro en el que se abortó) en
-    `CONFIG.giro.volverDuracionS` (~400ms).
-  - `updateGiroBailarina()` corre al final de `animate()`, después de que el resto del cuerpo ya se
-    posó con normalidad — tiene la última palabra sobre los huesos que controla, pero no congela los
-    springs de fondo, así que al volver a `esperando` la transición parte de valores ya razonables.
-  - **Verificado en vivo end-to-end** (con `CONFIG.giro.intervaloMinS/MaxS` bajados temporalmente a
-    3-5s solo para la prueba, revertidos a 20/30 después) con logs de transición de fase agregados a
-    cada cambio de `_giroFase`: ciclo autónomo completo (`arranca → completo → arranca...`) sin
-    intervención, capturas de pantalla a mitad de giro confirmando la falda volando por inercia sola
-    y la cabeza/pierna en posición, e interrupción real disparada por WebSocket
-    (`enviar_estado("talking")` a mitad de un giro en progreso 0.25) confirmando el aborto limpio y
-    el reencendido del temporizador de espera (`[Giro] interrumpido en progreso=0.25, volviendo a
-    frontal` → `[Giro] de vuelta en frontal, próximo en ~4.7s`).
+- **Giro de bailarina — ELIMINADO**. `updateGiroBailarina()` (giro de 360° codificado a mano sobre
+  `vrm.scene.rotation.y` + poses de pierna/cabeza/brazos) se quitó junto con `CONFIG.giro`,
+  `easeInOutCubic`, `_sortearIntervaloGiro`, `_anguloFrontalMasCercano` y las variables `_giro*`. Lo
+  reemplaza el clip `VRMA_05.vrma` (girar) dentro del repertorio de gestos de reposo — ver
+  "Animación de cuerpo con clips VRMA" más abajo. Los bullets de abajo de esta sección
+  (respiración en pecho/hombros, traslado de peso, saccades, dedos, brazos acoplados) **siguen
+  vigentes**: son la capa procedural que corre cuando no hay clip, y las partes de respiración/
+  mirada que se aplican SIEMPRE encima del mixer.
 
 **Bug encontrado y corregido durante la implementación**: el bloque de antebrazos en `animate()`
 usaba `ts` (la variable de tiempo escalada por emoción, que solo existe como local dentro de
@@ -1161,14 +1146,9 @@ emoción ahí.
 | | `curlPulgar` (0.32) | Curvatura del pulgar (solo tiene proximal/distal en este modelo) |
 | | `derivaAmp` (0.05) | Amplitud de la micro-variación lenta de los dedos |
 | | `derivaFreq` (0.025) | Frecuencia de esa deriva — más bajo, más lenta |
-| `giro` | `intervaloMinS`/`intervaloMaxS` (20/30) | Rango de segundos en idle+sin audio antes de poder disparar |
-| | `duracionS` (3.5) | Duración del giro completo, en segundos |
-| | `alturaPieRad` (0.55) | Cuánto se eleva el pie trasero (rad) |
-| | `flexionRodillaRad` (0.9) | Flexión de la rodilla de la pierna que se eleva |
-| | `inclinacionCabezaRad` (0.35) | Inclinación de cabeza hacia abajo durante el giro |
-| | `ladeoCabezaRad` (0.18) | Ladeo lateral de cabeza durante el giro |
-| | `separacionBrazosRad` (0.35) | Cuánto se separan más los brazos (encima de `brazos.separacion`) |
-| | `volverDuracionS` (0.4) | Duración de la interpolación de vuelta si se interrumpe |
+
+(El bloque `CONFIG.giro` ya no existe — lo reemplazó `CONFIG.animaciones`, ver "Animación de cuerpo
+con clips VRMA" más abajo.)
 
 ## Panel de chat en la ventana de escritorio (solo modo "ventana")
 `rem_chat.py` ya tenía la ventana y la escena 3D; faltaba el chat en sí. Se agregó como
@@ -1428,10 +1408,10 @@ solo como documentación viva (nadie más lo lee) y `autoUpdate=false` a propós
 código ya escribió el valor final (saccades + apartar-la-mirada incluidos), pisándolo.
 
 **Se recalcula cada frame, no una vez** — importante porque la orientación de la cabeza cambia todo
-el tiempo (el drift de `updateLook()`, y durante el giro de bailarina el cuerpo entero rota):
+el tiempo (el drift de `updateLook()`, y durante un clip VRMA el mixer posa cabeza/cuerpo entero):
 `vrm.lookAt.lookAt()` usa la matriz de mundo ACTUAL del hueso `head` en el momento en que se llama,
 así que los ojos compensan solos cualquier movimiento de cabeza sin que este código sepa nada de
-`updateLook()`/`updateGiroBailarina()`. Se llama antes de que `headB.rotation` se escriba con el
+`updateLook()`/del clip activo. Se llama antes de que `headB.rotation` se escriba con el
 valor de ESTE frame (mismo punto donde ya vivía `updateSaccades()`) — un frame de atraso en la base
 de la mirada, igual de imperceptible que otros casos ya documentados de esta clase en el archivo
 (p.ej. `_jawApertura`).
@@ -1534,6 +1514,142 @@ probar. Capturas de pantalla del encuadre completo confirmaron además que Rem s
 la mitad izquierda (no debajo del panel) y con una mirada visiblemente más directa a cámara que
 antes de esta pasada.
 
+## Animación de cuerpo con clips VRMA
+
+Las poses de cuerpo por estado (ruido Perlin) y el "giro de bailarina" a mano se reemplazaron por
+clips `.vrma` reales (formato [VRM Animation](https://vrm.dev/en/vrma/)) reproducidos con
+`THREE.AnimationMixer`. Motivo: las poses codificadas a mano no daban la calidad necesaria (el giro
+levantaba la rodilla hacia atrás en vez de elevar el pie; `thinking` se veía mal). Todo el cambio
+está en `rem_avatar.html` — no se tocó Python.
+
+### Estructura de `Animaciones/`
+
+```
+Animaciones/
+├── README.md                    (de dónde se baja cada conjunto + términos de uso)
+└── VRMA_MotionPack/             (todos los .vrma acá, por nombre exacto)
+    ├── Thinking.vrma Sad.vrma Angry.vrma Surprised.vrma Blush.vrma
+    ├── LookAround.vrma Sleepy.vrma Goodbye.vrma Clapping.vrma   (pack tk256ailab, MIT)
+    ├── Readme_VRMA_MotionPack_EN.txt
+    └── VRMA_01.vrma … VRMA_07.vrma                              (pack oficial VRoid Project)
+```
+
+`Animaciones/` está en `.gitignore` (mismo criterio que `rmvpe.pt`/`rem.vrm`). Se descarga a mano
+— ver `Animaciones/README.md`. Si un clip falta o no parsea, el avatar cae a la animación
+procedural con un aviso (`[Anim] "<archivo>" no disponible: … — se mantiene la animación
+procedural`), sin romperse.
+
+### Librería: `@pixiv/three-vrm-animation@2.1.3` (solo el loader plugin)
+
+- Versión emparejada con `@pixiv/three-vrm@2` (mismo `three-vrm-core`, mismo módulo `three` vía
+  esm.sh). Subir todo a `@3` rompería la integración fina con internals de v2 (`expr._binds`,
+  `vrm.lookAt.applier.rangeMap*`).
+- Se usa **solo `VRMAnimationLoaderPlugin`** (registrado en el mismo `GLTFLoader` que carga
+  `/rem.vrm` — es inerte para un `.vrm`). Hace el parseo + retargetizado real de rotaciones (rig
+  origen → rig del modelo).
+- **NO se usa `createVRMAnimationClip`**: ese además arma pistas de expresión/mirada y auto-crea un
+  `VRMLookAtQuaternionProxy` en la escena. En su lugar `clipDeVrma(va)` arma el `THREE.AnimationClip`
+  a mano (replica la parte *humanoid* de `createVRMAnimationHumanoidTracks` v2.1.3) con el `THREE`
+  de la página — el mismo que el mixer, sin costura de versiones nueva.
+- **Gotcha `specVersion`**: los 9 `.vrma` de `tk256ailab` no traen
+  `extensions.VRMC_vrm_animation.specVersion`, y `VRMAnimationLoaderPlugin@2.1.3` aborta el parseo
+  sin él (v3.1+ lo tolera). `normalizarVrma(url)` parchea una **copia en memoria** (inyecta
+  `specVersion:"1.0"`, re-empaqueta el glb, devuelve un blob URL) antes de dársela a `GLTFLoader`
+  — el archivo en disco no se toca, sin paso manual. El pack VRoid ya lo trae: para esos devuelve
+  la URL original.
+
+### Regla dura: los clips SOLO mueven huesos de cuerpo
+
+- `clipDeVrma()` excluye `leftEye`/`rightEye`/`jaw` (`_EXCLUIR_HUESOS_CLIP`) y **nunca** crea pistas
+  de expresión ni de mirada (usa solo `va.humanoidTracks`).
+- **Respiración, parpadeo, saccades, mirada a cámara y jaw se aplican SIEMPRE encima del mixer,
+  también durante un clip.** Los ojos van por `vrm.lookAt` (`updateSaccades()`, incondicional); el
+  parpadeo/expresión por `expressionManager` (`updateBlink()`/`updateExpressions()`, incondicional);
+  el jaw por el hueso crudo en `aplicarVisemesPostUpdate()` (después de `vrm.update()`). La
+  respiración (`aplicarRespiracionEncima`) y el seguimiento de cabeza (`aplicarCabezaSigueMiradaEncima`,
+  contenido, salvo en `thinking`) se suman (`+=`) tras `mixer.update()`, escalados por `_clipPeso`
+  para no doblar el aporte procedural en la transición.
+- **La cara es independiente del cuerpo**: `updateExpressions()` maneja la expresión facial por
+  `estado`. Por eso "volver a lo procedural manteniendo la emoción" sale gratis — al terminar un
+  clip `unaVez` o vencer el `duracionS` de un `bucle`, `volverAProcedural()` devuelve el cuerpo a lo
+  procedural y la cara conserva la emoción sola mientras `estado` siga activo (nunca se deja el
+  cuerpo plantado en el frame final).
+
+### La mezcla (`actualizarAnimacionClips` en `animate()`)
+
+`vrm.update(dt)` copia los huesos normalizados a los crudos. El mixer y el código procedural
+escriben huesos normalizados **antes** de `vrm.update()` — el mixer es un escritor más, aguas
+arriba.
+
+- `_clipPeso` (0 = procedural puro, 1 = clip puro) rampa a `dt / crossfadeS` por frame.
+- `_clipPeso === 0`: solo `aplicarCuerpoProcedural(t, dt)` (el bloque de pose por estado + springs,
+  extraído tal cual de `animate()`; `getStatePose()` y sus 7 casos se conservan).
+- `_clipPeso === 1`: solo `_mixer.update(dt)` + respiración/cabeza encima.
+- en transición (`0 < _clipPeso < 1`): corren **ambos** — se posa lo procedural, se hace snapshot
+  del `.quaternion` de cada hueso (`_huesosNorm`), `_mixer.update()` escribe la pose del clip, y por
+  hueso `quaternion.slerpQuaternions(qProc, qClip, _clipPeso)` (+ lerp de `hips.position`).
+- clip → clip: `_accionActual.crossFadeTo(nueva, crossfadeS)` nativo del mixer; `_clipPeso` se
+  queda en 1.
+- Al llegar `_clipPeso` a 0: `_mixer.stopAllAction()` + `vrm.humanoid.resetNormalizedPose()` (deja
+  en reposo piernas/`hips.position` que el clip movió y lo procedural no toca).
+
+### Mapeo estado → clip y gestos de reposo (`CONFIG.animaciones`)
+
+Todo configurable sin tocar código:
+
+| `porEstado` | clip | modo |
+|---|---|---|
+| `thinking` | `Thinking.vrma` | `bucle` (sin tope — dura lo que dure thinking) |
+| `sad` | `Sad.vrma` | `bucle`, `duracionS: 6` |
+| `angry` | `Angry.vrma` | `bucle`, `duracionS: 4` |
+| `surprised` | `Surprised.vrma` | `unaVez` |
+| `happy` | `Blush.vrma` | `unaVez` |
+| `talking`, `idle` | — | sin clip (procedural) |
+
+- `modo: 'bucle'` = `LoopRepeat`; `duracionS` opcional = tras N s de controlar el cuerpo hace
+  crossfade a procedural (la cara sigue). `modo: 'unaVez'` = `LoopOnce` + `clampWhenFinished`; al
+  terminar hace crossfade a procedural **siempre**.
+- `sincronizarClipConEstado()` se llama en el `estado !== prevEstado` de `animate()`. Guarda de
+  carrera: `_tokenClip` invalida cargas async pendientes si el estado cambió mientras el `.vrma`
+  cargaba.
+
+**Gestos de reposo** (`CONFIG.animaciones.gestos`, reemplazan el giro): solo en `estado === 'idle'`
+&& `!_audioActivo` && sin clip de estado. Cada `intervaloMinS`–`intervaloMaxS` (25–55s) se elige uno
+por peso:
+
+| clip | peso | nota |
+|---|---|---|
+| `LookAround.vrma` | 6 | frecuente |
+| `VRMA_05.vrma` (girar) | 1 | reemplaza el giro a mano |
+| `VRMA_07.vrma` (flexiones) | 1 | |
+| `VRMA_01.vrma` (cuerpo entero) | 1 | |
+| `Sleepy.vrma` | 3 | solo `horaDesde:0`–`horaHasta:6` (00:00–06:00, `new Date().getHours()`) |
+
+`Goodbye.vrma`/`Clapping.vrma`/`VRMA_02.vrma` quedan disponibles pero fuera del repertorio.
+
+**Interrupción (la voz manda)**: si llega audio o cambia el estado a mitad de un gesto o clip,
+`updateGestos()`/`sincronizarClipConEstado()` disparan `volverAProcedural()` o un `crossFadeTo` al
+clip que toque — siempre con crossfade, nunca corte.
+
+### Carga perezosa + cache
+
+`obtenerClip(archivo)` carga el `.vrma` la primera vez que se usa y cachea el resultado (también el
+**fallo**, para no reintentar en cada disparo). Nunca lanza: en error devuelve `{archivo, error}` y
+el llamador cae a lo procedural.
+
+### Cómo añadir un clip nuevo
+
+1. Dejar el `.vrma` en `Animaciones/VRMA_MotionPack/`.
+2. Agregar la entrada en `CONFIG.animaciones.porEstado` (estado → clip) o
+   `CONFIG.animaciones.gestos.repertorio` (gesto de reposo con peso, opcionalmente
+   `horaDesde`/`horaHasta`).
+3. Nada más — la carga es perezosa/cacheada; si el archivo falta o no parsea, cae a lo procedural
+   con un aviso en consola. Si el `.vrma` no trae `specVersion`, `normalizarVrma()` lo parchea en
+   memoria automáticamente.
+
+Los clips **no tocan expresiones ni mirada**: si un `.vrma` nuevo trae pistas de expresión/mirada,
+`clipDeVrma()` las ignora (usa solo `humanoidTracks`), y si anima `leftEye`/`rightEye`/`jaw` esos
+huesos se excluyen. No hay que hacer nada especial para eso.
 
     # IMPORTANTE: 
     AL MOMENTO DE HACER COMMIT NO PONGAS TU AUDITORIA Claude/Anthropic DETRO DEL COMMIT

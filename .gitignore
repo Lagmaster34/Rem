@@ -22,6 +22,11 @@ models/**/*.pth
 models/**/*.index
 rem.vrm
 
+# Clips de animación VRMA (descargar manualmente — ver Animaciones/README.md).
+# El README sí se versiona; los .vrma y el pack descargado, no.
+Animaciones/*
+!Animaciones/README.md
+
 # Entorno virtual
 venv/
 
