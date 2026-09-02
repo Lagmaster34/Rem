@@ -4,13 +4,11 @@
 <meta charset="UTF-8">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:transparent; overflow:hidden; width:100vw; height:100vh; pointer-events:none; }
+  body { background:#05000f; overflow:hidden; width:100vw; height:100vh; }
   canvas { display:block; }
 
-  /* ── Panel de chat — solo modo "ventana" (ver crearPanelChat() en el
-     script) ── mitad derecha de la ventana, opaca, con foco de teclado
-     real (pointer-events:auto propio, aunque <body> sea none para que el
-     overlay siga siendo click-through). Paleta a tono con el suelo
+  /* ── Panel de chat (ver crearPanelChat() en el script) ── mitad derecha
+     de la ventana, opaca, con foco de teclado. Paleta a tono con el suelo
      synthwave (CONFIG.suelo): mismo cian, mismo fondo casi negro. */
   #chat-panel {
     position: fixed;
@@ -215,17 +213,12 @@ import { VRMLoaderPlugin, VRMUtils } from 'https://esm.sh/@pixiv/three-vrm@2';
 // empareja con @pixiv/three-vrm@2 (mismo three-vrm-core, mismo módulo three vía esm.sh).
 import { VRMAnimationLoaderPlugin } from 'https://esm.sh/@pixiv/three-vrm-animation@2.1.3';
 
-// ═══════════════════════════════════════════════════
-// MODO: ?modo=overlay|ventana (overlay por defecto)
-// ═══════════════════════════════════════════════════
-// overlay: rem_overlay.py — layer surface transparente, click-through, sin
-//          suelo, encuadre angosto (ver CLAUDE.md).
-// ventana: rem_chat.py — ventana GTK normal, decorada y opaca, con suelo de
-//          cuadrícula synthwave y Rem centrada en el tercio izquierdo.
-// Un solo motor para las dos: nada de duplicar este archivo por modo.
-const _modoParam = new URLSearchParams(location.search).get('modo');
-const MODO = (_modoParam === 'ventana') ? 'ventana' : 'overlay';
-console.log(`[Modo] activo: ${MODO}${_modoParam && _modoParam !== MODO ? ` (param ?modo=${_modoParam} no reconocido, default overlay)` : ''}`);
+// Un único frontend: la ventana de escritorio (rem_chat.py — GTK3 + WebKit2,
+// decorada y opaca, con foco). El overlay transparente de escritorio
+// (rem_overlay.py, layer surface click-through) se eliminó; rem_chat.py lo
+// sustituye por completo. rem_chat.py carga esta página con ?modo=ventana,
+// que ya no cambia nada — se mantiene solo por si algún día vuelve a haber
+// más de un modo.
 
 // ═══════════════════════════════════════════════════
 // CONFIGURACIÓN CENTRALIZADA
@@ -236,29 +229,21 @@ const CONFIG = {
   camera:  { fov: 28 },
   pet:     {
     anchorY: 0.55,           // altura de reposo, fracción de pantalla (0=arriba, 1=abajo)
+    // anchorX es una fracción del ÁREA 3D VISIBLE (el ancho de la ventana
+    // menos CONFIG.chat.anchoFrac, la parte que no tapa el panel de chat),
+    // no de la ventana completa — ver fraccionAreaVisible3D()/worldX().
+    anchorX: 0.5,            // centrada en su área visible
+    alturaPantalla: 0.65,   // el modelo ocupa esta fracción del alto visible
   },
-  // anchorX/alturaPantalla por modo: sin caminata (ver "eliminar la caminata"
-  // en CLAUDE.md), la posición horizontal es fija, así que alcanza con un
-  // valor por modo en vez de un rango de caminata. alturaPantalla también es
-  // por modo porque cada encuadre es distinto: el overlay es una superficie
-  // angosta dedicada solo a Rem, la ventana tiene además el panel de chat al
-  // lado — mismo motivo por el que no puede ser un solo número para los dos.
-  // anchorX de "ventana" es una fracción del ÁREA 3D VISIBLE (el ancho de la
-  // ventana menos CONFIG.chat.anchoFrac), no de la ventana completa — ver
-  // fraccionAreaVisible3D()/worldX() más abajo.
-  modos: {
-    overlay: { anchorX: 0.5, alturaPantalla: 0.45, suelo: false },  // superficie angosta dedicada, centrado
-    ventana: { anchorX: 0.5, alturaPantalla: 0.65, suelo: true  },  // centrada en el área 3D visible (no tapada por el panel)
-  },
-  // Ancho del panel de chat (solo modo "ventana"), como fracción del ancho
-  // total de la ventana — ÚNICA fuente de verdad: tanto el CSS del panel
-  // (var(--chat-panel-width), fijada desde JS al arrancar, ver
-  // crearPanelChat()) como el encuadre 3D (fraccionAreaVisible3D(), más
-  // abajo) leen este mismo número, para que no puedan desincronizarse.
+  // Ancho del panel de chat, como fracción del ancho total de la ventana —
+  // ÚNICA fuente de verdad: tanto el CSS del panel (var(--chat-panel-width),
+  // fijada desde JS al arrancar, ver crearPanelChat()) como el encuadre 3D
+  // (fraccionAreaVisible3D(), más abajo) leen este mismo número, para que no
+  // puedan desincronizarse.
   chat: {
     anchoFrac: 0.5,
   },
-  // Suelo de cuadrícula synthwave — solo en modo "ventana" (ver crearSueloSynthwave()).
+  // Suelo de cuadrícula synthwave — ver crearSueloSynthwave().
   // Nada de reflejos ni post-procesado: GPU justa (ver CLAUDE.md, calibración de VRAM).
   suelo: {
     colorLinea:     0x2be8ff,  // cian brillante
@@ -353,20 +338,14 @@ const CONFIG = {
   },
 };
 
-// Valor de anchorX del modo activo, antes de cualquier ajuste por aspect —
-// se preserva para poder volver a él si la superficie deja de ser angosta
-// después de haberlo sido, o viceversa (ver _ajustarAnclasPorAspect()).
-const _anchorXOriginal = CONFIG.modos[MODO].anchorX;
-CONFIG.pet.anchorX = _anchorXOriginal;
-CONFIG.pet.alturaPantalla = CONFIG.modos[MODO].alturaPantalla;
-
 // ═══════════════════════════════════════════════════
 // RENDERER + ESCENA
 // ═══════════════════════════════════════════════════
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+// Opaco: la ventana de rem_chat.py no es transparente (a diferencia del
+// overlay eliminado). El color de fondo real lo fija crearSueloSynthwave().
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-renderer.setClearColor(0x000000, 0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
@@ -375,31 +354,15 @@ const scene = new THREE.Scene();
 // Cámara tipo teleobjetivo — plano medio VTuber.
 // Posición/lookAt reales los fija recalcularEncuadre() una vez medido el modelo;
 // esto es solo un placeholder razonable para el primer frame antes de esa carga.
-// far=45: en modo ventana la línea de horizonte del suelo synthwave queda a
+// far=45: la línea de horizonte del suelo synthwave queda a
 // camera.position.z + CONFIG.suelo.tamano/2 (~27u con los valores por
-// defecto) — con far=20 (el valor original, pensado solo para el overlay
-// sin suelo) la cámara la recortaba directo, invisible sin ningún error.
+// defecto) — con far=20 la cámara la recortaba directo, invisible sin error.
 const camera = new THREE.PerspectiveCamera(CONFIG.camera.fov, window.innerWidth / window.innerHeight, 0.1, 45);
 camera.position.set(0, 0, 1.6);
 camera.lookAt(0, 0, 0);
 
 // Inspección manual desde la consola del navegador (window.__rem.vrm, .scene, .camera).
 window.__rem = { vrm: null, scene, camera };
-
-// Sin caminata, anchorX es un valor fijo por modo (ver CONFIG.modos) — pero
-// una superficie angosta y vertical (el overlay real mide 520x860, aspect
-// ~0,60) sigue necesitando el mismo colapso a 0,5 que antes: un anchorX
-// pensado para una ventana ancha (modo ventana, 1100x620) caería fuera del
-// recuadro visible en una superficie angosta. Se reevalúa en cada
-// recalcularEncuadre() (carga + resize) por si la superficie cambia de forma.
-function _ajustarAnclasPorAspect() {
-  const esVertical = camera.aspect < 1;
-  CONFIG.pet.anchorX = esVertical ? 0.5 : _anchorXOriginal;
-  console.log(`[Encuadre] aspect=${camera.aspect.toFixed(3)} `
-            + `(${esVertical ? 'vertical' : 'horizontal'}) -> anchorX=${CONFIG.pet.anchorX}`);
-  return esVertical;
-}
-_ajustarAnclasPorAspect();
 
 // Iluminación tipo estudio de stream
 scene.add(new THREE.AmbientLight(CONFIG.lighting.ambient.color, CONFIG.lighting.ambient.intensity));
@@ -431,18 +394,17 @@ let _modeloPositionY = 0;
 
 const worldX = n => (n - 0.5) * _anchoVisible;
 
-// En modo "ventana" el panel de chat tapa el CONFIG.chat.anchoFrac derecho
-// de la ventana — el área 3D realmente visible es más angosta que
-// window.innerWidth. worldX() de arriba sigue midiendo en fracciones del
-// CANVAS COMPLETO (a propósito: camera.aspect tiene que seguir atado al
-// tamaño real del render, si no la imagen se distorsiona) — esta función
-// devuelve qué fracción del canvas completo ocupa el área 3D visible, para
-// convertir un anchorX pensado "dentro de esa área" (0=su borde izquierdo,
-// 1=su borde derecho, justo donde empieza el panel) a la fracción real del
-// canvas completo que worldX() espera. En overlay no hay panel: 1 (el área
-// visible es toda la ventana, sin cambios respecto de antes).
+// El panel de chat tapa el CONFIG.chat.anchoFrac derecho de la ventana — el
+// área 3D realmente visible es más angosta que window.innerWidth. worldX()
+// de arriba sigue midiendo en fracciones del CANVAS COMPLETO (a propósito:
+// camera.aspect tiene que seguir atado al tamaño real del render, si no la
+// imagen se distorsiona) — esta función devuelve qué fracción del canvas
+// completo ocupa el área 3D visible, para convertir un anchorX pensado
+// "dentro de esa área" (0=su borde izquierdo, 1=su borde derecho, justo
+// donde empieza el panel) a la fracción real del canvas completo que
+// worldX() espera.
 function fraccionAreaVisible3D() {
-  return MODO === 'ventana' ? (1 - CONFIG.chat.anchoFrac) : 1;
+  return 1 - CONFIG.chat.anchoFrac;
 }
 
 // Box3.setFromObject() sobre un VRM con SkinnedMesh da la caja de la geometría
@@ -477,9 +439,6 @@ function medirAlturaHuesos() {
 function recalcularEncuadre() {
   const fovRad = camera.fov * Math.PI / 180;
 
-  // 0) Reevaluar anclas horizontales por si el aspect cambió (resize).
-  _ajustarAnclasPorAspect();
-
   // 1) Distancia de cámara tal que el modelo (altura real medida) ocupe
   //    CONFIG.pet.alturaPantalla del alto visible de pantalla.
   const alturaVisibleObjetivo = _modeloAlturaLocal / CONFIG.pet.alturaPantalla;
@@ -496,13 +455,9 @@ function recalcularEncuadre() {
   const centroObjetivoMundo = _alturaVisible * (0.5 - CONFIG.pet.anchorY);
   _modeloPositionY = centroObjetivoMundo - _modeloCentroLocal;
 
-  // Sin caminata, la X es fija: CONFIG.pet.anchorX (ya resuelto por modo y
-  // por _ajustarAnclasPorAspect() arriba) — no hay un charX mutable que leer.
-  // CONFIG.pet.anchorX es una fracción del ÁREA 3D VISIBLE, no del canvas
-  // completo — fraccionAreaVisible3D() la convierte a fracción de canvas
-  // completo antes de pasarla a worldX() (ver esa función más arriba). En
-  // overlay fraccionAreaVisible3D()===1, así que esto es un no-op idéntico
-  // a antes.
+  // La X es fija (sin caminata): CONFIG.pet.anchorX, una fracción del ÁREA 3D
+  // VISIBLE (no del canvas completo) — fraccionAreaVisible3D() la convierte a
+  // fracción de canvas completo antes de pasarla a worldX() (ver esa función).
   const fracXCanvas = CONFIG.pet.anchorX * fraccionAreaVisible3D();
   const posX = worldX(fracXCanvas);
   if (vrm) {
@@ -544,7 +499,7 @@ function recalcularEncuadre() {
 }
 
 // ═══════════════════════════════════════════════════
-// SUELO DE CUADRÍCULA SYNTHWAVE (solo modo "ventana")
+// SUELO DE CUADRÍCULA SYNTHWAVE
 // ═══════════════════════════════════════════════════
 // GridHelper + Fog — nada de reflejos ni post-procesado (la GPU de esta
 // máquina ya anda justa compartiendo VRAM con RVC/el LLM local, ver
@@ -554,8 +509,6 @@ function recalcularEncuadre() {
 let _grid = null, _horizonte = null;
 
 function crearSueloSynthwave() {
-  if (MODO !== 'ventana') return;
-
   const cfg = CONFIG.suelo;
   _grid = new THREE.GridHelper(cfg.tamano, cfg.divisiones, cfg.colorLinea, cfg.colorLinea);
   _grid.material.transparent = true;
@@ -579,7 +532,7 @@ function crearSueloSynthwave() {
 
   scene.fog = new THREE.Fog(cfg.colorFondo, cfg.nieblaCerca, cfg.nieblaLejos);
   scene.background = new THREE.Color(cfg.colorFondo);
-  renderer.setClearColor(cfg.colorFondo, 1); // opaca: sin alpha en modo ventana
+  renderer.setClearColor(cfg.colorFondo, 1); // opaca — la ventana no es transparente
 
   console.log('[Suelo] synthwave creado:', cfg);
 }
@@ -611,9 +564,9 @@ loader.register(p => new VRMLoaderPlugin(p));
 loader.register(p => new VRMAnimationLoaderPlugin(p));
 
 // Retry con espera exponencial: el WebKit2GTK de este proyecto sufre crashes
-// internos del Network Process (ver CLAUDE.md, "Segunda regresión del
-// overlay") que pueden tirar abajo este fetch justo en el peor momento. El
-// WebSocket ya se reconecta solo; loader.load() no tiene ningún retry propio,
+// internos del Network Process (ver CLAUDE.md, "crash interno del Network
+// Process de WebKit") que pueden tirar abajo este fetch justo en el peor
+// momento. El WebSocket ya se reconecta solo; loader.load() no tiene retry propio,
 // así que sin esto un crash en esa ventana deja el avatar invisible por el
 // resto de la sesión aunque el resto del pipeline (audio, lipsync, WS) siga
 // funcionando con normalidad. La causa raíz es un bug de WebKit, no algo que
@@ -843,14 +796,14 @@ function updateBlink(dt) {
 // ═══════════════════════════════════════════════════
 // LIPSYNC REAL — audio del backend + timeline de visemes (lipsync.py)
 // ═══════════════════════════════════════════════════
-// Un <audio> de HTML en vez de Web Audio API: el overlay GTK es click-through
-// por diseño (_aplicar_click_through en rem_overlay.py), así que nunca puede
-// recibir un gesto de usuario real — un AudioContext se queda 'suspended'
-// para siempre ahí adentro, y set_media_playback_requires_user_gesture(False)
-// en WebKit2 no lo destrababa porque esa política es solo para elementos de
-// medios, no para la Web Audio API. HTMLMediaElement.play() no tiene esa
-// restricción de gesto en este WebView, así que elimina el problema de raíz
-// en vez de trabajar alrededor de él.
+// Un <audio> de HTML en vez de Web Audio API: el audio puede empezar a sonar
+// antes de que el usuario interactúe con la página (primera respuesta de Rem
+// apenas se abre la ventana), y un AudioContext se queda 'suspended' hasta un
+// gesto real — set_media_playback_requires_user_gesture(False) en WebKit2 no
+// lo destraba porque esa política es solo para elementos de medios, no para
+// la Web Audio API. HTMLMediaElement.play() sí arranca sin gesto en este
+// WebView (con WebsitePolicies(autoplay=ALLOW), ver rem_chat.py), así que
+// elimina el problema de raíz en vez de trabajar alrededor de él.
 const _audioEl = new Audio();
 let _audioActivo = false; // true entre 'playing' y 'ended'/'error'
 
@@ -865,9 +818,8 @@ function _avanzarCola() {
   }
 }
 
-// Logs de diagnóstico explícitos alrededor de toda la reproducción — hasta
-// tener el volcado de consola del overlay a rem_overlay.log (ver rem_overlay.py),
-// esto era la única forma indirecta de sospechar qué estaba pasando.
+// Logs de diagnóstico explícitos alrededor de toda la reproducción — el
+// volcado de consola de rem_chat.py a rem_chat.log deja verlos en vivo.
 _audioEl.addEventListener('playing', () => {
   console.log('[Lipsync] evento "playing" ->', _audioEl.src);
   _audioActivo = true;
@@ -2195,7 +2147,7 @@ window.addEventListener('resize', () => {
 });
 
 // ═══════════════════════════════════════════════════
-// PANEL DE CHAT — solo modo "ventana" (ver también el CSS en <head>)
+// PANEL DE CHAT (ver también el CSS en <head>)
 // ═══════════════════════════════════════════════════
 // HTML/CSS/JS vanilla, sin frameworks ni dependencias externas. El envío usa
 // _ws directo (declarado más abajo, en WEBSOCKET) — los handlers de click
@@ -2205,7 +2157,6 @@ window.addEventListener('resize', () => {
 // sección WEBSOCKET) para que _ws.onmessage, más abajo, ya lo encuentre
 // armado desde el primer mensaje que llegue.
 function crearPanelChat() {
-  if (MODO !== 'ventana') return;
 
   // Única fuente de verdad para el ancho del panel: CONFIG.chat.anchoFrac.
   // fraccionAreaVisible3D() (encuadre 3D) lee ese mismo número directo de

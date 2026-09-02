@@ -1,17 +1,19 @@
 """
 Servidor para el avatar 3D de Rem.
-  - HTTP  en :18765 → sirve rem_avatar.html y rem.vrm
+  - HTTP  en :18765 → sirve rem_avatar.html, rem.vrm y los clips de Animaciones/
   - WS    en :18766 → bidireccional: Python -> browser (estado/audio/chat_*),
-                       y browser -> Python (chat_message/cambiar_modo/reset
-                       del panel de chat, ver _ws_handler/chat_sesion.py)
-  - Lanza rem_overlay.py (GTK3 + WebKit2) como overlay transparente de escritorio
+                       y browser -> Python (chat_message/cambiar_modo/reset/voz/
+                       estado, ver _ws_handler/chat_sesion.py)
+
+La ventana que muestra el avatar es rem_chat.py (GTK3 + WebKit2, decorada). Este
+módulo solo levanta el servidor — no lanza ninguna ventana. rem_chat.py llama a
+iniciar_servidor_avatar(); bench_chat.py se conecta al servidor ya levantado como
+cliente WS, o lo levanta él mismo si no hay ninguno.
 """
 import asyncio
 import threading
-import subprocess
 import socket
 import os
-import sys
 import time
 import json
 import logging
@@ -37,46 +39,55 @@ _ws_lock    = threading.Lock()
 _ws_loop    = None
 _ws_ready   = threading.Event()   # se activa cuando el loop WS está listo
 
-def enviar_estado(estado: str):
-    """Llamar desde cualquier hilo para mandar el estado al browser."""
-    if not _ws_ready.is_set():
-        return
-    loop = _ws_loop
-    if loop is None:
-        return
-    msg = json.dumps({"estado": estado})
-    async def _broadcast():
-        with _ws_lock:
-            clientes = set(_ws_clients)
-        for ws in clientes:
-            try:
-                await ws.send(msg)
-            except Exception:
-                pass
-    asyncio.run_coroutine_threadsafe(_broadcast(), loop)
+# Aviso "sin destinatarios" con antirrebote: si el avatar no está abierto, un
+# turno de chat entero puede irse al vacío en silencio — hay que decirlo, pero
+# sin spamear una línea por cada enviar_estado() de cada turno.
+_ultimo_aviso_sin_clientes = 0.0
+
+def _avisar_sin_destinatarios(que: str):
+    global _ultimo_aviso_sin_clientes
+    ahora = time.monotonic()
+    if ahora - _ultimo_aviso_sin_clientes > 10.0:
+        _ultimo_aviso_sin_clientes = ahora
+        logger.warning("[Avatar] %s: ningún cliente WS conectado — el mensaje no llega a nadie "
+                       "(¿está abierta la ventana de rem_chat.py?)", que)
 
 
-def _broadcast_ws(payload: dict):
-    """Manda `payload` (un dict, se serializa acá) a todos los clientes WS
-    conectados. Mismo mecanismo que enviar_estado()/enviar_audio() (loop
-    guardado en _ws_loop, run_coroutine_threadsafe desde el hilo que sea) pero
-    genérico — lo usan los mensajes del panel de chat (chat_delta/chat_done/
-    modo_actual/error) para no repetir ese patrón por cada tipo nuevo."""
-    if not _ws_ready.is_set():
-        return
-    loop = _ws_loop
-    if loop is None:
-        return
+def _emitir_ws(payload: dict, que: str) -> int:
+    """Serializa y manda `payload` a todos los clientes WS. Devuelve a cuántos
+    clientes se despachó (0 si el servidor no está listo o no hay nadie
+    conectado — en ese caso avisa por log, con antirrebote). Único punto por
+    el que salen mensajes Python -> browser: estado, audio y todos los del
+    panel de chat (chat_delta/chat_done/modo_actual/error)."""
+    if not _ws_ready.is_set() or _ws_loop is None:
+        _avisar_sin_destinatarios(que)
+        return 0
+    with _ws_lock:
+        clientes = set(_ws_clients)
+    if not clientes:
+        _avisar_sin_destinatarios(que)
+        return 0
     msg = json.dumps(payload)
     async def _enviar():
-        with _ws_lock:
-            clientes = set(_ws_clients)
         for ws in clientes:
             try:
                 await ws.send(msg)
             except Exception:
                 pass
-    asyncio.run_coroutine_threadsafe(_enviar(), loop)
+    asyncio.run_coroutine_threadsafe(_enviar(), _ws_loop)
+    return len(clientes)
+
+
+def enviar_estado(estado: str) -> int:
+    """Llamar desde cualquier hilo para mandar el estado al browser. Devuelve
+    a cuántos clientes llegó (0 = nadie, con aviso en el log)."""
+    return _emitir_ws({"estado": estado}, f"estado {estado!r}")
+
+
+def _broadcast_ws(payload: dict) -> int:
+    """Manda `payload` a todos los clientes WS conectados. Genérico — lo usan
+    los mensajes del panel de chat (chat_delta/chat_done/modo_actual/error)."""
+    return _emitir_ws(payload, f"mensaje {payload.get('tipo', '?')!r}")
 
 
 def _limpiar_audio_viejo():
@@ -100,14 +111,17 @@ def enviar_audio(ruta_wav: str, timeline: list) -> bool:
     fallback de sounddevice en ese caso.
     """
     if not _ws_ready.is_set():
+        _avisar_sin_destinatarios("audio")
         return False
     loop = _ws_loop
     if loop is None:
+        _avisar_sin_destinatarios("audio")
         return False
 
     with _ws_lock:
         clientes = set(_ws_clients)
     if not clientes:
+        _avisar_sin_destinatarios("audio")
         return False
 
     _limpiar_audio_viejo()
@@ -360,6 +374,19 @@ async def _ws_handler(websocket):
             elif tipo == "voz":
                 set_voz_chat_activa(data.get("activa"))
 
+            elif tipo == "estado":
+                # Un cliente (p.ej. bench_chat.py conectado como cliente WS,
+                # ver su comando 'state') pide poner el avatar en un estado.
+                # Se valida y se re-difunde a TODOS los clientes vía
+                # enviar_estado() — así la ventana lo ve aunque el pedido
+                # venga de otro proceso.
+                est = str(data.get("estado") or "").lower()
+                if est in ESTADOS_VALIDOS:
+                    enviar_estado(est)
+                else:
+                    _broadcast_ws({"tipo": "error",
+                                   "mensaje": f"estado inválido: {est!r}"})
+
             # cualquier otro tipo (o mensaje sin 'tipo') se ignora — el
             # cliente no manda nada más que el servidor necesite procesar.
     except ConnectionClosed as e:
@@ -375,15 +402,15 @@ _ws_bind_error = None  # excepción del bind, si falló — para que iniciar_ser
 
 async def _iniciar_ws():
     """`_ws_ready.set()` va DESPUÉS de que websockets.serve() tenga éxito, no
-    antes. El bug original: si el puerto ya estaba ocupado (segunda instancia
-    de Rem/bench_chat corriendo), websockets.serve() lanzaba OSError dentro de
-    este hilo daemon — que muere en silencio, sin propagarse — pero
-    _ws_ready ya había quedado en True desde antes de intentar el bind, así
-    que iniciar_avatar() nunca se enteraba del fallo y lanzaba el overlay
-    igual, apuntando a un WS que en ESTE proceso nunca llegó a levantar (ver
-    CLAUDE.md, "Riesgo de conflicto de puertos"). Ahora _iniciar_ws() no
-    silencia el fallo: lo guarda en _ws_bind_error y deja _ws_ready sin
-    activar, para que el llamador lo note."""
+    antes. El bug original: si el puerto ya estaba ocupado (otra instancia
+    corriendo), websockets.serve() lanzaba OSError dentro de este hilo daemon
+    — que muere en silencio, sin propagarse — pero _ws_ready ya había quedado
+    en True desde antes de intentar el bind, así que el llamador nunca se
+    enteraba del fallo (ver CLAUDE.md, "Conflicto de puertos").
+    Ahora _iniciar_ws() no silencia el fallo: lo guarda en _ws_bind_error y
+    deja _ws_ready sin activar, para que iniciar_servidor_avatar() lo note.
+    De todos modos iniciar_servidor_avatar() ya chequea _puerto_activo()
+    antes de intentar el bind, así que este camino casi no se toca."""
     global _ws_loop, _ws_bind_error
     _ws_loop = asyncio.get_running_loop()
     import websockets
@@ -416,12 +443,10 @@ def _puerto_activo(host: str, port: int, timeout: float = 0.3) -> bool:
 
 def iniciar_servidor_avatar() -> bool:
     """Levanta HTTP (:18765) + WS (:18766) si no están corriendo ya en otro
-    proceso — sin lanzar el overlay (a diferencia de iniciar_avatar()).
-    Pensado para clientes como rem_chat.py que necesitan el servidor pero no
-    quieren spawnear el overlay transparente: pueden arrancar solos (levantan
-    el servidor ellos mismos) o junto a Rem.py/bench_chat.py/el overlay
-    (detectan que el servidor ya está arriba vía _puerto_activo() y se
-    conectan directo, sin competir por el puerto).
+    proceso. Lo llama rem_chat.py (la aplicación) al arrancar. Si ya hay un
+    servidor (p.ej. otra instancia de rem_chat.py, o bench_chat.py en modo
+    standalone), lo detecta vía _puerto_activo() y no intenta levantar uno
+    nuevo — así no se compite por el puerto.
 
     Devuelve True si el servidor (este proceso u otro) queda disponible."""
     if _puerto_activo("127.0.0.1", HTTP_PORT):
@@ -444,76 +469,14 @@ def iniciar_servidor_avatar() -> bool:
     return True
 
 
-# ── Lanzar overlay GTK transparente ──────────────────────────────────
-_overlay_proc = None
-_overlay_log  = None   # handle del archivo de log — mantenerlo vivo
-
-LOG_OVERLAY = os.path.join(BASE_DIR, "rem_overlay.log")
-
-def _lanzar_overlay(layer: str = 'top'):
-    global _overlay_log
-    overlay_script = os.path.join(BASE_DIR, "rem_overlay.py")
-    try:
-        # line-buffered (buffering=1) para que los prints lleguen inmediatamente al log
-        _overlay_log = open(LOG_OVERLAY, 'w', buffering=1, encoding='utf-8')
-        env = os.environ.copy()
-        env['GDK_BACKEND'] = 'wayland'   # belt-and-suspenders junto al setenv interno
-        # Diagnóstico: inspector remoto de WebKit — abrir http://127.0.0.1:9222
-        # en un navegador normal para depurar el overlay como cualquier página.
-        env['WEBKIT_INSPECTOR_SERVER'] = '127.0.0.1:9222'
-        # sys.executable, no una ruta hardcodeada al python3 del sistema: el
-        # venv sí puede tener GTK3/WebKit2/GtkLayerShell (ver rem_chat.py y
-        # CLAUDE.md, "el venv sí puede tener GTK") — pip install pygobject
-        # pycairo compila sin problema contra las libs ya instaladas en el
-        # sistema. Lanzar el overlay con el mismo intérprete que ya está
-        # corriendo este proceso (normalmente venv/bin/python) evita
-        # depender de qué haya en /usr/bin/python3 en absoluto.
-        proc = subprocess.Popen(
-            [sys.executable, overlay_script, "--layer", layer],
-            stdout=_overlay_log,
-            stderr=_overlay_log,
-            env=env,
-        )
-        print(f"[Avatar] Overlay log: {LOG_OVERLAY}  (tail -f para seguirlo)")
-        return proc
-    except Exception as e:
-        print(f"[Avatar] No se pudo lanzar overlay: {e}")
-        return None
-
-
-# ── Iniciar todo ─────────────────────────────────────────────────────
+# ── Compat: Rem.py (Tkinter, legacy) todavía llama a estas dos ────────
+# El overlay GTK (rem_overlay.py) se eliminó — la ventana es rem_chat.py.
+# iniciar_avatar() queda como alias de iniciar_servidor_avatar() para no
+# romper Rem.py; cerrar_avatar() ya no tiene nada que cerrar (los hilos del
+# servidor son daemon y mueren con el proceso).
 def iniciar_avatar(screen_w=1920, screen_h=1080):
-    """Llamar una vez al arrancar Rem: servidor (o reusa uno ya corriendo,
-    ver iniciar_servidor_avatar()) + overlay GTK transparente."""
-    global _overlay_proc
-
-    # Capa configurable via REM_LAYER=top|overlay en el .env del proyecto
-    layer = os.environ.get('REM_LAYER', 'top').lower()
-    if layer not in ('top', 'overlay'):
-        layer = 'top'
-
-    iniciar_servidor_avatar()
-
-    _overlay_proc = _lanzar_overlay(layer=layer)
-    if _overlay_proc:
-        print(f"[Avatar] Overlay GTK lanzado (PID {_overlay_proc.pid}) — capa: {layer.upper()}")
-    else:
-        print("[Avatar] No se pudo lanzar el overlay")
+    return iniciar_servidor_avatar()
 
 
 def cerrar_avatar():
-    """Llamar al cerrar Rem."""
-    global _overlay_proc, _overlay_log
-    if _overlay_proc:
-        try:
-            _overlay_proc.terminate()
-            _overlay_proc.wait(timeout=3)
-        except Exception:
-            pass
-        _overlay_proc = None
-    if _overlay_log:
-        try:
-            _overlay_log.close()
-        except Exception:
-            pass
-        _overlay_log = None
+    pass

@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""bench_chat.py — REPL async nativo para la capa LLM (llm/) y para probar
-lipsync/RVC/avatar, sin Tkinter ni GUI. No importa Rem.py (no se puede: el
-Python 3.10.14 del venv se compiló sin _tkinter, y Tkinter va a desaparecer
-del proyecto de todos modos) — es autocontenido, reusa lipsync.py y
-rem_avatar_server.py directo.
+"""bench_chat.py — REPL de depuración para la capa LLM (llm/) y el pipeline de
+voz/lipsync/avatar, sin GUI. No importa Rem.py (no se puede: el Python
+3.10.14 del venv se compiló sin _tkinter).
 
-Antes existía bench.py aparte para probar voz/lipsync/avatar con una frase
-suelta, sin pasar por ningún LLM — el modo eco (ver más abajo) cubre
-exactamente ese caso y más, así que bench.py se eliminó (ver CLAUDE.md,
-"bench.py eliminado, absorbido por bench_chat.py + modo eco").
+La APLICACIÓN es rem_chat.py (levanta el servidor HTTP/WS y abre la ventana).
+bench_chat.py es una herramienta de depuración que se adapta:
 
-Es el precursor del backend que va a reemplazar a Tkinter: consume
-provider.stream_chat() directo con `async for`, sin el puente sync->async de
-_drenar_stream_llm() en Rem.py (ese puente existe solo porque responder() hoy
-corre en un hilo nuevo por turno — acá no hace falta, todo el REPL vive en un
-único asyncio.run()).
+  * Si detecta el servidor del avatar ya levantado (rem_chat.py corriendo, u
+    otra instancia), se conecta como CLIENTE WebSocket y manda sus 'state',
+    'chat', 'modo', 'voz' y 'reset' por ahí — el servidor los procesa y la
+    ventana los ve. (modo cliente)
+
+  * Si no hay servidor, lo levanta él mismo y funciona autocontenido: consume
+    provider.stream_chat() directo, con su propio worker de voz. (modo standalone)
+
+En ninguno de los dos casos falla en silencio: si un mensaje no tiene a quién
+llegar, lo dice en consola.
 
     venv/bin/python bench_chat.py
-    venv/bin/python bench_chat.py --no-rvc      # 'voz' sin conversión RVC
+    venv/bin/python bench_chat.py --no-rvc      # 'voz' sin conversión RVC (solo standalone)
     venv/bin/python bench_chat.py --open        # abre el navegador al arrancar
     venv/bin/python bench_chat.py --depurar-contexto-eco  # ver más abajo
 
@@ -42,15 +43,16 @@ anteponerlo por defecto contradiría el propósito. --depurar-contexto-eco
 lo fuerza de vuelta si hace falta ver ese bloque sin gastar tokens de un
 LLM real.
 
-El pipeline de voz (TTS -> RVC -> enviar_audio) vive en habla.py, compartido
-con el panel de chat de rem_chat.py (vía rem_avatar_server.py) — no hay una
-copia propia acá. Lo mismo el turno de LLM en sí (chat_sesion.procesar_turno()):
-_chat(), más abajo, es apenas un envoltorio que imprime en consola sobre esa
-función compartida.
+El pipeline de voz (TTS -> RVC -> enviar_audio) vive en habla.py y el turno
+de LLM en chat_sesion.procesar_turno() — compartidos con el panel de chat de
+rem_chat.py (vía rem_avatar_server.py). _chat(), más abajo, es apenas un
+envoltorio que imprime en consola sobre esa función compartida (solo modo
+standalone; en modo cliente el turno lo corre el servidor).
 """
 
 import argparse
 import asyncio
+import json
 import sys
 import threading
 import time
@@ -59,15 +61,11 @@ import urllib.request
 import webbrowser
 
 import config
-import habla
 import rem_avatar_server
-from chat_sesion import procesar_turno
-from rem_avatar_server import (
-    HTTP_PORT, iniciar_avatar, cerrar_avatar,
-    enviar_estado, ESTADOS_VALIDOS,
-)
+from rem_avatar_server import HTTP_PORT, WS_PORT, ESTADOS_VALIDOS
 
 URL_AVATAR = f"http://localhost:{HTTP_PORT}/rem_avatar.html"
+WS_URI = f"ws://127.0.0.1:{WS_PORT}"
 ESPERA_HTTP_S = 5.0     # tiempo máximo para que el servidor HTTP responda antes de --open
 
 
@@ -103,12 +101,13 @@ def _abrir_navegador():
 
 async def _chat(sesion, texto, memoria_larga, memoria_sistema, cola_habla=None,
                  incluir_contexto=True):
-    """Envoltorio de consola sobre chat_sesion.procesar_turno(): imprime cada
-    fragmento en stdout a medida que llega (on_delta), muestra las tool_calls
-    que aparezcan, y al final el resumen ([done] + tiempo de respuesta si
-    hubo voz) — el turno en sí (historial, contexto dinámico, sentence-
-    splitting hacia voz) lo hace la función compartida con el panel de chat
-    de rem_chat.py, no una copia propia acá."""
+    """Envoltorio de consola sobre chat_sesion.procesar_turno() (SOLO modo
+    standalone): imprime cada fragmento en stdout a medida que llega
+    (on_delta), muestra las tool_calls que aparezcan, y al final el resumen
+    ([done] + tiempo de respuesta si hubo voz) — el turno en sí (historial,
+    contexto dinámico, sentence-splitting hacia voz) lo hace la función
+    compartida con el panel de chat de rem_chat.py, no una copia propia acá."""
+    from chat_sesion import procesar_turno
     print("Rem> ", end="", flush=True)
 
     def _imprimir(fragmento):
@@ -148,39 +147,38 @@ def _imprimir_ayuda():
     print()
 
 
-async def repl(args):
+async def _leer_linea(prompt):
+    loop = asyncio.get_running_loop()
+    return (await loop.run_in_executor(None, input, prompt)).strip()
+
+
+# ─── Modo STANDALONE: bench_chat.py levantó el servidor él mismo ──────
+async def repl_standalone(args):
+    import habla  # solo hace falta acá — el modo cliente no toca RVC/TTS
     _imprimir_ayuda()
     # Sesión COMPARTIDA con el panel de chat de rem_chat.py (si algo más en
     # este proceso lo levanta) — no una SesionChat propia del REPL. Misma
-    # razón para la memoria: un snapshot al arrancar, igual que Rem.py, pero
-    # el MISMO snapshot que usaría el panel, no una copia aparte.
+    # razón para la memoria: un snapshot al arrancar, el MISMO que usaría el panel.
     sesion, memoria_larga, memoria_sistema = rem_avatar_server.obtener_sesion_chat()
     voz_activa = False
-    loop = asyncio.get_running_loop()
 
-    # Cola persistente para toda la sesión: un solo worker la consume en
-    # orden, así que "voz on/off" solo decide si _chat() encola algo, sin
-    # tener que arrancar/parar el worker en cada toggle. Cola/worker PROPIOS
-    # del REPL — el panel de chat de rem_chat.py tiene los suyos (ver
-    # rem_avatar_server.py), no se comparten (cada uno habla lo que se le
-    # pidió a ÉL, ver CLAUDE.md "Voz en la ventana de chat").
+    # Cola/worker de voz PROPIOS del REPL — el panel de chat de rem_chat.py
+    # tiene los suyos (ver rem_avatar_server.py), no se comparten (cada uno
+    # habla lo que se le pidió a ÉL, ver CLAUDE.md "Voz en la ventana de chat").
     cola_habla: asyncio.Queue = asyncio.Queue()
     worker_habla = asyncio.create_task(habla.worker_habla(cola_habla, not args.no_rvc))
 
     try:
         while True:
             try:
-                linea = (await loop.run_in_executor(None, input, "bench_chat> ")).strip()
+                linea = await _leer_linea("bench_chat> ")
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
-
             if not linea:
                 continue
-
             comando, _, resto = linea.partition(" ")
-            comando = comando.lower()
-            resto = resto.strip()
+            comando, resto = comando.lower(), resto.strip()
 
             if comando == "quit":
                 break
@@ -189,11 +187,8 @@ async def repl(args):
                 if not resto:
                     log("uso: chat <texto>")
                     continue
-                # En modo eco no hay LLM que necesite el contexto dinámico
-                # (fecha/hora/estado de la PC) — incluirlo igual solo hace
-                # que Rem lo repita en voz alta. --depurar-contexto-eco lo
-                # fuerza de vuelta si hace falta ver ese bloque sin gastar
-                # tokens de un LLM real.
+                # En modo eco no hace falta el contexto dinámico (Rem lo
+                # repetiría en voz alta). --depurar-contexto-eco lo fuerza.
                 incluir_contexto = sesion.modo != "eco" or args.depurar_contexto_eco
                 try:
                     await _chat(
@@ -210,10 +205,8 @@ async def repl(args):
                     log(f"modo activo: {sesion.modo}")
                     continue
                 try:
-                    # cambiar_modo_chat() (no sesion.cambiar_modo() directo):
-                    # además de cambiar el modo, avisa por WebSocket a
-                    # cualquier panel de chat conectado — así el selector del
-                    # panel queda sincronizado con lo que se escribe acá.
+                    # cambiar_modo_chat() avisa por WebSocket a cualquier panel
+                    # conectado — así el selector del panel queda sincronizado.
                     if rem_avatar_server.cambiar_modo_chat(valor):
                         log(f"modo -> {sesion.modo} (historial limpiado)")
                     else:
@@ -240,8 +233,7 @@ async def repl(args):
                 if estado not in ESTADOS_VALIDOS:
                     log(f"estado inválido. usar uno de: {', '.join(sorted(ESTADOS_VALIDOS))}")
                     continue
-                enviar_estado(estado)
-                log(f"estado -> {estado}")
+                enviar_estado_o_avisa(estado)
 
             elif comando == "open":
                 _abrir_navegador()
@@ -249,18 +241,152 @@ async def repl(args):
             else:
                 log(f"comando desconocido: {comando!r} (usa chat / modo / voz / reset / state / open / quit)")
     finally:
-        # Deja que las oraciones ya encoladas terminen de hablarse (hasta 5s)
-        # en vez de cortarlas a mitad de camino al salir.
-        cola_habla.put_nowait(None)
+        cola_habla.put_nowait(None)  # deja terminar lo ya encolado (hasta 5s)
         try:
             await asyncio.wait_for(worker_habla, timeout=5.0)
         except asyncio.TimeoutError:
             worker_habla.cancel()
 
 
+def enviar_estado_o_avisa(estado):
+    """enviar_estado() con aviso explícito si no llegó a nadie — modo standalone,
+    donde el avatar puede no estar abierto (rem_avatar_server ya loguea, pero
+    esto lo pone también en el prompt del REPL). Devuelve el nº de clientes, o
+    None si fueron 0."""
+    n = rem_avatar_server.enviar_estado(estado)
+    if n:
+        log(f"estado -> {estado}  ({n} cliente{'s' if n != 1 else ''})")
+        return n
+    log(f"estado -> {estado}  — NADIE conectado al avatar (abrí rem_chat.py para verlo)")
+    return None
+
+
+# ─── Modo CLIENTE: ya hay un servidor; bench_chat.py se conecta por WS ──
+async def repl_cliente(args):
+    import websockets
+    _imprimir_ayuda()
+    log(f"servidor de avatar detectado — conectando como cliente WS a {WS_URI}")
+    try:
+        ws = await websockets.connect(WS_URI, open_timeout=5)
+    except Exception as e:
+        log(f"no se pudo conectar al WebSocket ({e}) — ¿el servidor sigue vivo?")
+        return
+    log("conectado. 'chat', 'state', 'modo', 'voz' y 'reset' van al servidor "
+        "(la ventana de rem_chat.py los ve).")
+
+    modo_actual = ["(desconocido)"]
+    turno_hecho = asyncio.Event()
+    turno_hecho.set()
+
+    async def _escuchar():
+        try:
+            async for crudo in ws:
+                try:
+                    d = json.loads(crudo)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                t = d.get("tipo") if isinstance(d, dict) else None
+                if t == "chat_delta":
+                    print(d.get("texto", ""), end="", flush=True)
+                elif t == "chat_done":
+                    print()
+                    turno_hecho.set()
+                elif t == "error":
+                    print()
+                    log(f"error del servidor: {d.get('mensaje')}")
+                    turno_hecho.set()
+                elif t == "modo_actual":
+                    modo_actual[0] = d.get("modo", "?")
+                    log(f"modo -> {modo_actual[0]}")
+                # 'estado'/'audio' se ignoran: es el REPL, no un renderer
+        except websockets.ConnectionClosed:
+            pass
+        finally:
+            turno_hecho.set()
+
+    listener = asyncio.create_task(_escuchar())
+
+    async def _enviar(payload):
+        try:
+            await ws.send(json.dumps(payload))
+            return True
+        except websockets.ConnectionClosed:
+            log("la conexión con el servidor se cerró — el mensaje no se envió")
+            return False
+
+    try:
+        while True:
+            try:
+                linea = await _leer_linea("bench_chat(cliente)> ")
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not linea:
+                continue
+            if listener.done():
+                log("el servidor cerró la conexión — saliendo")
+                break
+            comando, _, resto = linea.partition(" ")
+            comando, resto = comando.lower(), resto.strip()
+
+            if comando == "quit":
+                break
+
+            elif comando == "chat":
+                if not resto:
+                    log("uso: chat <texto>")
+                    continue
+                turno_hecho.clear()
+                if await _enviar({"tipo": "chat_message", "texto": resto}):
+                    print("Rem> ", end="", flush=True)
+                    try:
+                        await asyncio.wait_for(turno_hecho.wait(), timeout=120)
+                    except asyncio.TimeoutError:
+                        print()
+                        log("timeout esperando la respuesta del servidor")
+
+            elif comando == "modo":
+                if not resto:
+                    log(f"modo activo (según el servidor): {modo_actual[0]}")
+                    continue
+                await _enviar({"tipo": "cambiar_modo", "modo": resto.lower()})
+
+            elif comando == "voz":
+                valor = resto.lower()
+                if valor not in ("on", "off"):
+                    log("uso: voz on|off")
+                    continue
+                if await _enviar({"tipo": "voz", "activa": valor == "on"}):
+                    log(f"voz del panel -> {valor}")
+
+            elif comando == "reset":
+                if await _enviar({"tipo": "reset"}):
+                    log("reset enviado al servidor")
+
+            elif comando == "state":
+                estado = resto.lower()
+                if estado not in ESTADOS_VALIDOS:
+                    log(f"estado inválido. usar uno de: {', '.join(sorted(ESTADOS_VALIDOS))}")
+                    continue
+                if await _enviar({"tipo": "estado", "estado": estado}):
+                    log(f"estado -> {estado}  (enviado al servidor)")
+
+            elif comando == "open":
+                _abrir_navegador()
+
+            else:
+                log(f"comando desconocido: {comando!r} (usa chat / modo / voz / reset / state / open / quit)")
+    finally:
+        listener.cancel()
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--no-rvc", action="store_true", help="'voz' salta la conversión RVC (más rápido)")
+    p.add_argument("--no-rvc", action="store_true", help="'voz' salta la conversión RVC (solo modo standalone)")
     p.add_argument("--open", action="store_true", help="abre el navegador automáticamente al arrancar")
     p.add_argument("--depurar-contexto-eco", action="store_true",
                     help="incluye el contexto dinámico (fecha/hora/estado de la PC) también en "
@@ -273,25 +399,38 @@ def main():
 
     config.cargar_dotenv()
 
+    # ¿Ya hay un servidor de avatar corriendo (rem_chat.py, u otra instancia)?
+    # Se prueba el puerto HTTP, no el WS: el ThreadingHTTPServer tolera un
+    # connect pelado sin quejarse, el server de websockets loguea un traceback
+    # feo por cada probe. Si el HTTP está, el WS también (van juntos).
+    if rem_avatar_server._puerto_activo("127.0.0.1", HTTP_PORT):
+        print("Servidor de avatar ya corriendo — bench_chat.py arranca en modo CLIENTE.")
+        if args.open:
+            _abrir_navegador()
+        try:
+            asyncio.run(repl_cliente(args))
+        finally:
+            print("\nCerrando...")
+        return
+
+    # No hay servidor: lo levanta este proceso y corre autocontenido.
+    print("No hay servidor de avatar — bench_chat.py arranca en modo STANDALONE.")
     if not args.no_rvc:
-        # Lanzada antes de iniciar_avatar() (HTTP/WS/overlay) para solaparse
-        # con ese arranque en vez de sumarse después — para cuando el REPL
-        # queda listo para el primer 'chat', RVC ya suele estar cargado y
-        # calentado (ver CLAUDE.md, "Precarga de RVC y fin de la recarga del .pth en cada frase").
+        # Antes de levantar el servidor, para solaparse con ese arranque (ver
+        # CLAUDE.md, "Precarga de RVC y fin de la recarga del .pth en cada frase").
+        import habla
         threading.Thread(target=habla.precargar_rvc, daemon=True).start()
 
-    print("Iniciando avatar (HTTP :18765, WS :18766, overlay GTK)...")
-    iniciar_avatar()
+    print("Levantando servidor del avatar (HTTP :18765, WS :18766)...")
+    rem_avatar_server.iniciar_servidor_avatar()
 
     if args.open:
         _abrir_navegador()
 
     try:
-        asyncio.run(repl(args))
+        asyncio.run(repl_standalone(args))
     finally:
-        print()
-        print("Cerrando...")
-        cerrar_avatar()
+        print("\nCerrando...")
 
 
 if __name__ == "__main__":

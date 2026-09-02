@@ -7,7 +7,11 @@
 | `rmvpe.pt` | 173 MB | [HuggingFace — lj1995/VoiceConversionWebUI](https://huggingface.co/lj1995/VoiceConversionWebUI/blob/main/rmvpe.pt) |
 | `hubert_base.pt` | 181 MB | [HuggingFace — lj1995/VoiceConversionWebUI](https://huggingface.co/lj1995/VoiceConversionWebUI/blob/main/hubert_base.pt) |
 
-Descarga ambos y colócalos en la **raíz** del proyecto (mismo nivel que `Rem.py`).
+Descarga ambos y colócalos en la **raíz** del proyecto (mismo nivel que `rem_chat.py`).
+
+Los clips de animación del avatar (`Animaciones/VRMA_MotionPack/*.vrma`) tampoco van al repo —
+ver `Animaciones/README.md` para las fuentes y dónde colocarlos. Sin ellos el avatar cae a la
+animación procedural (funciona, con un aviso en consola).
 
 ---
 
@@ -24,8 +28,8 @@ sudo pacman -S --needed \
 
 > Si no tienes GPU NVIDIA, omite `cuda cudnn nvidia nvidia-utils`.
 > `python-gobject`/`webkit2gtk-4.1`/`gtk3` son las libs y headers del **sistema** contra los que se
-> compilan `pygobject`/`pycairo` en el paso 4 — el overlay (`rem_overlay.py`) y la ventana
-> (`rem_chat.py`) corren igual con `venv/bin/python`, no necesitan un Python del sistema aparte.
+> compilan `pygobject`/`pycairo` en el paso 4 — la ventana del avatar (`rem_chat.py`) corre con
+> `venv/bin/python`, no necesita un Python del sistema aparte.
 
 ---
 
@@ -115,8 +119,8 @@ pip install \
     pycairo
 ```
 
-`pygobject`/`pycairo` son los bindings de Python a GTK3/WebKit2 que usan `rem_overlay.py` y
-`rem_chat.py` — compilan contra las libs de sistema instaladas en el paso 1
+`pygobject`/`pycairo` son los bindings de Python a GTK3/WebKit2 que usa `rem_chat.py` —
+compilan contra las libs de sistema instaladas en el paso 1
 (`python-gobject`/`webkit2gtk-4.1`/`gtk3`), sin depender de un intérprete de Python aparte.
 
 ---
@@ -159,9 +163,6 @@ cat > .env << 'EOF'
 GROQ_API_KEY=tu_clave_aqui
 VOZ_REM=es-VE-PaolaNeural
 TTS_RATE=-8%
-REM_LAYER=top
-REM_OVERLAY_W=520
-REM_OVERLAY_H=860
 EOF
 ```
 
@@ -173,10 +174,6 @@ no la prosodia, así que la voz de origen se elige por su ritmo, no por cómo su
 lenta que el default) le da a RVC más margen por fonema para trackear el pitch con `rmvpe` y mejora
 la fidelidad de la conversión. Ver `CLAUDE.md` → "Configuración de voz ganadora" para más detalle,
 incluida la limitación conocida con la `rr` vibrante.
-
-`REM_LAYER`/`REM_OVERLAY_W`/`REM_OVERLAY_H` también son opcionales, los lee `rem_overlay.py`: capa
-del compositor (`top`|`overlay`) y tamaño fijo en píxeles de la layer surface (esquina
-inferior-derecha). Ver `CLAUDE.md` → "Layer surface acotada".
 
 ---
 
@@ -257,17 +254,18 @@ python Rem.py
 ## Arquitectura del sistema
 
 ```
-Rem.py                  ← App principal (Tkinter UI, IA, voz, acciones)
-  ├── Groq API          ← llama-3.3-70b-versatile (lenguaje)
+rem_chat.py             ← LA APLICACIÓN: levanta el servidor y abre la ventana
   ├── EdgeTTS           ← síntesis de voz (es-VE-PaolaNeural, rate -8%)
   ├── RVC               ← conversión de voz al timbre de Rem
-  ├── SpeechRecognition ← micrófono → texto
+  ├── llm/ (Claude/Groq/Ollama) ← lenguaje
   └── rem_avatar_server.py
-        ├── HTTP :18765 → sirve rem_avatar.html + rem.vrm
-        ├── WS   :18766 → envía estados (idle/talking/thinking/happy/sad...)
-        └── rem_overlay.py (venv/bin/python, vía sys.executable)
-              └── GTK3 + WebKit2 4.1 (overlay transparente)
-                    └── Three.js + @pixiv/three-vrm (renderiza rem.vrm)
+        ├── HTTP :18765 → sirve rem_avatar.html + rem.vrm + Animaciones/*.vrma + WAV
+        ├── WS   :18766 → bidireccional: estado/audio/chat  <->  chat_message/estado/modo/voz
+        └── GTK3 + WebKit2 4.1 (ventana decorada opaca, inspector en :9222)
+              └── Three.js + @pixiv/three-vrm + @pixiv/three-vrm-animation (rem.vrm + clips VRMA)
+
+bench_chat.py           ← REPL de depuración: cliente del servidor, o standalone si no hay ninguno
+Rem.py                  ← asistente Tkinter (legacy, en retirada)
 ```
 
 ---
@@ -276,8 +274,8 @@ Rem.py                  ← App principal (Tkinter UI, IA, voz, acciones)
 
 ### El avatar 3D no aparece
 - Verifica que `webkit2gtk-4.1` esté instalado: `pacman -Qi webkit2gtk-4.1`
-- Lanza el overlay manualmente para ver errores: `venv/bin/python rem_overlay.py`
-- El compositor (KWin/Mutter) debe soportar RGBA — en KDE activa "Efectos de escritorio"
+- Corré `venv/bin/python rem_chat.py` en una terminal y mirá `rem_chat.log` (consola del frontend)
+- Inspector remoto de WebKit: abrí `http://127.0.0.1:9222` en un navegador normal
 
 ### Error de audio / PortAudio crash
 - Instala PipeWire (paso 9) en lugar de PulseAudio clásico

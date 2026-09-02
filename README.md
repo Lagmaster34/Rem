@@ -15,7 +15,7 @@ Este proyecto **ya no es Windows**. Nació como asistente de Windows y se portó
 | | |
 |---|---|
 | SO | Arch Linux |
-| Compositor | Hyprland (Wayland) — el overlay usa `gtk-layer-shell` |
+| Compositor | Hyprland (Wayland) |
 | Audio | PipeWire |
 | GPU | NVIDIA con CUDA (desarrollado sobre una RTX 3050 de 4 GB) |
 | Python | **3.10** (venv propio del proyecto) |
@@ -27,12 +27,12 @@ Ubicación del proyecto: `/mnt/extra/rem/Rem/` (partición aparte por espacio; `
 ## 📦 Dependencias del sistema
 
 ```bash
-sudo pacman -S webkit2gtk-4.1 gtk-layer-shell \
+sudo pacman -S webkit2gtk-4.1 \
                gst-plugins-base gst-plugins-good gst-libav \
                grim ollama-cuda
 ```
 
-- `webkit2gtk-4.1` y `gtk-layer-shell` → sin ellos el overlay del avatar **no arranca** (falla en `gi.require_version('WebKit2', '4.1')` y el error se traga en silencio).
+- `webkit2gtk-4.1` → sin él la ventana del avatar (`rem_chat.py`) **no arranca** (falla en `gi.require_version('WebKit2', '4.1')`).
 - Los plugins de GStreamer → sin ellos el WebView no reproduce audio (`autoaudiosink not found`).
 - `grim` para capturas. **`mss` no sirve en Hyprland**: usa APIs de X11 y devuelve imágenes negras.
 
@@ -156,7 +156,9 @@ La causa era que `BaseLoader.__call__()` guarda el tag cargado en `cache_params`
 
 ## 👤 Avatar
 
-`rem.vrm` (23,9 MB, **VRM 0.x**) renderizado con Three.js dentro de un WebView WebKit2GTK, montado como layer-shell transparente y click-through sobre Hyprland.
+`rem.vrm` (23,9 MB, **VRM 0.x**) renderizado con Three.js dentro de un WebView WebKit2GTK — una ventana de escritorio normal (`rem_chat.py`), decorada y opaca, con panel de chat a la derecha.
+
+**Animación de cuerpo:** clips `.vrma` reales (`Animaciones/`, se descargan a mano — ver `Animaciones/README.md`) reproducidos con `THREE.AnimationMixer`; mapeo estado→clip y gestos de reposo en `CONFIG.animaciones`. Los clips solo mueven huesos de cuerpo — respiración, parpadeo, saccades, mirada a cámara y lipsync se aplican siempre encima.
 
 **Lipsync:** los 15 visemes de VRChat/Oculus se aplican **por índice directo** sobre los morph targets, no por nombre.
 
@@ -192,16 +194,18 @@ Además hay que suprimir el peso de `Surprised` mientras suena el lipsync, porqu
 ## 🗂️ Estructura
 
 ```
-Rem.py                    # asistente principal y acciones sobre la PC
-rem_overlay.py            # ventana GTK layer-shell + WebView (modo ?modo=overlay)
-rem_chat.py               # ventana GTK normal, decorada y con foco (modo ?modo=ventana)
-rem_avatar_server.py      # HTTP (sirve el WAV) + WebSocket (eventos)
-rem_avatar.html           # Three.js, carga del VRM, lipsync, cola de audio — un motor, dos modos
+rem_chat.py               # LA APLICACIÓN: levanta el servidor y abre la ventana GTK + WebView
+rem_avatar_server.py      # HTTP (sirve HTML/VRM/clips/WAV) + WebSocket bidireccional (estado/audio/chat)
+rem_avatar.html           # Three.js, carga del VRM, clips VRMA, lipsync, panel de chat, cola de audio
+Animaciones/              # clips .vrma del avatar (no van al repo — ver Animaciones/README.md)
+Rem.py                    # asistente Tkinter (legacy, en retirada)
 lipsync.py                # timings de edge-tts → grafema-fonema → timeline
 personalidad.py           # system prompt y contexto dinámico
 config.py                 # dotenv + config.toml (compartido)
 config.toml
 apply_shim.py             # shim de fairseq
+chat_sesion.py            # SesionChat + procesar_turno() (compartido rem_chat.py / bench_chat.py)
+habla.py                  # pipeline de voz de un turno (TTS → RVC → enviar_audio)
 llm/
   base.py                 # ABC LLMProvider + Message / ToolSpec / Chunk / ToolCall
   local.py                # Ollama
@@ -210,7 +214,7 @@ llm/
   echo.py                 # EchoProvider — sin modelo, repite el último mensaje (modo eco)
   sentence_splitter.py    # empuja cada oración al TTS en cuanto se completa
   _retry.py
-bench_chat.py             # REPL: LLM + personalidad + voz/lipsync/avatar (modo ia/eco)
+bench_chat.py             # REPL de depuración: cliente del servidor, o standalone si no hay ninguno
 models/Rem_600e_6600s/
 tmp_audio/
 ```
@@ -220,10 +224,10 @@ tmp_audio/
 ## ▶️ Ejecución
 
 ```bash
-source venv/bin/activate
-
-python bench_chat.py   # REPL — 'modo eco' para voz/lipsync/avatar sin LLM, 'modo ia' para el LLM real
-python Rem.py          # todo (bloqueado por _tkinter hasta migrar el chat a web)
+venv/bin/python rem_chat.py     # LA APLICACIÓN — abre la ventana del avatar con panel de chat
+venv/bin/python bench_chat.py   # REPL de depuración — se conecta a rem_chat.py si está corriendo,
+                                # o levanta el servidor él mismo. 'modo eco' = voz sin LLM
+venv/bin/python Rem.py          # asistente Tkinter legacy (bloqueado por _tkinter en este venv)
 ```
 
 ---
@@ -283,28 +287,24 @@ El asistente puede ejecutar comandos, así que hubo una auditoría con hallazgos
 
 - **Autoplay en WebKitGTK 2.52**: `set_media_playback_requires_user_gesture(False)` **no basta**. Hay que pasar `WebsitePolicies(autoplay=ALLOW)` al constructor del WebView. Verificado en vivo: sin eso, `play()` se rechaza con `NotAllowedError`.
 - **Crash del proceso de red de WebKit 2.52.5** al cargar el WebSocket y el VRM ("this is a WebKit bug"). El WS reconecta solo; `_cargarVRM()` reintenta hasta 5 veces con espera exponencial.
-- **Caché de WebKit** en `~/.cache/rem_overlay.py/WebKitCache` (o `~/.cache/rem_chat.py/WebKitCache` para la ventana) enmascara ediciones del frontend entre lanzamientos. Límpiala al depurar.
-- **`_tkinter` ausente** en el intérprete → `Rem.py` no arranca. Se resuelve al migrar el chat a web.
+- **Caché de WebKit** en `~/.cache/rem_chat.py/WebKitCache` enmascara ediciones del frontend entre lanzamientos. Límpiala al depurar.
+- **`_tkinter` ausente** en el intérprete → `Rem.py` (legacy) no arranca. `rem_chat.py` sí.
 - **Hyprland tiling ignora `set_default_size()`** en `rem_chat.py`: sin una `windowrulev2 = float, class:^(rem_chat.py)$` en tu config, la ventana se tiling-ea igual que cualquier otra en vez de abrir en 1100×620. La escena se adapta sola (escucha `resize`), pero el tamaño pedido no se respeta sin esa regla.
 
-### Depuración del overlay / la ventana
+### Depuración de la ventana
 
 ```bash
-# Consola del frontend volcada a rem_overlay.log / rem_chat.log
-# (set_enable_write_console_messages_to_stdout(True))
-
-WEBKIT_INSPECTOR_SERVER=127.0.0.1:9222 python rem_overlay.py   # overlay
-venv/bin/python rem_chat.py                                    # ventana — inspector ya fijo en :9223
-# DevTools desde el navegador en 127.0.0.1:9222 o :9223 según cuál
+venv/bin/python rem_chat.py   # consola del frontend volcada a rem_chat.log; inspector en :9222
+# DevTools remoto desde un navegador normal en http://127.0.0.1:9222
 ```
 
 ---
 
 ## 🗺️ Pendiente
 
-1. **Ventana GTK separada (`rem_chat.py`) — hecha.** Falta cablear el chat en sí: React (u otra UI) dentro de esa ventana, hablando con `rem_avatar_server.py` vía eventos `chat_message`/`audio_ready`/`viseme_timeline` sobre el mismo HTTP/WebSocket.
-2. Eliminar Tkinter del todo (chat viejo y su fondo).
-3. Conectar el `SentenceSplitter` a `Rem.py` (hecho y testeado, aún sin cablear).
+1. **Ventana GTK (`rem_chat.py`) con panel de chat — hecha.** El overlay transparente (`rem_overlay.py`) se eliminó: `rem_chat.py` lo sustituye por completo.
+2. Eliminar `Rem.py` / Tkinter del todo (el chat ya vive en la ventana).
+3. Conectar el `SentenceSplitter` al pipeline de `rem_chat.py` de forma que hable oración por oración (hoy `procesar_turno()` ya lo usa).
 4. Migrar `extraer_memoria_importante()` — ya pasa por el provider, verificar que no queden restos del cliente Groq síncrono.
 
 ### Dirección de la personalidad

@@ -19,19 +19,19 @@ no basta con copiar la carpeta.
 | TTS | `edge-tts` (Microsoft Neural, voz `es-VE-PaolaNeural`, rate `-8%`) |
 | Voice conversion | `infer-rvc-python` + modelo `Rem_600e_6600s` |
 | STT | `speech_recognition` + Google |
-| GUI | Tkinter (Python 3.10 en venv) |
-| Avatar 3D | Three.js + `@pixiv/three-vrm` en WebGL |
-| Overlay / ventana | GTK3 + WebKit2, `venv/bin/python` (PyGObject/pycairo instalados ahí, ver "El venv sí puede tener GTK" más abajo) |
+| GUI | GTK3 + WebKit2 (`rem_chat.py`) — la ventana del avatar con panel de chat. Tkinter (`Rem.py`) es legacy |
+| Avatar 3D | Three.js + `@pixiv/three-vrm` + `@pixiv/three-vrm-animation` en WebGL |
+| Ventana | GTK3 + WebKit2, `venv/bin/python` (PyGObject/pycairo instalados ahí, ver "El venv sí puede tener GTK" más abajo) |
 | fairseq | v0.12.2 con shim de compatibilidad (`fairseq_shim/`) |
 
 ## Archivos principales
 | Archivo | Qué hace |
 |---------|----------|
-| `Rem.py` | App principal: GUI Tkinter, chat, TTS/RVC, acciones, memoria |
+| `rem_chat.py` | **La aplicación**: levanta el servidor HTTP/WS y abre la ventana GTK + WebView. Ver "Ventana de escritorio" más abajo |
 | `rem_avatar_server.py` | Servidor HTTP `:18765` + WebSocket `:18766` para el avatar |
-| `rem_overlay.py` | Overlay GTK transparente click-through (`?modo=overlay`) |
-| `rem_chat.py` | Ventana GTK decorada y con foco (`?modo=ventana`) — ver "Ventana de escritorio" más abajo |
-| `rem_avatar.html` | Frontend Three.js/VRM del avatar — animación (clips VRMA para el cuerpo + procedural para respiración/mirada/gestos) + panel de chat HTML/CSS/JS (solo modo ventana), un motor para los dos modos |
+| `rem_avatar.html` | Frontend Three.js/VRM del avatar — animación (clips VRMA para el cuerpo + procedural para respiración/mirada/gestos) + panel de chat HTML/CSS/JS |
+| `bench_chat.py` | REPL de depuración: si hay servidor lo usa como cliente WS, si no lo levanta él (standalone). Ver "Puntos de entrada" más abajo |
+| `Rem.py` | Asistente Tkinter (legacy, en retirada — no arranca en el venv actual: sin `_tkinter`) |
 | `Animaciones/` | Clips `.vrma` del avatar — no van al repo, se descargan a mano. Ver `Animaciones/README.md` y "Animación de cuerpo con clips VRMA" más abajo |
 | `chat_sesion.py` | `SesionChat` + `procesar_turno()` — estado de una conversación y el turno "en crudo" contra el LLM, compartido entre `bench_chat.py` y el panel de chat de `rem_chat.py`. Ver "Panel de chat" más abajo |
 | `habla.py` | Pipeline de voz de un turno (TTS -> RVC -> `enviar_audio()`), compartido entre `bench_chat.py` y el panel de chat. Ver "Voz en la ventana de chat" más abajo |
@@ -39,9 +39,8 @@ no basta con copiar la carpeta.
 | `fairseq_shim/checkpoint_utils.py` | Fork de fairseq con `torch.load(weights_only=False)` |
 | `apply_shim.py` | Copia `fairseq_shim/` sobre el fairseq instalado en `venv/`. Ejecutar tras cualquier reinstalación de fairseq |
 | `llm/` | Capa de abstracción de LLM (contrato + providers). Ver "Capa de abstracción de LLM" más abajo |
-| `config.py` | Módulo compartido: carga `.env` y lee `config.toml`. Lo usa `Rem.py` y `bench_chat.py` — `bench_chat.py` no puede importar `Rem.py` (ver más abajo), así que sin esto no vería las variables de entorno |
+| `config.py` | Módulo compartido: carga `.env` y lee `config.toml`. Lo usan `rem_chat.py`/`bench_chat.py`/`Rem.py` |
 | `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — hoy solo `[llm]` / `[llm.claude]` |
-| `bench_chat.py` | REPL async nativo: prueba la capa `llm/` (modo ia) y voz/lipsync/avatar (modo eco), sin Tkinter. Ver "Capa de abstracción de LLM" más abajo y "bench.py eliminado" más abajo |
 
 ## Capa de abstracción de LLM (`llm/`)
 Contrato común para poder cambiar de backend (Claude, Groq, un modelo local a futuro) sin tocar
@@ -166,15 +165,12 @@ ninguna variable de `.env` — `llm/__init__.py` también lo usa para leer `conf
 tener su propia lectura duplicada.
 
 **Banco de pruebas sin Tkinter (`bench_chat.py`)**: el Python 3.10.14 del venv se compiló sin
-`_tkinter`, así que `Rem.py` no arranca ni se puede importar en este entorno (y Tkinter va a
-desaparecer del proyecto de todos modos). `bench_chat.py` es el REPL async nativo que cubre tanto
-`llm/` como voz/lipsync/avatar, con dos modos alternables en caliente (`SesionChat.cambiar_modo()`,
-ver "bench.py eliminado" más abajo): `chat <texto>` llama a `stream_chat()` directo con `async for`
-(sin el puente sync→async, no hace falta: todo el REPL vive en un único `asyncio.run()`), `voz
-on|off` encadena la respuesta al pipeline de voz existente (`lipsync.py` + RVC + `enviar_audio` de
-`rem_avatar_server.py`, reusados tal cual), `state <estado>` / `open` controlan el avatar
-directamente, `reset` limpia el historial y `quit` cierra. Arranca el avatar con
-`config.cargar_dotenv()` → `iniciar_avatar()`.
+`_tkinter`, así que `Rem.py` no arranca ni se puede importar en este entorno. `bench_chat.py` es un
+REPL de depuración con dos modos alternables en caliente (`SesionChat.cambiar_modo()`, ver "bench.py
+eliminado" más abajo): `chat <texto>` corre un turno de LLM (streaming), `voz on|off` encadena la
+respuesta al pipeline de voz (`habla.py`), `state <estado>` / `open` controlan el avatar, `modo
+ia|eco`, `reset`, `quit`. Cómo llega esos comandos al avatar depende de si detectó un servidor ya
+corriendo — ver "Puntos de entrada" abajo.
 
 ## Modo eco (`llm/echo.py`) y `bench.py` eliminado
 `EchoProvider` implementa el contrato de `LLMProvider` sin llamar a ningún modelo: busca el último
@@ -236,9 +232,6 @@ NOMBRE_USUARIO=Esteban
 CIUDAD=Yarumal
 VOZ_REM=es-VE-PaolaNeural
 TTS_RATE=-8%
-REM_LAYER=top
-REM_OVERLAY_W=520
-REM_OVERLAY_H=860
 RECORDATORIOS_ACTIVOS=false
 MEMORIA_EXTRACCION_ACTIVA=true
 ```
@@ -246,9 +239,6 @@ MEMORIA_EXTRACCION_ACTIVA=true
 solo hace falta si `[llm].provider`/`REM_LLM_PROVIDER` se cambia a `"groq"`. `get_provider()` falla
 al arrancar con un mensaje explícito si falta la key del provider elegido — ver "Capa de
 abstracción de LLM" más arriba.
-`REM_LAYER` (`top`|`overlay`) y `REM_OVERLAY_W`/`REM_OVERLAY_H` los lee `rem_overlay.py`, no
-`Rem.py` — controlan la capa del compositor y el tamaño fijo de la layer surface (ver
-"Layer surface acotada" más abajo).
 `RECORDATORIOS_ACTIVOS` (default `false`): dispara 5 llamadas al LLM al día (08:00, 14:00, 18:00,
 22:00, 00:30) sin que el usuario haga nada — apagado por defecto porque la regla del proyecto es
 que la API solo se usa cuando el usuario escribe o habla (ver "Nada volátil en el system prompt /
@@ -305,23 +295,21 @@ usuario escribe o habla.
 ## Arquitectura de concurrencia
 
 ```
-Rem.py — hilo principal (Tkinter mainloop)
-├── AudioWorker (daemon thread)         — cola TTS → RVC → sounddevice
-├── _cargar_rvc (daemon thread, inicio) — carga modelo RVC en background
-├── escuchar() (daemon thread)          — micrófono → speech recognition
-├── responder() (daemon thread)         — LLM → respuesta → hablar()
-│   └── _drenar_stream_llm()            — event loop asyncio propio y descartable por turno
-├── extraer_memoria_importante()        — daemon thread, cada 8 msgs
-├── _loop_monitor_pc (daemon thread)    — alerta CPU/RAM cada 60s
-└── _loop_recordatorios (app.after)     — recordatorios cada 30s, si RECORDATORIOS_ACTIVOS
+rem_chat.py — hilo principal (Gtk.main())
+├── habla.precargar_rvc (daemon thread, inicio) — carga + calienta RVC en background
+├── WebView (WebKit2)                    — rem_avatar.html?modo=ventana
+└── rem_avatar_server.iniciar_servidor_avatar():
+      ├── AvatarHTTP (daemon thread)     — sirve archivos en :18765
+      └── AvatarWS   (daemon thread)     — asyncio loop, WebSocket bidireccional en :18766
+            ├── _procesar_mensaje_chat() — turno de LLM (create_task), emite chat_delta/done
+            └── _chat_worker_habla_task  — cola de voz del panel (TTS→RVC→enviar_audio)
 
-rem_avatar_server.py (daemon thread desde Rem.py)
-├── AvatarHTTP (daemon thread)          — sirve archivos en :18765
-├── AvatarWS (daemon thread)            — WebSocket en :18766
-└── rem_overlay.py (subprocess hijo)    — sys.executable (venv/bin/python), GTK3 + WebKit2
+Rem.py (legacy, Tkinter) — hilo principal (Tkinter mainloop)
+├── AudioWorker / escuchar() / responder() / _drenar_stream_llm() / ... (daemon threads)
+└── rem_avatar_server.iniciar_avatar()  — alias de iniciar_servidor_avatar()
 ```
 
-## Locks de threading (en Rem.py)
+## Locks de threading (en Rem.py, legacy)
 | Lock | Protege |
 |------|---------|
 | `_lock_historial` | `historial` (lista de mensajes del chat) |
@@ -393,22 +381,31 @@ estuvo vacío en su único commit, así que no hizo falta reescribir historia. S
 la clave `"programas"` del JSON, que no existe en el schema que lee `personalidad.cargar_memoria_sistema()`
 (solo `archivos`/`carpetas`) — residuo de un formato viejo.
 
-## Arrancar el proyecto
+## Puntos de entrada
+
 ```bash
-# Activar venv Python 3.10 primero
-source venv/bin/activate
-python Rem.py
+venv/bin/python rem_chat.py     # LA APLICACIÓN — levanta el servidor y abre la ventana
+venv/bin/python bench_chat.py   # REPL de depuración (ver abajo)
+venv/bin/python Rem.py          # asistente Tkinter legacy (no arranca en este venv: sin _tkinter)
 ```
-Equivalente sin activar el venv: `venv/bin/python Rem.py`.
+
+- **`rem_chat.py`** es la aplicación: llama a `rem_avatar_server.iniciar_servidor_avatar()` (levanta
+  HTTP `:18765` + WS `:18766`, o detecta que ya están y los reusa) y abre la ventana GTK + WebView.
+- **`bench_chat.py`** se adapta a si ya hay un servidor:
+  - **modo cliente** (hay servidor): se conecta como cliente WebSocket y manda `state`/`chat`/`modo`/
+    `voz`/`reset` por ahí. El servidor los procesa y la ventana los ve. El turno de LLM lo corre el
+    servidor (llegan `chat_delta`/`chat_done` de vuelta y se imprimen).
+  - **modo standalone** (no hay servidor): lo levanta él mismo y corre autocontenido (turno de LLM
+    en proceso, worker de voz propio) — como antes.
+  - **nunca falla en silencio**: si un `state` no tiene a quién llegar (avatar cerrado), lo dice en
+    consola; en modo cliente, si la conexión WS se cae lo dice también. En el servidor,
+    `enviar_estado()`/`_broadcast_ws()` devuelven el nº de clientes y logean un aviso (con
+    antirrebote) cuando es 0.
 
 **El intérprete correcto es siempre `venv/bin/python` (Python 3.10.14, con torch/fairseq/RVC
-instalados) — nunca el `python`/`python3` del sistema.** Esto ya incluye a `rem_overlay.py` y
-`rem_chat.py`: el `python3` del sistema no tiene ningún rol especial en el proyecto (ver "El venv sí
-puede tener GTK" más abajo) — PyGObject/pycairo están en `requirements.txt` igual que el resto.
-
-El overlay (`rem_overlay.py`) lo lanza `Rem.py`/`bench_chat.py`/`rem_chat.py` automáticamente vía
-`rem_avatar_server._lanzar_overlay()`, con `sys.executable` (el mismo intérprete del proceso que lo
-llama, normalmente `venv/bin/python`) — no una ruta hardcodeada.
+instalados) — nunca el `python`/`python3` del sistema.** Esto incluye a `rem_chat.py`: el `python3`
+del sistema no tiene ningún rol especial en el proyecto (ver "El venv sí puede tener GTK" más abajo)
+— PyGObject/pycairo están en `requirements.txt` igual que el resto.
 
 ## Problemas conocidos
 - **fairseq + PyTorch moderno**: los archivos en `fairseq_shim/` solucionan la incompatibilidad. Ver `INSTALL.md`.
@@ -416,7 +413,7 @@ llama, normalmente `venv/bin/python`) — no una ruta hardcodeada.
   el shim con `venv/bin/python apply_shim.py` — si no, `torch.load()` fallará al cargar checkpoints
   porque le falta `weights_only=False`.
 - **RVC tarda en cargar**: los 30-60s solo aplican si cae a CPU (`only_cpu=True` o sin CUDA disponible). Con GPU (CUDA disponible) la carga es prácticamente instantánea, ~0,7s medidos en esta máquina. El TTS funciona sin RVC (sin conversión de voz).
-- **Avatar overlay no aparece**: verificar `webkit2gtk-4.1` instalado y compositor con soporte RGBA.
+- **La ventana del avatar no aparece**: verificar `webkit2gtk-4.1` instalado; correr `venv/bin/python rem_chat.py` en una terminal y mirar `rem_chat.log` (consola del frontend volcada ahí). Inspector remoto en `http://127.0.0.1:9222`.
 - **Error de audio**: verificar que PipeWire esté corriendo (`systemctl --user status pipewire`).
 
 ## Configuración de voz ganadora (comparación A/B)
@@ -570,10 +567,11 @@ excepción de verdad, con su mensaje, en vez de desaparecer en silencio. `_decir
 tolerándolo igual que antes (`except Exception` alrededor de la conversión, cae a la voz cruda de
 edge-tts sin convertir para esa oración), pero ahora el log de fallback trae el motivo real.
 
-**Precarga en el arranque**: `_precargar_rvc()` carga RVC y hace
+**Precarga en el arranque**: `habla.precargar_rvc()` carga RVC y hace
 una conversión de calentamiento descartable (frase fija `"Hola."`) en un hilo de fondo
-(`threading.Thread(daemon=True)`), lanzado en `main()` antes de `iniciar_avatar()` para solaparse
-con el arranque del servidor HTTP/WS y el subproceso del overlay en vez de sumarse después. Así,
+(`threading.Thread(daemon=True)`), lanzado antes de levantar el servidor HTTP/WS para solaparse con
+ese arranque en vez de sumarse después. Lo hacen `rem_chat.py` (siempre) y `bench_chat.py` en modo
+standalone (salvo `--no-rvc`). Así,
 para cuando el usuario escribe su primer `chat` real, tanto la carga del modelo (`import
 torch`/`faiss`, `Config()`) como el primer `generate_from_cache()` en frío (el más caro: incluye
 `torch.load()` del `.pth`, cargar el estimador de pitch `RMVPE` y leer el `.index`) ya se pagaron
@@ -718,12 +716,11 @@ pero para el lipsync no importa, porque hay un camino mejor que no depende del n
 
 ## Reproducción de audio: `<audio>` de HTML, no Web Audio API
 Se intentó primero con `AudioContext` (Web Audio API), con `resume()` en gestos de usuario
-(`click`/`keydown`/`touchstart`) para desbloquear el autoplay. **No funcionaba en el overlay**: es
-**click-through por diseño** (`_aplicar_click_through` en `rem_overlay.py`) — nunca va a recibir un
-gesto real, así que el `AudioContext` quedaba `'suspended'` para siempre ahí adentro.
-`WebKitSettings.set_media_playback_requires_user_gesture(False)` (probado en `rem_overlay.py`) **no
-resolvía esto**: esa política de WebKit2 solo aplica a elementos de medios (`<audio>`/`<video>`), no a
-la Web Audio API — por eso `AudioContext` seguía bloqueado pese a desactivarla.
+(`click`/`keydown`/`touchstart`) para desbloquear el autoplay. **No servía**: el audio de Rem
+empieza a sonar sin que el usuario haya interactuado con la página (primera respuesta apenas se abre
+la ventana), así que el `AudioContext` quedaba `'suspended'`.
+`WebKitSettings.set_media_playback_requires_user_gesture(False)` **no resolvía esto**: esa política
+de WebKit2 solo aplica a elementos de medios (`<audio>`/`<video>`), no a la Web Audio API.
 
 La solución fue eliminar el problema de raíz: `rem_avatar.html` reproduce con un `HTMLAudioElement`
 (`new Audio()`) en vez de `AudioContext`/`AudioBufferSourceNode`. Se creó **una sola vez** y se
@@ -748,29 +745,22 @@ controla un mecanismo distinto de `media-playback-requires-user-gesture`.
   ver "WebSocket bidireccional y chat_sesion.py" más abajo. Este bullet queda como registro de por
   qué el WS empezó siendo de una sola vía, no como descripción del estado actual.
 
-## Regresión repetida de la política de autoplay
-`play()` volvió a rechazarse con `NotAllowedError` una segunda vez, con el mismo síntoma que la
-sección anterior. El patrón de código en `rem_overlay.py` era `webview = WebKit2.WebView();
-settings = webview.get_settings()` y recién ahí se llamaba a `settings.set_media_playback_requires_
-user_gesture(False)` junto a los demás `set_*` — agregar `set_enable_write_console_messages_to_
-stdout(True)`/`set_enable_developer_extras(True)` (para el volcado de consola, ver más arriba) puso
-código nuevo por delante en el bloque y volvió a romperlo, la MISMA clase de fragilidad que ya había
-pasado una vez antes.
+## Regresión repetida de la política de autoplay (WebKitGTK 2.52)
+El bug: `HTMLMediaElement.play()` se rechaza con `NotAllowedError` y no hay audio. Pasó dos veces
+por reordenar/agregar líneas al bloque de configuración del WebView cuando el patrón era
+`webview = WebKit2.WebView(); settings = webview.get_settings()` y recién ahí los `set_*` — cualquier
+código nuevo por delante lo rompía. **Parte del fix**: armar `WebKit2.Settings()` en un objeto
+APARTE, completo, ANTES de crear el WebView.
 
-**La causa real no era el orden del bloque — el diagnóstico original quedó incompleto.**
-Investigando en vivo (Hyprland real, probando `chat` con `bench_chat.py` y leyendo el log del overlay)
-con el orden ya arreglado (`WebKit2.Settings()` armado aparte, completo, antes de crear el WebView
-vía `WebKit2.WebView.new_with_settings(settings)` — así el orden interno de los `set_*` deja de
-importar) **el `NotAllowedError` seguía pasando igual**. `WebKitSettings:media-playback-requires-
-user-gesture` no es lo único que controla esto en WebKitGTK 2.52: hay un mecanismo separado y más
-nuevo, `WebKitWebsitePolicies` con la propiedad `autoplay` (`WebKitAutoplayPolicy`: `ALLOW` /
-`ALLOW_WITHOUT_SOUND` / `DENY`) — confirmado con `list_properties()` que el nombre real de la
-propiedad es `"autoplay"`, no `"autoplay-policy"`. Es el que de verdad decide si
-`HTMLMediaElement.play()` se rechaza.
+**Pero eso solo no alcanzaba.** `WebKitSettings:media-playback-requires-user-gesture` no es lo único
+que controla esto en 2.52: hay un mecanismo separado y más nuevo, `WebKitWebsitePolicies` con la
+propiedad `autoplay` (`WebKitAutoplayPolicy`: `ALLOW` / `ALLOW_WITHOUT_SOUND` / `DENY`) — confirmado
+con `list_properties()` que el nombre real es `"autoplay"`, no `"autoplay-policy"`. Es el que de
+verdad decide si `play()` se rechaza.
 
 `WebsitePolicies` es una propiedad de **construcción** del `WebView` (`website-policies`, junto a
-`settings`), no algo que se pueda mutar después sobre un WebView ya creado — por eso el fix final
-construye los tres objetos (`Settings`, `WebsitePolicies`, `WebView`) en ese orden estricto, con
+`settings`), no algo que se pueda mutar después — por eso `rem_chat.py` construye los tres objetos
+(`Settings`, `WebsitePolicies`, `WebView`) en ese orden estricto, con
 `WebView(settings=settings, website_policies=policies)`:
 
 ```python
@@ -778,11 +768,10 @@ policies = WebKit2.WebsitePolicies(autoplay=WebKit2.AutoplayPolicy.ALLOW)
 webview = WebKit2.WebView(settings=settings, website_policies=policies)
 ```
 
-Verificado en vivo: sin `WebsitePolicies`, el log mostraba `[Lipsync] play() rechazado ... name:
-NotAllowedError`; con `WebsitePolicies(autoplay=ALLOW)`, `[Lipsync] play() resuelto (promesa)`. Se
-mantiene también `media-playback-requires-user-gesture(False)` en `Settings` (por si algún otro
-camino de reproducción lo consulta), pero **no alcanza solo** — los dos mecanismos son
-independientes y hace falta el segundo.
+Verificado en vivo: sin `WebsitePolicies`, `[Lipsync] play() rechazado ... NotAllowedError`; con
+`WebsitePolicies(autoplay=ALLOW)`, `[Lipsync] play() resuelto`. Se mantiene también
+`media-playback-requires-user-gesture(False)` en `Settings` (por si algún otro camino lo consulta),
+pero **no alcanza solo** — los dos mecanismos son independientes y hace falta el segundo.
 
 ## Encuadre del avatar: anclas normalizadas, no world units fijas
 `recalcularEncuadre()` deriva `camera.position.z` para que el modelo ocupe `CONFIG.pet.alturaPantalla`
@@ -814,68 +803,33 @@ frame del `gltf.load()` callback, porque recién ahí el esqueleto refleja la po
 seguir en un estado intermedio del importador). La medición inicial por `Box3` se conserva como
 placeholder para el primer frame o dos, y ambas cifras (Box3 y huesos) quedan logueadas para comparar.
 
-## Layer surface acotada (rendimiento del overlay)
-`rem_overlay.py` ancla la layer surface solo a `RIGHT`+`BOTTOM` con tamaño fijo
-(`win.set_size_request`, default 520×860, configurable por `.env` con `REM_OVERLAY_W`/`REM_OVERLAY_H`)
-en vez de a los 4 bordes. Anclar a los 4 bordes hacía que el compositor estirara un canvas WebGL
-transparente del tamaño del monitor entero, renderizado a 60fps de forma permanente sobre todo el
-escritorio — con las ~103 cadenas de spring bones de este modelo, costo constante innecesario.
-`set_exclusive_zone(-1)` y el click-through se mantienen igual.
+## Layer surface acotada (histórico — el overlay se eliminó)
+Cuando existía `rem_overlay.py`, su layer surface se anclaba solo a `RIGHT`+`BOTTOM` con tamaño
+fijo (no a los 4 bordes) para no estirar un canvas WebGL transparente del tamaño del monitor entero
+renderizando a 60fps sobre todo el escritorio. Eso trajo dos regresiones que se arreglaron en su
+momento (click-through que no sobrevivía a la reasignación de superficie; `_ajustarAnclasPorAspect()`
+colapsando `anchorX` a 0,5 en superficies verticales). **Nada de esto aplica ya**: una ventana
+normal (`rem_chat.py`) no tiene ese problema de rendimiento ni es click-through, y
+`_ajustarAnclasPorAspect()` se eliminó. Se deja el apunte por si el reporte de "canvas WebGL a
+pantalla completa cuesta caro" reaparece con otra forma.
 
-**Dos regresiones que introdujo ese cambio, ya arregladas:**
+## Conflicto de puertos: un solo servidor entre varios procesos
+`rem_avatar_server.iniciar_servidor_avatar()` levanta HTTP (`:18765`) + WS (`:18766`) **o** detecta
+que ya están corriendo (`_puerto_activo("127.0.0.1", 18765)`) y los reusa — no intenta un bind nuevo
+que competiría por el puerto. Lo llaman `rem_chat.py` (siempre) y `bench_chat.py` en modo standalone.
+`bench_chat.py` en modo cliente ni siquiera lo llama: se conecta como cliente WS al servidor que ya
+esté. `iniciar_avatar()` (legacy, `Rem.py`) es un alias de `iniciar_servidor_avatar()`.
 
-- **Click-through roto**: `_aplicar_click_through()` (input region vacía vía
-  `input_shape_combine_region`) solo se aplicaba en `realize`. Con anclaje a los 4 bordes eso
-  alcanzaba porque la superficie no se reasignaba después; con `RIGHT+BOTTOM` + tamaño fijo, el
-  compositor puede reasignar/redimensionar la superficie después de `realize`, y la input region
-  vacía no sobrevive a eso — el overlay volvía a capturar clics en su esquina. Se refuerza también
-  tras `show_all()` y en cada señal `size-allocate`.
-- **Rem no se veía en el overlay** (pero sí en un navegador normal, con lipsync funcionando — o sea
-  no era un bug de JS): la superficie de 520×860 tiene aspect ~0,60 (vertical), no 16:9 como un
-  monitor. `CONFIG.pet.anchorX=0.82` está pensado para un monitor ancho donde Rem camina por un
-  tercio de pantalla; en una superficie angosta dedicada solo al avatar, ese offset cae fuera (o casi
-  fuera) del recuadro visible, porque `anchoVisible` en `recalcularEncuadre()` es mucho más chico en
-  vertical. `_ajustarAnclasPorAspect()` en `rem_avatar.html` colapsa `anchorX`/`walkLeft`/`walkRight`
-  a `0.5` (centrado, sin caminata lateral) cuando `camera.aspect < 1`, reevaluado en cada
-  `recalcularEncuadre()` (carga + resize) — así que si algún día la superficie vuelve a ser ancha,
-  vuelve a las anclas originales solo. `BORDE_IZQ`/`BORDE_DER` en `tickPet()` pasaron de `const`
-  cacheadas a leer `CONFIG.pet.walkLeft`/`walkRight` en vivo, si no el ajuste no tenía efecto ahí.
+**Bug latente que quedó arreglado en el camino**: `_iniciar_ws()` llamaba a `_ws_ready.set()`
+**antes** de `websockets.serve(...)`. Si el puerto `:18766` ya estaba ocupado, `serve()` lanzaba
+dentro del hilo daemon `AvatarWS` — que muere en silencio — pero `_ws_ready` ya estaba en `True`, así
+que el llamador creía que el WS de ESTE proceso había levantado cuando no. Ahora `_ws_ready.set()` va
+**después** del `serve()` exitoso; si falla, la excepción queda en `_ws_bind_error` y `_ws_ready` sin
+activar. Y `iniciar_servidor_avatar()` chequea `_puerto_activo()` antes de siquiera intentar el bind,
+así que en la práctica ese camino casi no se toca.
 
-## Riesgo de conflicto de puertos si hay más de un proceso con el overlay
-Investigado tras un reporte de que el overlay había dejado de lanzarse en un lanzamiento del REPL
-(en su momento con dos scripts equivalentes, `bench.py` y `bench_chat.py` — el primero ya no existe,
-ver "bench.py eliminado" más abajo). Probado en vivo (Hyprland real, no headless) con stdin cerrado
-tras ~10s: el overlay cargó de forma idéntica y exitosa en ambos — mismo `rem_overlay.log` (VRM
-cargado, WS conectado, expresiones resueltas), sin ningún error. La secuencia de arranque del avatar
-era byte-a-byte la misma en los dos (`config.cargar_dotenv()` → `iniciar_avatar()` →
-`_abrir_navegador()` opcional) — no se pudo reproducir el reporte original en este entorno.
-
-**Riesgo real encontrado en el camino** (no confirmado como la causa de aquel reporte, pero sí un
-bug latente, y sigue vigente): `rem_avatar_server.py._iniciar_ws()` llama a `_ws_ready.set()`
-**antes** de intentar `websockets.serve(...)`. Si el puerto `:18766` ya está ocupado (p.ej. porque
-`bench_chat.py` o `Rem.py` ya está corriendo en otra terminal), `websockets.serve()` lanza una
-excepción dentro del hilo daemon `AvatarWS` — que muere en silencio (una excepción no capturada en
-un `threading.Thread` no se propaga al hilo principal) — pero `_ws_ready` ya quedó en `True` desde
-antes de ese fallo. `iniciar_avatar()` nunca se entera: `_lanzar_overlay()` se llama igual, y el
-overlay termina intentando hablarle a un WebSocket que en ESTE proceso nunca llegó a levantar (aunque
-sí puede haber uno ajeno, del otro proceso, sirviendo ese mismo puerto). Si dos instancias de
-Rem/bench_chat corren en simultáneo, la segunda puede terminar así — con un overlay que se ve
-"no funcionar" sin ningún error visible. En su momento no se tocó porque no se había confirmado que
-fuera la causa real de aquel reporte.
-
-**Arreglado al construir `rem_chat.py`** (ver más abajo), que sí necesitaba detectar de verdad si el
-servidor ya estaba arriba — no alcanzaba con seguir sin tocarlo. `_iniciar_ws()` ahora solo llama a
-`_ws_ready.set()` **después** de que `websockets.serve()` tiene éxito; si falla, guarda la excepción
-en `_ws_bind_error` y deja `_ws_ready` sin activar. La función nueva `iniciar_servidor_avatar()`
-(HTTP+WS, sin el overlay) primero prueba con un connect a `127.0.0.1:18765` si ya hay algo
-escuchando — si lo hay, ni intenta levantar un server nuevo, evitando la carrera de raíz en vez de
-solo manejarla mejor. `iniciar_avatar()` (la usada por `Rem.py`) ahora llama a
-`iniciar_servidor_avatar()` en vez de tener su propia copia de esa lógica.
-
-## Segunda regresión del overlay: no es el bug de _ws_ready, es un crash interno de WebKit
-Investigado tras un nuevo reporte de que el overlay volvió a no aparecer. Revisando
-`rem_overlay.log` de una corrida real (proceso único, sin nada más corriendo — descartado el bug de
-`_ws_ready` de arriba: no había puerto ocupado ni segunda instancia) aparece esto:
+## Crash interno del Network Process de WebKit
+Reportado como "la ventana del avatar a veces no aparece". En `rem_chat.log` aparece:
 
 ```
 CONSOLE NETWORK ERROR WebSocket connection to 'ws://localhost:18766/' failed: WebSocket network error: Network process crashed.
@@ -894,30 +848,22 @@ esa ventana, el avatar queda invisible por el resto de la sesión aunque el rest
 (audio, lipsync, WS) siga andando con normalidad. Esto explica el síntoma reportado sin ser el
 mismo bug que la sección anterior.
 
-**Reproducido de forma consistente** en este entorno (dos corridas limpias seguidas, sin procesos
-previos, mismo resultado) — no fue un evento aislado. Se revisó lo obvio (procesos WebKit
-colgados, espacio en disco, RAM, `journalctl`/`dmesg`) sin encontrar una causa de recursos: nada
-lo explica desde ese lado. Sí aparecen mensajes de `xdg-desktop-portal`/`wireplumber` sin relación
-aparente alrededor de la misma hora en el journal del usuario, que podrían apuntar a la sesión de
-Hyprland en un estado degradado tras uso intensivo prolongado (muchos lanzamientos de overlay en
-esta sesión de trabajo) — no confirmado como causa, solo una correlación observada.
-No se implementó ningún arreglo en su momento (por ejemplo, reintentar la carga del VRM igual que ya
-se reintenta `load-failed` del WebView) porque la causa raíz es un bug interno de WebKit, no algo en
-este código — si vuelve a pasar, lo primero a probar es reiniciar la sesión de Hyprland.
+**Reproducido de forma consistente** en su momento (dos corridas limpias seguidas). Se revisó lo
+obvio (procesos WebKit colgados, disco, RAM, `journalctl`/`dmesg`) sin causa de recursos. Posible
+correlación con la sesión de Hyprland degradada tras uso intensivo — no confirmado. La causa raíz es
+un bug interno de WebKit; si vuelve a pasar, lo primero a probar es reiniciar la sesión de Hyprland.
 
 ### Arreglo: reintento con espera exponencial en la carga del VRM
-La causa raíz sigue sin arreglarse (sigue siendo un bug de WebKit), pero que el avatar quede
-invisible el resto de la sesión por un crash transitorio sí era evitable — igual que el WebSocket ya
-se reconecta solo. `_cargarVRM(intento)` en `rem_avatar.html` envuelve el `loader.load()` original:
-si el callback de error dispara, loguea `[VRM] error (intento N/5): ...` y, si quedan intentos,
-reintenta con `setTimeout` tras `min(500 * 2**intento, 5000)` ms (mismo patrón — base, exponente,
-tope — que el retry de `load-failed` en `rem_overlay.py`); al agotar los 5 intentos loguea
-`"no se pudo cargar tras 5 intentos"` y se rinde, en vez de reintentar para siempre.
+La causa raíz sigue siendo un bug de WebKit, pero que el avatar quede invisible el resto de la
+sesión por un crash transitorio sí era evitable — igual que el WebSocket ya se reconecta solo.
+`_cargarVRM(intento)` en `rem_avatar.html` envuelve el `loader.load()` original: si el callback de
+error dispara, loguea `[VRM] error (intento N/5): ...` y reintenta con `setTimeout` tras
+`min(500 * 2**intento, 5000)` ms (mismo patrón que el retry de `load-failed` del WebView en
+`rem_chat.py`); al agotar los 5 intentos se rinde en vez de reintentar para siempre.
 
-**Verificado en vivo, tres escenarios** (con `bench_chat.py`, cache de WebKit limpiada entre corridas en
-`~/.cache/rem_overlay.py/WebKitCache` para no servir una copia vieja de `rem_avatar.html` — la
-cache en disco de WebKit2GTK persiste entre lanzamientos del proceso y puede enmascarar cambios
-recién hechos al archivo si no se limpia):
+**Verificado en vivo, tres escenarios** (cache de WebKit limpiada entre corridas en
+`~/.cache/rem_chat.py/WebKitCache` para no servir una copia vieja de `rem_avatar.html` — la cache en
+disco de WebKit2GTK persiste entre lanzamientos y puede enmascarar cambios recién hechos):
 1. Carga normal (sin fallas): sin regresión, el avatar carga igual que antes.
 2. Falla transitoria real (se renombró `rem.vrm` para forzar un 404, y se restauró a los ~5s,
    a mitad de la secuencia de reintentos): intento 1 falla y loguea "reintentando en 1000ms...";
@@ -928,66 +874,36 @@ recién hechos al archivo si no se limpia):
    con backoff creciente (1000, 2000, 4000, 5000, y el quinto ya sin más espera) y el mensaje final
    de rendición — confirma que no reintenta indefinidamente.
 
-## Ventana de escritorio (`rem_chat.py`) — un motor, dos modos
-Primera etapa de un frontend de chat aparte del overlay: solo la ventana y la escena 3D, sin el
-chat en sí todavía (viene después). `rem_chat.py` es GTK3 + WebKit2 igual que `rem_overlay.py`, pero
-lo opuesto a propósito: ventana normal decorada, opaca, con foco de teclado — sin
-`gtk-layer-shell`, sin transparencia, sin click-through. Tamaño por defecto 1100×620,
-redimensionable, título "Rem".
+## Ventana de escritorio (`rem_chat.py`)
+`rem_chat.py` es GTK3 + WebKit2: ventana normal decorada, opaca, con foco de teclado, título "Rem",
+1100×620 redimensionable. Levanta el servidor del avatar
+(`rem_avatar_server.iniciar_servidor_avatar()`) y carga `rem_avatar.html?modo=ventana` en el WebView.
+Es **la aplicación** — el overlay transparente de escritorio (`rem_overlay.py`, layer surface
+click-through con `gtk-layer-shell`) se eliminó; esta ventana lo sustituye por completo.
 
-**El venv sí puede tener GTK.** La suposición previa ("`rem_overlay.py` DEBE usar el python3 del
-sistema, NO el venv") seguía siendo cierta *porque nadie lo había intentado*, no porque fuera
-imposible: `pip install pygobject pycairo` en el venv compiló sin problema contra las libs
-GTK3/WebKit2GTK-4.1 (y `GtkLayerShell` — se probó aparte, también disponible) ya instaladas en el
-sistema (Arch no separa paquetes `-dev`, así que los headers/`.pc` ya estaban ahí). Verificado en
-vivo, ventana real renderizando. `pygobject`/`pycairo` quedaron agregados a `requirements.txt`.
+**El overlay eliminado — qué se fue con él**: `rem_overlay.py`, `_lanzar_overlay()`/`_overlay_proc`
+en `rem_avatar_server.py`, las env `REM_LAYER`/`REM_OVERLAY_W`/`REM_OVERLAY_H`, la dependencia de
+`gtk-layer-shell`, y el modo `?modo=overlay` de `rem_avatar.html` (con `CONFIG.modos.overlay`, el
+fondo transparente y `_ajustarAnclasPorAspect()` — ya no hay superficie angosta/vertical que
+colapsar a `anchorX=0.5`). `rem_avatar.html` quedó con un único modo (ventana); `?modo=ventana`
+sigue en la URL pero ya no cambia nada. `iniciar_avatar()`/`cerrar_avatar()` quedan como alias
+vacíos de `iniciar_servidor_avatar()` solo para no romper `Rem.py` (legacy).
 
-**`rem_overlay.py` también pasó al venv** — no se quedó atrás una vez confirmado que podía moverse.
-`rem_avatar_server._lanzar_overlay()` lanzaba el overlay con una ruta hardcodeada,
-`"/usr/bin/python3"`; ahora usa `sys.executable` — el mismo intérprete que ya está corriendo el
-proceso que llama a `_lanzar_overlay()` (normalmente `venv/bin/python`, sea `Rem.py`,
-`bench_chat.py` o `rem_chat.py`), sin asumir nada sobre qué hay instalado en el `python3` del
-sistema. Verificado en vivo: el overlay corre como
-`/mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_overlay.py --layer top` (confirmado con
-`ps aux`), carga igual que siempre (mismos números de encuadre, `[Modo] activo: overlay`, sin
-ninguna línea `[Suelo]`) — cero diferencia de comportamiento, solo cambió qué intérprete lo hospeda.
-La nota vieja de "Python dual" (`rem_overlay.py` DEBE usar el python3 del sistema) ya no es cierta y
-se sacó de "Problemas conocidos" — los dos scripts (`rem_overlay.py` y `rem_chat.py`) corren con
-`venv/bin/python` ahora. El `python3` del sistema (≥3.12) queda sin ningún rol especial en el
-proyecto salvo que alguien decida usarlo a mano.
+**El venv sí puede tener GTK.** `pip install pygobject pycairo` en el venv compila sin problema
+contra las libs GTK3/WebKit2GTK-4.1 ya instaladas en el sistema (Arch no separa paquetes `-dev`).
+`pygobject`/`pycairo` están en `requirements.txt`. El `python3` del sistema no tiene ningún rol
+especial en el proyecto.
 
-**Un solo `rem_avatar.html`, no duplicado.** `?modo=overlay|ventana` en la URL decide la escena
-(`overlay` por defecto si el parámetro falta o no se reconoce): `overlay` es el comportamiento de
-siempre (fondo transparente, sin suelo, `anchorX=0.5`, pensado para la superficie angosta 520×860
-del overlay real); `ventana` agrega el suelo synthwave y centra a Rem en el tercio izquierdo del
-ancho (`anchorX = 1/6`). `CONFIG.modos.{overlay,ventana}.anchorX` reemplaza el viejo
-`anchorX`/`walkLeft`/`walkRight` fijos — sin caminata (ver más abajo) alcanza con un valor por modo.
-`_ajustarAnclasPorAspect()` se mantiene para el caso general (una superficie angosta y vertical
-sigue necesitando colapsar a 0,5, sea cual sea el modo) pero ya no toca nada de caminata.
+**Log propio (`rem_chat.log`) — `os.dup2`, no `sys.stdout = archivo`.** WebKit2 escribe su volcado
+de consola (`set_enable_write_console_messages_to_stdout`) directo al file descriptor 1 nativo del
+proceso, sin pasar por el objeto `sys.stdout` de Python — reasignar solo ese objeto captura los
+`print()` propios pero deja afuera justo el volcado de consola. Se arregla con
+`os.dup2(log_file.fileno(), sys.stdout.fileno())` (y stderr), y `reconfigure(line_buffering=True)`
+antes, para que cada línea llegue al toque. Los `print()` de arranque (dónde quedó el log, el
+inspector) salen ANTES del `os.dup2`, a la terminal real.
 
-**Log propio (`rem_chat.log`) — `os.dup2`, no `sys.stdout = archivo`.** Primer intento (reasignar
-`sys.stdout`/`sys.stderr` a nivel de Python) no funcionó: WebKit2 escribe su volcado de consola
-(`set_enable_write_console_messages_to_stdout`) directo al file descriptor 1 nativo del proceso, sin
-pasar por el objeto `sys.stdout` de Python — reasignar solo ese objeto capturaba los `print()`
-propios pero dejaba afuera justo el volcado de consola, que es lo que más importa poder ver.
-Confirmado en vivo: con la reasignación simple, `rem_chat.log` solo tenía los `print()` de Python;
-el volcado de WebKit se iba a donde estuviera apuntando el fd 1 original (la terminal, si se lanza
-directo). Arreglado con `os.dup2(log_file.fileno(), sys.stdout.fileno())` (y lo mismo para stderr) —
-mismo efecto que `subprocess.Popen(..., stdout=archivo)` logra para el overlay, pero hecho desde
-adentro del propio proceso, porque `rem_chat.py` no se spawnea a sí mismo.
-
-**Inspector remoto en un puerto distinto al del overlay**: `WEBKIT_INSPECTOR_SERVER=127.0.0.1:9223`
-(el overlay usa `:9222`) para que las dos ventanas puedan correr juntas sin pisarse el puerto del
-inspector — mismo motivo que el resto de este apartado.
-
-**Solo servidor, sin overlay**: `rem_avatar_server.iniciar_servidor_avatar()` (nueva función, ver
-"Riesgo de conflicto de puertos" más arriba) levanta HTTP+WS o detecta que ya están corriendo — a
-diferencia de `iniciar_avatar()`, no lanza `rem_overlay.py` como subproceso. Así `rem_chat.py` puede
-arrancar solo (levanta el servidor él mismo) o junto al overlay/`Rem.py`/`bench_chat.py` (se conecta
-al servidor que ya esté arriba). Verificado en vivo: `rem_overlay.py` lanzado por separado, apuntando
-al servidor que `rem_chat.py` ya había levantado, cargó y funcionó igual que siempre (mismos números
-de encuadre que antes de este cambio: `z≈7.23 anchoVisible≈2.18`, sin ninguna línea `[Suelo]` en su
-log — modo overlay intacto).
+**Inspector remoto**: `WEBKIT_INSPECTOR_SERVER=127.0.0.1:9222` (fijado antes de que WebKit2 se
+inicialice) — abrir `http://127.0.0.1:9222` en un navegador normal para DevTools.
 
 **Tiling de Hyprland ignora `set_default_size()`** — no es un bug de `rem_chat.py`, es la política
 por defecto de un WM tiling: sin una `windowrulev2` para floatear la clase `rem_chat.py`, Hyprland
@@ -998,7 +914,7 @@ bien (el listener de `resize` recalcula el encuadre solo, probado en vivo con la
 usuario, no algo para forzar desde el código Python.
 
 ## Suelo de cuadrícula synthwave y fin de la caminata
-`crearSueloSynthwave()` (solo si `MODO === 'ventana'`) arma un `THREE.GridHelper` (líneas cian,
+`crearSueloSynthwave()` arma un `THREE.GridHelper` (líneas cian,
 `CONFIG.suelo.colorLinea`) más una `THREE.Line` de horizonte aparte, más brillante
 (`colorHorizonte`) y con `fog: false` (no se apaga con la distancia — es la marca de "hasta acá se
 ve", tiene que quedar siempre legible). La perspectiva hacia el horizonte la da `THREE.Fog`
@@ -1064,7 +980,7 @@ rítmica, eso no era lo que hacía ver a Rem como un robot.
 
 **Verificado en vivo**: los 7 estados (`idle/talking/thinking/happy/sad/angry/surprised`) probados en
 secuencia vía WebSocket, sin ningún error nuevo en `rem_chat.log` más allá de los crashes conocidos
-del Network Process de WebKit (ver "Segunda regresión del overlay" más arriba, no relacionados).
+del Network Process de WebKit (ver "Crash interno del Network Process de WebKit" más arriba, no relacionados).
 
 ## Brazos, manos y pose procedural de cuerpo
 Los brazos estaban en gran parte estáticos (antebrazo con valores fijos que nunca cambiaban, brazos
@@ -1150,23 +1066,18 @@ emoción ahí.
 (El bloque `CONFIG.giro` ya no existe — lo reemplazó `CONFIG.animaciones`, ver "Animación de cuerpo
 con clips VRMA" más abajo.)
 
-## Panel de chat en la ventana de escritorio (solo modo "ventana")
+## Panel de chat en la ventana de escritorio
 `rem_chat.py` ya tenía la ventana y la escena 3D; faltaba el chat en sí. Se agregó como
 HTML/CSS/JS vanilla dentro de `rem_avatar.html` (nada de frameworks ni dependencias externas,
-como pide el proyecto) — ocupa la mitad derecha de la ventana, opaca, encima del canvas. En modo
-overlay no se crea nada: `crearPanelChat()` arranca con `if (MODO !== 'ventana') return;`, mismo
-patrón de guarda que ya usaba `crearSueloSynthwave()`.
+como pide el proyecto) — ocupa la mitad derecha de la ventana, opaca, encima del canvas.
 
 **Por qué el canvas se deja a tamaño completo en vez de reducirlo a la mitad izquierda**: se
 evaluaron dos diseños — (a) canvas a ancho completo con el panel como `<div>` opaco encima
 (`position:fixed; right:0; width:50%`), o (b) redimensionar de verdad el renderer/cámara a la
-mitad izquierda. Se eligió (a): más simple, cero riesgo de romper `_ajustarAnclasPorAspect()` (que
-colapsa `anchorX` a 0,5 para superficies angostas — una mitad de ventana normal, ~550×620, cae en
-ese umbral y hubiera recentrado a Rem en su propia mitad en vez de mantener la composición "tercio
-izquierdo" pensada para el ancho completo) y sin cambios a `recalcularEncuadre()`/el listener de
+mitad izquierda. Se eligió (a): más simple, y sin cambios a `recalcularEncuadre()`/el listener de
 `resize`, ya probados. El costo (renderizar píxeles que quedan tapados por el panel) es
 insignificante para esta escena (una malla + una cuadrícula, sin post-procesado) — no es
-comparable al problema real de rendimiento que motivó acotar la layer surface del overlay (ver
+comparable al problema de rendimiento que en su momento motivó acotar la layer surface del overlay (ver
 "Layer surface acotada" más arriba), que era un canvas del tamaño del MONITOR ENTERO
 permanentemente, no la mitad de una ventana normal.
 
@@ -1193,22 +1104,23 @@ sincronizados sin necesidad de audio real — este panel es solo texto, no pasa 
 en absoluto (el pipeline de voz no se tocó).
 
 ## WebSocket bidireccional y `chat_sesion.py`
-Antes el WS de `:18766` era de una sola vía (Python → browser: estado/audio). `_ws_handler()` en
-`rem_avatar_server.py` ahora también procesa lo que manda el cliente, con mensajes tipados por un
-campo `tipo`:
+El WS de `:18766` es bidireccional. `_ws_handler()` en `rem_avatar_server.py` procesa lo que manda
+el cliente (el panel de `rem_avatar.html`, o `bench_chat.py` en modo cliente), con mensajes tipados
+por un campo `tipo`:
 
 | Dirección | tipo | Payload | Qué hace |
 |---|---|---|---|
-| browser → Python | `chat_message` | `{texto}` | Corre un turno completo contra el LLM activo |
-| browser → Python | `cambiar_modo` | `{modo: "ia"\|"eco"}` | Cambia el provider de la sesión de chat compartida |
-| browser → Python | `reset` | — | Limpia el historial de la sesión de chat compartida |
-| Python → browser | `chat_delta` | `{texto}` | Un fragmento de la respuesta, tal como llega del LLM |
-| Python → browser | `chat_done` | — | Fin del turno |
-| Python → browser | `modo_actual` | `{modo}` | El modo activo — se manda tras cualquier cambio real, venga de donde venga |
-| Python → browser | `error` | `{mensaje}` | Algo falló (turno ya en curso, falta API key, excepción del provider, modo inválido) |
-
-Los tipos ya existentes (`estado`, `{tipo: "audio", ...}`) siguen igual — el frontend solo agregó
-más ramas al mismo `if/else if` de `_ws.onmessage`, no se tocó el pipeline de audio/lipsync.
+| cliente → Python | `chat_message` | `{texto}` | Corre un turno completo contra el LLM activo |
+| cliente → Python | `cambiar_modo` | `{modo: "ia"\|"eco"}` | Cambia el provider de la sesión de chat compartida |
+| cliente → Python | `reset` | — | Limpia el historial de la sesión de chat compartida |
+| cliente → Python | `voz` | `{activa: bool}` | Interruptor de voz del panel (`voz_chat_activa()`) |
+| cliente → Python | `estado` | `{estado}` | Pide poner el avatar en ese estado — se valida y se re-difunde a todos (lo usa el comando `state` de `bench_chat.py` cliente) |
+| Python → cliente | `estado` | `{estado}` | Estado emocional/de habla del avatar |
+| Python → cliente | `audio` | `{url, timeline}` | WAV a reproducir + timeline de visemes |
+| Python → cliente | `chat_delta` | `{texto}` | Un fragmento de la respuesta, tal como llega del LLM |
+| Python → cliente | `chat_done` | — | Fin del turno |
+| Python → cliente | `modo_actual` | `{modo}` | El modo activo — se manda tras cualquier cambio real |
+| Python → cliente | `error` | `{mensaje}` | Algo falló (turno ya en curso, falta API key, modo/estado inválido) |
 
 **`SesionChat` se extrajo de `bench_chat.py` a `chat_sesion.py`** (junto con una función nueva,
 `procesar_turno()`) para que el REPL y el panel de chat usen la misma clase en vez de dos copias.
@@ -1220,14 +1132,13 @@ nuevo y separado, no un reemplazo.
 
 **La sesión de chat es un singleton compartido, no uno por consumidor**: `rem_avatar_server.
 obtener_sesion_chat()` construye (perezoso, recién en el primer uso real) una única `SesionChat` +
-snapshot de memoria por proceso, y tanto `_ws_handler()` (panel HTML) como `repl()` en
-`bench_chat.py` la usan — la MISMA instancia cuando ambos corren en el mismo proceso (que es el caso
-normal: `bench_chat.py` levanta `iniciar_avatar()`, que es este mismo módulo). Por eso cambiar de
-modo desde el botón del panel también lo ve el comando `modo` del REPL y viceversa: no son dos
-estados sincronizados por mensajes, son el mismo objeto. `cambiar_modo_chat()` es el punto de
-entrada único para cambiar de modo (lo llaman tanto `_ws_handler` como el comando `modo` del REPL) —
-además de mutar la sesión, manda `modo_actual` por WebSocket, así que un cambio disparado desde el
-REPL también sincroniza el selector del panel.
+snapshot de memoria por proceso, y tanto `_ws_handler()` (panel HTML) como `repl_standalone()` de
+`bench_chat.py` la usan — la MISMA instancia cuando corren en el mismo proceso (`bench_chat.py` en
+modo standalone). Por eso cambiar de modo desde el botón del panel también lo ve el comando `modo`
+del REPL standalone y viceversa: son el mismo objeto. `cambiar_modo_chat()` es el punto de entrada
+único (lo llaman `_ws_handler` y el comando `modo` del REPL standalone) — además de mutar la sesión,
+manda `modo_actual` por WebSocket. En modo cliente, `bench_chat.py` no toca `SesionChat` directo:
+manda `cambiar_modo` por WS y el servidor (el proceso de `rem_chat.py`) lo aplica sobre SU singleton.
 
 Perezoso a propósito: `Rem.py` también importa `rem_avatar_server` pero tiene su propio pipeline de
 conversación aparte (Tkinter, `preguntar_groq()`) y no usa nada de esto — construir la sesión
@@ -1320,52 +1231,31 @@ capacidad de primera clase, así que siempre precarga.
 2. Interruptor en `False`: el mismo `chat_message` completó `chat_delta`/`chat_done` normalmente
    (el texto se sigue viendo) pero sin ninguna línea `hablando:` nueva en el log — cero turnos de
    síntesis cuando la voz está apagada.
-3. **Doble cliente, la prueba pedida explícitamente** ("con la ventana y el REPL abiertos a la
-   vez"): se lanzó `bench_chat.py` primero (dueño real del servidor WS + su propio overlay como
-   cliente) y `rem_chat.py` segundo (detecta el servidor existente, se conecta como otro cliente
-   más — ver "Riesgo de conflicto de puertos" más arriba). Un `chat` + `voz on` desde el REPL
-   produjo **una sola** línea `hablando:` para ese turno (con la cola/worker del REPL); un
-   `chat_message` inyectado por WebSocket (simulando al panel) produjo **una sola** línea
-   `hablando:` para ESE turno (con la cola/worker del panel, cargando su propia instancia de RVC
-   perezosamente la primera vez que le tocó hablar — reutilizando el mismo `_rvc_cache` después).
-   Total de la sesión: 2 líneas `hablando:` para 2 turnos — ninguno duplicado.
-   - Nota sobre alcance: `enviar_audio()` igual **difunde** cada turno a todos los clientes WS
-     conectados (así ya funcionaba antes de este cambio, ver "Riesgo de conflicto de puertos" y
-     "Ninguna llamada al LLM sin intervención del usuario" — es una propiedad del diseño de
-     broadcast, no algo que este cambio haya tocado): con el overlay del REPL y la ventana los dos
-     conectados al mismo servidor, un turno con voz suena en los dos, cada uno una vez. Lo que se
-     verificó (y lo que pedía el punto 1) es que el BACKEND nunca sintetiza/encola el mismo turno
-     dos veces — no que un segundo cliente conectado deje de escuchar la misma reproducción
-     legítima, que es un comportamiento distinto (y deseable: si alguien tiene el overlay en un
-     monitor y la ventana en otro, esperaría que ambos hablen a la vez).
-4. Interacción con `iniciar_servidor_avatar()`: al reusar el servidor de otro proceso, ese segundo
-   proceso NUNCA corre su propio `_ws_handler` — sus propios `_ws_clients`/`_chat_sesion`/etc.
-   quedan vacíos para siempre (son globals de módulo, uno por proceso). Confirmado en vivo: con
-   `rem_chat.py` como segundo proceso, un `enviar_audio()` disparado DESDE ESE proceso cayó al
-   fallback local de `sounddevice` ("nadie conectado al WS") pese a que la ventana real sí estaba
-   conectada — porque la ventana está conectada al servidor real (el del OTRO proceso), no al
-   `_ws_clients` (vacío) de la suya propia. No es un bug de esta tarea: es la razón por la que el
-   escenario 3 se armó con `bench_chat.py` primero (dueño real del servidor) — así el turno del
-   REPL sí llega a `_ws_clients` reales. Documentado acá para que quede claro por qué el orden de
-   arranque importa en este escenario específico.
+3. **Doble consumidor** (el panel del servidor + un turno inyectado por otro cliente WS): cada turno
+   se sintetiza/encola **una sola vez**, desde la cola/worker de quien lo disparó. Con
+   `rem_chat.py` corriendo y `bench_chat.py` en modo cliente conectado encima, un `chat` desde
+   bench va por WS → el servidor lo corre en SU cola → una línea `hablando:`, sin duplicar.
+   - Nota sobre alcance: `enviar_audio()` **difunde** cada turno a todos los clientes WS conectados.
+     Si hay más de un cliente (poco común hoy: solo `rem_chat.py` tiene WebView), el mismo audio
+     suena en todos, cada uno una vez. Lo que importa es que el BACKEND nunca sintetiza/encola el
+     mismo turno dos veces.
+4. **Un solo servidor entre procesos**: el proceso que reusa un servidor ajeno (`bench_chat.py`
+   modo cliente, o `iniciar_servidor_avatar()` detectando uno ya arriba) NUNCA corre su propio
+   `_ws_handler` — sus `_ws_clients`/`_chat_sesion` quedan vacíos. Por eso `bench_chat.py` en modo
+   cliente manda todo por WS al servidor real (el proceso de `rem_chat.py`), no llama a
+   `enviar_estado()`/`procesar_turno()` en su propio proceso (donde no llegarían a nadie).
 
-## Encuadre 3D consciente del panel de chat, y tamaño por modo
-Con el panel de chat ocupando la mitad derecha de la ventana (ver arriba), Rem quedaba descentrada:
-`recalcularEncuadre()` seguía calculando `anchorX` como fracción del ANCHO TOTAL de la ventana, no
-del área 3D realmente visible (la mitad izquierda, la que no tapa el panel) — con `anchorX=1/6`
-(pensado para el ancho completo, "tercio izquierdo" de antes de que existiera el panel) Rem
-terminaba pegada al borde izquierdo de su propia mitad, no centrada en ella.
+## Encuadre 3D consciente del panel de chat
+El panel de chat ocupa la mitad derecha de la ventana, así que Rem hay que centrarla en la mitad
+IZQUIERDA (el área 3D visible), no en el canvas completo.
 
 **`fraccionAreaVisible3D()`** devuelve qué fracción del CANVAS COMPLETO ocupa el área 3D visible:
-`1 - CONFIG.chat.anchoFrac` en modo ventana, `1` en overlay (sin panel, sin cambios). `worldX(n)`
-en sí no cambió — sigue midiendo en fracciones del canvas completo, a propósito: `camera.aspect`
-tiene que seguir atado al tamaño REAL del render, o la imagen se distorsiona. Lo que cambió es qué
-se le pasa: `recalcularEncuadre()` ahora hace `worldX(CONFIG.pet.anchorX * fraccionAreaVisible3D())`
-en vez de `worldX(CONFIG.pet.anchorX)` — `anchorX` pasó a ser una fracción DEL ÁREA VISIBLE
-(0=su borde izquierdo, 1=justo donde empieza el panel), no del canvas completo. Con eso,
-`CONFIG.modos.ventana.anchorX` pasó de `1/6` a `0.5` (centrada en su área, como pide la
-especificación) — `overlay.anchorX` sigue en `0.5` (sin panel, área visible = canvas completo, sin
-cambio de comportamiento).
+`1 - CONFIG.chat.anchoFrac`. `worldX(n)` en sí no cambió — sigue midiendo en fracciones del canvas
+completo, a propósito: `camera.aspect` tiene que seguir atado al tamaño REAL del render, o la imagen
+se distorsiona. Lo que cambió es qué se le pasa: `recalcularEncuadre()` hace
+`worldX(CONFIG.pet.anchorX * fraccionAreaVisible3D())` — `CONFIG.pet.anchorX` es una fracción DEL
+ÁREA VISIBLE (0=su borde izquierdo, 1=justo donde empieza el panel), y vale `0.5` (centrada en su
+área).
 
 **`CONFIG.chat.anchoFrac` es la única fuente de verdad para el ancho del panel** — la lee tanto
 `fraccionAreaVisible3D()` (encuadre) como `crearPanelChat()`, que fija el custom property CSS
@@ -1376,13 +1266,9 @@ muy temprano en el mismo `<script type="module">`). Antes el 50% estaba hardcode
 (el CSS y, implícitamente, en cualquier cálculo de encuadre que lo asumiera) — ahora un cambio a
 `CONFIG.chat.anchoFrac` mueve los dos a la vez, no pueden desincronizarse.
 
-**`alturaPantalla` pasó de `CONFIG.pet` (un solo valor) a `CONFIG.modos.{overlay,ventana}`** (cada
-modo con el suyo) — mismo patrón que ya tenía `anchorX`, resuelto una vez al cargar
-(`CONFIG.pet.alturaPantalla = CONFIG.modos[MODO].alturaPantalla`, junto a la resolución de
-`anchorX` que ya existía). `overlay` se quedó en `0.45` (sin cambios); `ventana` subió a `0.65`
-(pedido explícito: "empieza en 0,65") — cada modo necesita un encuadre distinto porque el overlay es
-una superficie angosta dedicada solo a Rem, mientras que la ventana reparte el espacio con el panel
-de chat.
+**`CONFIG.pet.alturaPantalla`** (el modelo ocupa esta fracción del alto visible) vale `0.65`. Junto
+con `anchorX` eran valores por modo (`CONFIG.modos.{overlay,ventana}`) cuando existía el overlay;
+al eliminarlo quedaron aplanados en `CONFIG.pet` directo.
 
 **Verificado en vivo**: captura de pantalla con la ventana real mostró a Rem centrada
 horizontalmente en la mitad izquierda (ya no pegada al borde) y notablemente más grande que antes
@@ -1454,14 +1340,12 @@ real, compitiendo con un rango de giro bastante angosto (ver el punto siguiente)
 `recalcularEncuadre()` ahora hace `camera.position.x = posX` y `camera.lookAt(posX, 0, 0)` (mismo
 `posX` que ya se usa para `vrm.scene.position.x`) — el vector cámara→Rem queda puramente `-Z`,
 vista frontal de verdad. Como el punto que mira la cámara siempre proyecta al centro de la imagen,
-esto por sí solo centraría a Rem en el medio del CANVAS COMPLETO (en modo ventana, debajo del
-panel) — se corrige con `camera.setViewOffset(window.innerWidth, window.innerHeight, offsetX, 0,
-window.innerWidth, window.innerHeight)`, con `offsetX = (0.5 - fracXCanvas) * window.innerWidth`:
-un corrimiento de "lente descentrado" (el mismo truco que un objetivo tilt-shift o un corrimiento
-de cámara de arquitectura) que reencuadra la imagen ya renderizada sin volver a rotar la cámara
-(rotar la reintroduciría el ángulo que se acaba de eliminar). En overlay, `fracXCanvas=0.5` siempre
-(sin panel), así que `offsetX=0` — no-op, confirmado en vivo (`position.x=0.000 viewOffsetX=0.0px`,
-sin cambios de comportamiento).
+esto por sí solo centraría a Rem en el medio del CANVAS COMPLETO (debajo del panel) — se corrige con
+`camera.setViewOffset(window.innerWidth, window.innerHeight, offsetX, 0, window.innerWidth,
+window.innerHeight)`, con `offsetX = (0.5 - fracXCanvas) * window.innerWidth`: un corrimiento de
+"lente descentrado" (el mismo truco que un objetivo tilt-shift o un corrimiento de cámara de
+arquitectura) que reencuadra la imagen ya renderizada sin volver a rotar la cámara (rotar la
+reintroduciría el ángulo que se acaba de eliminar).
 
 **El punto de fuga de la cuadrícula se repositiona con la cámara.** `posicionarSuelo()` ahora
 también centra el grid/horizonte en `posX` (antes solo ajustaba la Y) — el punto de fuga lo

@@ -1,27 +1,21 @@
 #!/usr/bin/env python3
 """
 Ventana de escritorio para Rem — GTK3 + WebKit2, decorada y con foco.
+ES LA APLICACIÓN: levanta el servidor HTTP/WS del avatar y abre la ventana.
 
-En la línea de rem_overlay.py (mismo WebView, mismo motor rem_avatar.html),
-pero para el caso opuesto: una ventana normal de verdad, no una layer surface
-transparente y click-through. Sin gtk-layer-shell, sin transparencia, sin
-click-through — con barra de título, redimensionable, y capaz de recibir
-foco de teclado (para cuando el chat se conecte acá, en una etapa futura;
-esta etapa es solo la ventana y la escena 3D).
+Ventana normal (barra de título, redimensionable, con foco de teclado para el
+panel de chat), opaca. rem_avatar.html se carga con ?modo=ventana — hoy ese
+parámetro ya no cambia nada (había un modo "overlay" transparente y
+click-through, rem_overlay.py, que se eliminó: esta ventana lo sustituye por
+completo).
 
-Cambio de escena: rem_avatar.html se carga con ?modo=ventana (fondo oscuro
-opaco, suelo de cuadrícula synthwave, Rem centrada en el tercio izquierdo),
-a diferencia de rem_overlay.py que la carga sin parámetro (modo "overlay":
-fondo transparente, sin suelo — ver rem_avatar.html para el resto).
+Al arrancar llama a rem_avatar_server.iniciar_servidor_avatar(): levanta el
+servidor, o detecta que ya está corriendo (otra instancia, o bench_chat.py en
+modo standalone) y lo reusa sin competir por el puerto.
 
-Puede lanzarse sola (levanta ella misma el servidor del avatar) o junto al
-overlay/Rem.py/bench_chat.py (detecta que el servidor ya está corriendo y se
-conecta directo, sin competir por el puerto — ver
-rem_avatar_server.iniciar_servidor_avatar()). A diferencia del overlay, esta
-ventana SÍ corre con el venv (venv/bin/python rem_chat.py): PyGObject/pycairo
-se instalaron ahí sin problema, construidos contra las libs GTK3/WebKit2GTK
-ya instaladas en el sistema (ver requirements.txt y CLAUDE.md) — no hacía
-falta el python3 del sistema para esto, a diferencia de lo que se pensaba.
+Corre con el venv (venv/bin/python rem_chat.py): PyGObject/pycairo se
+instalaron ahí sin problema, construidos contra las libs GTK3/WebKit2GTK ya
+instaladas en el sistema (ver requirements.txt y CLAUDE.md).
 
     venv/bin/python rem_chat.py
 """
@@ -35,11 +29,10 @@ if BASE_DIR not in sys.path:
 
 LOG_PATH = os.path.join(BASE_DIR, "rem_chat.log")
 
-# Puerto del inspector remoto de WebKit para ESTA ventana — distinto del 9222
-# que usa rem_overlay.py, para que no compitan por el mismo puerto si las dos
-# corren juntas. Debe fijarse ANTES de que WebKit2 se inicialice (import gi
-# más abajo), como GDK_BACKEND en rem_overlay.py.
-os.environ.setdefault('WEBKIT_INSPECTOR_SERVER', '127.0.0.1:9223')
+# Inspector remoto de WebKit — abrir http://127.0.0.1:9222 en un navegador
+# normal para depurar rem_avatar.html como cualquier página. Debe fijarse
+# ANTES de que WebKit2 se inicialice (import gi más abajo).
+os.environ.setdefault('WEBKIT_INSPECTOR_SERVER', '127.0.0.1:9222')
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -68,20 +61,16 @@ def main():
     sys.stderr.reconfigure(line_buffering=True)
 
     # El log propio de esta ventana: se anuncia acá, en la terminal real,
-    # ANTES de redirigir stdout/stderr al archivo — mismo patrón que
-    # rem_avatar_server._lanzar_overlay() usa para rem_overlay.log, pero acá
-    # lo hace el propio proceso (rem_chat.py se lanza directo, no como
-    # subprocess de otro Python que le redirija la salida).
+    # ANTES de redirigir stdout/stderr al archivo.
     print(f"[Chat] Log: {LOG_PATH}  (tail -f para seguirlo)")
-    print(f"[Chat] Inspector remoto: http://127.0.0.1:9223")
+    print(f"[Chat] Inspector remoto: http://127.0.0.1:9222")
     # os.dup2 sobre los file descriptors reales (1 y 2), no solo reasignar
     # sys.stdout/sys.stderr: WebKit2 escribe su volcado de consola
     # (set_enable_write_console_messages_to_stdout) directo al fd 1 nativo
     # del proceso, sin pasar por el objeto sys.stdout de Python — reasignar
     # solo ese objeto deja afuera justo lo que más importa capturar acá.
-    # Mismo resultado que logra rem_avatar_server._lanzar_overlay() pasando
-    # stdout=/stderr=<archivo> a subprocess.Popen, pero rem_chat.py no puede
-    # spawnearse a sí mismo así — se redirige desde adentro.
+    # rem_chat.py se lanza directo (no como subprocess), así que la
+    # redirección la hace el propio proceso.
     log_file = open(LOG_PATH, 'w', buffering=1, encoding='utf-8')
     os.dup2(log_file.fileno(), sys.stdout.fileno())
     os.dup2(log_file.fileno(), sys.stderr.fileno())
@@ -105,16 +94,14 @@ def main():
     win.set_title("Rem")
     win.set_default_size(ANCHO_DEFAULT, ALTO_DEFAULT)
     win.set_resizable(True)
-    # Decorada, opaca, con foco: todo lo contrario del overlay a propósito.
-    # (set_decorated/accept_focus ya son True por defecto en un Gtk.Window
-    # normal — no hace falta tocarlos. Sin set_app_paintable ni visual RGBA:
-    # sin eso el compositor ya la pinta opaca.)
+    # Decorada, opaca, con foco (set_decorated/accept_focus ya son True por
+    # defecto en un Gtk.Window normal). Sin set_app_paintable ni visual RGBA:
+    # sin eso el compositor ya la pinta opaca.
 
-    # ── WebView — mismo patrón que rem_overlay.py: Settings y
-    # WebsitePolicies armados en objetos APARTE, completos, ANTES de crear
-    # el WebView (ver CLAUDE.md, "Regresión repetida de la política de
-    # autoplay" — el orden de los set_* sobre un WebView ya creado rompió
-    # el autoplay dos veces en el overlay).
+    # ── WebView — Settings y WebsitePolicies armados en objetos APARTE,
+    # completos, ANTES de crear el WebView (ver CLAUDE.md, "Regresión
+    # repetida de la política de autoplay" — el orden de los set_* sobre un
+    # WebView ya creado rompió el autoplay dos veces antes de dar con esto).
     settings = WebKit2.Settings()
     settings.set_enable_webgl(True)
     settings.set_enable_javascript(True)
@@ -123,10 +110,8 @@ def main():
     except Exception:
         pass
 
-    # Esta ventana SÍ recibe gestos de usuario reales (no es click-through),
-    # pero igual hace falta lo mismo que en el overlay: el audio puede
-    # empezar a sonar sin que el usuario haya interactuado con la página
-    # todavía (primera respuesta de Rem apenas se abre la ventana).
+    # El audio puede empezar a sonar sin que el usuario haya interactuado con
+    # la página todavía (primera respuesta de Rem apenas se abre la ventana).
     try:
         settings.set_media_playback_requires_user_gesture(False)
         print("[Chat] media-playback-requires-user-gesture desactivado (autoplay permitido)")
@@ -143,8 +128,7 @@ def main():
     # WebsitePolicies.autoplay = ALLOW: imprescindible, no alcanza con la
     # Settings de arriba (WebKitGTK 2.52 tiene un mecanismo separado y más
     # nuevo que es el que de verdad decide si HTMLMediaElement.play() se
-    # rechaza con NotAllowedError — confirmado en vivo en el overlay, ver
-    # CLAUDE.md). Sin esto no habrá audio.
+    # rechaza con NotAllowedError — ver CLAUDE.md). Sin esto no hay audio.
     try:
         policies = WebKit2.WebsitePolicies(autoplay=WebKit2.AutoplayPolicy.ALLOW)
         print("[Chat] WebsitePolicies.autoplay = ALLOW")
@@ -166,9 +150,9 @@ def main():
 
     url = f"http://localhost:{rem_avatar_server.HTTP_PORT}/rem_avatar.html?modo=ventana"
 
-    # ── Carga con retry exponencial — mismo motivo que en rem_overlay.py:
-    # el Network Process de WebKit2GTK 2.52.5 puede crashear en el peor
-    # momento (ver CLAUDE.md, "Segunda regresión del overlay").
+    # ── Carga con retry exponencial: el Network Process de WebKit2GTK 2.52.5
+    # puede crashear en el peor momento (ver CLAUDE.md, "crash interno del
+    # Network Process de WebKit").
     _intentos = [0]
     MAX_INTENTOS = 10
 
