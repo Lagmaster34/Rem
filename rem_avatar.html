@@ -322,6 +322,43 @@ const CONFIG = {
       ],
       // disponibles pero sin usar por ahora: Goodbye.vrma, Clapping.vrma, VRMA_02.vrma
     },
+    // Clip de POSE BASE para idle — el único estado que no tenía clip, por eso
+    // se veía tieso (brazos colgando rectos). A diferencia de porEstado/gestos,
+    // este es la base: cede el paso a cualquier gesto o clip de estado (crossfade)
+    // y vuelve a él al terminar. Todo lo procedural sigue encima (respiración,
+    // saccades, mirada, dedos, traslado de peso, ruido de cabeza).
+    //   archivo:  null → procedural puro (comportamiento viejo, brazos rectos).
+    //             un .vrma → pose base (Relax.vrma, o probar VRMA_06.vrma).
+    //   modo:  'bucle'    → el clip corre en loop, con timeScale variable (velMin..
+    //                       velMax) para romper la periodicidad de un ciclo corto.
+    //          'poseFija'  → solo el primer frame, congelado — arregla la pose sin
+    //                        aportar movimiento; todo el movimiento queda procedural.
+    //   mezclaBrazos: 0..1 — cuánto la pose del clip reemplaza a la procedural EN
+    //                        LOS BRAZOS (hombro/upperArm/lowerArm/mano). El resto
+    //                        del cuerpo queda 100% procedural: los brazos rectos
+    //                        son el problema real, el resto ya se ve bien.
+    //   ampProcedural: multiplica el ruido Perlin de getStatePose('idle') mientras
+    //                  el clip de idle está activo (>1 rompe el patrón del bucle).
+    //   velMin/velMax/velCambioS: solo 'bucle' — timeScale deriva lento entre
+    //                             velMin y velMax, objetivo nuevo cada ~velCambioS s.
+    idle: {
+      archivo: 'Relax.vrma',
+      modo: 'bucle',
+      mezclaBrazos: 0.8,
+      ampProcedural: 1.5,
+      velMin: 0.85,
+      velMax: 1.0,
+      velCambioS: 9,
+    },
+  },
+  // Presupuesto de render — la ventana comparte los 4 GB de VRAM con Ollama +
+  // RVC (ver config.toml [llm.ollama].num_gpu). Bajar estos valores libera
+  // VRAM para el LLM a costa de nitidez.
+  render: {
+    pixelRatioMax:   1.0,      // tope del devicePixelRatio (era 1.5)
+    resolucionMaxPx: 1600000,  // tope de píxeles del framebuffer (w*h*ratio²).
+                               // ~1,6 Mpx ≈ 1600x1000; por encima se baja el
+                               // ratio y el canvas se reescala por CSS. 0 = sin tope.
   },
   // Mirada a cámara — ver "MIRADA A CÁMARA + MICRO-SACCADES" más abajo.
   mirada: {
@@ -344,10 +381,27 @@ const CONFIG = {
 // Opaco: la ventana de rem_chat.py no es transparente (a diferencia del
 // overlay eliminado). El color de fondo real lo fija crearSueloSynthwave().
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
+
+// Tamaño del framebuffer con tope de VRAM (CONFIG.render). setPixelRatio(r) +
+// setSize(w,h) → framebuffer = w·r × h·r, canvas CSS = w × h: con r<1 renderiza
+// a menos resolución y el navegador reescala el canvas. Se llama al arrancar y
+// en cada resize.
+function aplicarTamanoRender() {
+  const w = window.innerWidth, h = window.innerHeight;
+  const R = CONFIG.render;
+  let ratio = Math.min(window.devicePixelRatio || 1, R.pixelRatioMax);
+  if (R.resolucionMaxPx > 0) {
+    const px = w * h * ratio * ratio;
+    if (px > R.resolucionMaxPx) ratio *= Math.sqrt(R.resolucionMaxPx / px);
+  }
+  renderer.setPixelRatio(ratio);
+  renderer.setSize(w, h);
+  console.log(`[Render] ventana ${w}x${h} · ratio ${ratio.toFixed(3)} · framebuffer `
+            + `${Math.round(w * ratio)}x${Math.round(h * ratio)}`);
+}
+aplicarTamanoRender();
 
 const scene = new THREE.Scene();
 
@@ -1228,16 +1282,20 @@ function getStatePose(t) {
 
     case 'idle': {
       const S = CONFIG.brazos;
+      // _idleAmpMult (>1) amplifica el ruido cuando hay clip de pose base de
+      // idle activo — el clip fija la pose, el ruido rompe la periodicidad del
+      // bucle. Vale 1 en procedural puro (ver actualizarAnimacionClips).
+      const A = _idleAmpMult;
       return {
-        hX: ruido(10, 0.15, ts) * 0.028,
-        hY: ruido(20, 0.12, ts) * 0.020,
-        hZ: -0.04 + ruido(30, 0.13, ts) * 0.016,
-        bZ: ruido(40, 0.10, ts) * 0.009,
+        hX: ruido(10, 0.15, ts) * 0.028 * A,
+        hY: ruido(20, 0.12, ts) * 0.020 * A,
+        hZ: -0.04 + ruido(30, 0.13, ts) * 0.016 * A,
+        bZ: ruido(40, 0.10, ts) * 0.009 * A,
         bX: breath,
-        ruZ: -S.separacion + ruido(50, 0.07, ts) * 0.02,
-        luZ:  S.separacion + ruido(51, 0.07, ts) * 0.02,
-        ruX:  S.balanceoDelante + ruido(60, 0.08, ts) * 0.02,
-        luX:  S.balanceoDelante + ruido(61, 0.08, ts) * 0.02,
+        ruZ: -S.separacion + ruido(50, 0.07, ts) * 0.02 * A,
+        luZ:  S.separacion + ruido(51, 0.07, ts) * 0.02 * A,
+        ruX:  S.balanceoDelante + ruido(60, 0.08, ts) * 0.02 * A,
+        luX:  S.balanceoDelante + ruido(61, 0.08, ts) * 0.02 * A,
       };
     }
 
@@ -1734,8 +1792,19 @@ let _clipPeso = 0;             // 0 = procedural puro, 1 = clip puro; rampa en a
 let _clipPesoObjetivo = 0;
 let _clipTopeTimer = null;     // segundos restantes de un clip 'bucle' con duracionS, o null
 const _clipCache = new Map();  // archivo -> {archivo, clip} | {archivo, error}
-const _huesosNorm = [];        // [{node, q:Quaternion}] — todos los huesos normalizados, para la mezcla
+const _huesosNorm = [];        // [{nombre, node, q:Quaternion}] — todos los huesos normalizados, para la mezcla
 let _hipsNode = null;
+
+// Clip de POSE BASE de idle (CONFIG.animaciones.idle): de él solo se toman los
+// brazos (el problema real: cuelgan rectos en procedural); el resto del cuerpo
+// queda 100% procedural. Ver reproducirIdle()/actualizarAnimacionClips().
+const _HUESOS_BRAZO_IDLE = new Set([
+  'leftShoulder', 'rightShoulder', 'leftUpperArm', 'rightUpperArm',
+  'leftLowerArm', 'rightLowerArm', 'leftHand', 'rightHand',
+]);
+let _idleVelObjetivo = 1.0;    // timeScale objetivo del clip de idle en bucle
+let _idleVelTimer = 0;
+let _idleAmpMult = 1;          // multiplicador del ruido de getStatePose('idle') — >1 con clip de idle
 const _qClipTmp = new THREE.Quaternion();
 const _vClipTmp = new THREE.Vector3();
 const _hipsPosProc = new THREE.Vector3();
@@ -1756,7 +1825,7 @@ function inicializarAnimacionClips() {
   _huesosNorm.length = 0;
   for (const nombre of Object.keys(vrm.humanoid.humanBones)) {
     const node = vrm.humanoid.getNormalizedBoneNode(nombre);
-    if (node) _huesosNorm.push({ node, q: new THREE.Quaternion() });
+    if (node) _huesosNorm.push({ nombre, node, q: new THREE.Quaternion() });
   }
   _hipsNode = vrm.humanoid.getNormalizedBoneNode('hips');
   console.log(`[Anim] mixer listo — ${_huesosNorm.length} huesos normalizados para la mezcla`);
@@ -1888,9 +1957,11 @@ function reproducirClip(entry, { modo, duracionS, esGesto }) {
   nueva.setLoop(modo === 'bucle' ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
   nueva.clampWhenFinished = (modo !== 'bucle'); // sostiene el último frame estable durante el crossfade de salida
   nueva.enabled = true;
+  nueva.paused = false;
   nueva.timeScale = 1;
   nueva.setEffectiveWeight(1);
   nueva._esGesto = !!esGesto;
+  nueva._esIdle = false;
   nueva.play();
 
   if (_accionActual && _accionActual !== nueva) {
@@ -1918,16 +1989,87 @@ function volverAProcedural() {
   _clipTopeTimer = null;
 }
 
+// Clip de POSE BASE de idle (CONFIG.animaciones.idle). No es un gesto ni un clip
+// de estado: es la base sobre la que corre todo lo demás. Loop continuo; cede a
+// gestos/clips de estado con crossfade y se vuelve a él al terminar (ver
+// volverABaseIdle). Marca _accionActual._esIdle para que actualizarAnimacionClips()
+// haga la mezcla especial (del clip solo los brazos, el resto procedural).
+async function reproducirIdle() {
+  const cfg = CONFIG.animaciones.idle;
+  if (!_mixer || !cfg?.archivo) { volverAProcedural(); return; }
+  const tok = ++_tokenClip;
+  const entry = await obtenerClip(cfg.archivo);
+  if (tok !== _tokenClip || estado !== 'idle' || _audioActivo) return;
+  if (entry.error) { volverAProcedural(); return; }
+
+  const acc = _mixer.clipAction(entry.clip);
+  if (acc === _accionActual && _accionActual._esIdle) { _clipPesoObjetivo = 1; return; }
+
+  acc.reset();
+  acc.setLoop(THREE.LoopRepeat, Infinity);
+  acc.clampWhenFinished = false;
+  acc.enabled = true;
+  acc.paused = false;
+  acc.setEffectiveWeight(1);
+  acc._esGesto = false;
+  acc._esIdle = true;
+  acc.play();
+  // 'poseFija': timeScale 0 (no 'paused') — el frame no avanza pero la acción
+  // sigue entrando en la mezcla, así que el crossfade hacia ella funciona.
+  acc.timeScale = (cfg.modo === 'poseFija') ? 0 : 1;
+  if (cfg.modo === 'poseFija') acc.time = 0;
+
+  const CF = CONFIG.animaciones.crossfadeS;
+  if (_accionActual && _accionActual !== acc) {
+    if (_accionAnterior && _accionAnterior !== acc && _accionAnterior !== _accionActual) _accionAnterior.stop();
+    _accionActual.crossFadeTo(acc, CF, false);
+    _accionAnterior = _accionActual;
+  }
+  _accionActual = acc;
+  _gestoActivo = false;
+  _clipTopeTimer = null;
+  _idleVelObjetivo = 1.0;
+  _idleVelTimer = 0;
+  _clipPesoObjetivo = 1;
+  console.log(`[Anim] idle base: "${cfg.archivo}" (${cfg.modo})`);
+}
+
+// Fin de un gesto de reposo, o su interrupción: volver a la BASE — al clip de
+// idle si está configurado y seguimos elegibles, o a lo procedural.
+function volverABaseIdle() {
+  if (estado === 'idle' && !_audioActivo && CONFIG.animaciones.idle?.archivo) {
+    reproducirIdle();
+  } else {
+    volverAProcedural();
+  }
+}
+
+// Varía lento el timeScale del clip de idle en bucle (velMin..velMax) — un clip
+// de reposo de ~4s en loop se nota repetitivo enseguida; la velocidad variable
+// rompe el patrón sin leerse como "cámara lenta".
+function _actualizarVelIdle(dt) {
+  const cfg = CONFIG.animaciones.idle;
+  _idleVelTimer -= dt;
+  if (_idleVelTimer <= 0) {
+    _idleVelObjetivo = cfg.velMin + Math.random() * (cfg.velMax - cfg.velMin);
+    _idleVelTimer = (cfg.velCambioS ?? 9) * (0.6 + Math.random() * 0.8);
+  }
+  if (_accionActual) _accionActual.timeScale = lerp(_accionActual.timeScale, _idleVelObjetivo, dt * 0.4);
+}
+
 function _alTerminarClip(e) {
   if (e.action !== _accionActual) return;   // una acción vieja terminando su fade — ignorar
-  // Clip 'unaVez' (surprised/happy/gesto) terminó: crossfade de vuelta a lo
-  // procedural SIEMPRE, aunque el estado emocional siga activo — nunca se deja
-  // el cuerpo plantado en el frame final.
   const eraGesto = e.action._esGesto;
-  volverAProcedural();
   if (eraGesto) {
+    // Gesto de reposo terminó → volver a la base (clip de idle o procedural).
     _gestoActivo = false;
     _gestoTimer = _sortearIntervaloGesto();
+    volverABaseIdle();
+  } else {
+    // Clip 'unaVez' (surprised/happy) terminó → procedural SIEMPRE, aunque el
+    // estado emocional siga activo (la cara conserva la emoción vía
+    // updateExpressions) — nunca se deja el cuerpo plantado en el frame final.
+    volverAProcedural();
   }
 }
 
@@ -1938,12 +2080,21 @@ function sincronizarClipConEstado() {
   const m = CONFIG.animaciones.porEstado[estado];
   const tok = ++_tokenClip;
   _gestoActivo = false; // un cambio de estado siempre gana sobre un gesto de reposo
-  if (!m) { volverAProcedural(); return; }
-  obtenerClip(m.archivo).then(entry => {
-    if (tok !== _tokenClip) return;                 // el estado cambió mientras cargaba
-    if (entry.error) { volverAProcedural(); return; } // fallback a procedural
-    reproducirClip(entry, { modo: m.modo, duracionS: m.duracionS, esGesto: false });
-  });
+  if (m) {
+    obtenerClip(m.archivo).then(entry => {
+      if (tok !== _tokenClip) return;                 // el estado cambió mientras cargaba
+      if (entry.error) { volverAProcedural(); return; } // fallback a procedural
+      reproducirClip(entry, { modo: m.modo, duracionS: m.duracionS, esGesto: false });
+    });
+    return;
+  }
+  // Sin clip de estado: idle usa el clip de pose base (si está configurado);
+  // talking (y idle con el clip desactivado) van a procedural.
+  if (estado === 'idle' && CONFIG.animaciones.idle?.archivo) {
+    reproducirIdle();
+  } else {
+    volverAProcedural();
+  }
 }
 
 function _elegirGestoPorPeso() {
@@ -1962,16 +2113,18 @@ function updateGestos(dt) {
 
   if (_gestoActivo) {
     // Interrupción (regla: la voz manda): si dejó de ser elegible a mitad de
-    // gesto, crossfade de vuelta a lo procedural.
+    // gesto, crossfade de vuelta a la base (clip de idle o procedural).
     if (estado !== 'idle' || _audioActivo) {
-      volverAProcedural();
+      volverABaseIdle();
       _gestoActivo = false;
       _gestoTimer = _sortearIntervaloGesto();
     }
     return;
   }
 
-  if (estado !== 'idle' || _audioActivo || hayClipEstado || _clipPesoObjetivo === 1) {
+  // Un gesto SÍ puede dispararse sobre el clip de pose base de idle (crossfade
+  // idle -> gesto -> idle) — solo lo bloquean un clip de estado, audio, o no-idle.
+  if (estado !== 'idle' || _audioActivo || hayClipEstado) {
     _gestoTimer = _sortearIntervaloGesto();
     return;
   }
@@ -2022,16 +2175,20 @@ function aplicarCabezaSigueMiradaEncima(k) {
 // Llamada desde animate() en lugar del bloque de pose de cuerpo. Decide entre
 // procedural puro, clip puro, o la mezcla de los dos durante un crossfade.
 function actualizarAnimacionClips(dt, t) {
-  if (!_mixer) { aplicarCuerpoProcedural(t, dt); return; } // aún no cargó el VRM
+  if (!_mixer) { _idleAmpMult = 1; aplicarCuerpoProcedural(t, dt); return; } // aún no cargó el VRM
   updateGestos(dt);
 
   if (_clipTopeTimer != null) {
     _clipTopeTimer -= dt;
-    if (_clipTopeTimer <= 0) { _clipTopeTimer = null; volverAProcedural(); }
+    if (_clipTopeTimer <= 0) { _clipTopeTimer = null; volverABaseIdle(); }
   }
 
   const cf = CONFIG.animaciones.crossfadeS;
   _clipPeso += clamp(_clipPesoObjetivo - _clipPeso, -dt / cf, dt / cf);
+
+  const esIdleClip = _accionActual?._esIdle === true;
+  // Ruido procedural amplificado solo mientras el clip de idle domina la mezcla.
+  _idleAmpMult = (esIdleClip && _clipPeso > 0.5) ? (CONFIG.animaciones.idle.ampProcedural ?? 1) : 1;
 
   if (_clipPeso <= 0.001) {
     _clipPeso = 0;
@@ -2040,18 +2197,43 @@ function actualizarAnimacionClips(dt, t) {
       _accionActual = _accionAnterior = null;
       vrm.humanoid.resetNormalizedPose(); // huesos que el clip movió y el procedural no toca (piernas, hips.position)
     }
+    _idleAmpMult = 1;
     aplicarCuerpoProcedural(t, dt);
     return;
   }
 
-  const mezclando = _clipPeso < 0.999;
-  if (mezclando) {
+  // Idle a pleno peso: mezcla ESPECIAL — del clip solo se toman los brazos
+  // (hombro/upperArm/lowerArm/mano), el resto del cuerpo queda 100% procedural
+  // (getStatePose('idle') ya con ampProcedural). Durante el crossfade
+  // (mezclando) todavía se mezclan todos los huesos por _clipPeso.
+  const idleBrazos = esIdleClip && _clipPeso >= 0.999;
+  const mezclando  = _clipPeso < 0.999;
+
+  if (mezclando || idleBrazos) {
     aplicarCuerpoProcedural(t, dt);                          // escribe .rotation (pose procedural)
     for (const h of _huesosNorm) h.q.copy(h.node.quaternion); // snapshot procedural
     if (_hipsNode) _hipsPosProc.copy(_hipsNode.position);
   }
 
+  if (esIdleClip && CONFIG.animaciones.idle.modo === 'bucle') _actualizarVelIdle(dt);
   _mixer.update(dt);                                          // el clip escribe .quaternion
+
+  if (idleBrazos) {
+    const m = CONFIG.animaciones.idle.mezclaBrazos ?? 0.8;
+    for (const h of _huesosNorm) {
+      if (_HUESOS_BRAZO_IDLE.has(h.nombre)) {
+        _qClipTmp.copy(h.node.quaternion);
+        h.node.quaternion.slerpQuaternions(h.q, _qClipTmp, m);
+      } else {
+        h.node.quaternion.copy(h.q);   // resto: 100% procedural
+      }
+    }
+    if (_hipsNode) _hipsNode.position.copy(_hipsPosProc);
+    // aplicarCuerpoProcedural ya puso respiración/mirada para todo el cuerpo;
+    // NO se suman de nuevo (sería doble). La mínima pérdida de respiración en
+    // hombros (mezclados 0.8 al clip) no se nota.
+    return;
+  }
 
   if (mezclando) {
     for (const h of _huesosNorm) {
@@ -2139,7 +2321,7 @@ animate();
 // ═══════════════════════════════════════════════════
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  aplicarTamanoRender();
   // anchorX/anchorY son fracciones normalizadas — se preservan solas. Solo hay
   // que recalcular a qué coordenada de mundo corresponden con el nuevo aspect
   // (y reposicionar el suelo synthwave si está activo).

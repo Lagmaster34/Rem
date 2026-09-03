@@ -37,9 +37,9 @@ num_ctx     = 4096
 #           |             |        | infer_rvc_python traga la excepción
 #           |             |        | y devuelve lista vacía, no se ve
 #           |             |        | como error salvo mirando stderr)
-#   28      | ~2714 MiB   | ~25,8  | OK — robusto en repetidas pruebas,
-#           |             |        | frase corta y larga (13s de audio)
-#   24      | ~2430 MiB   | ~20,7  | OK
+#   28      | ~2714 MiB   | ~25,8  | marginal — a veces OK, a veces
+#           |             |        | "cudaMalloc failed: out of memory"
+#   24      | ~2430 MiB   | ~20,7  | OK — valor actual, robusto
 #   20      | ~2156 MiB   | ~16,9  | OK
 #   16      | ~1872 MiB   | ~12,9  | OK
 #   12      | ~1596 MiB   | ~12,3  | OK
@@ -47,12 +47,22 @@ num_ctx     = 4096
 #    4      | ~1061 MiB   | ~8,3   | OK
 #    0      | ~153 MiB    | ~4,7   | OK (CPU puro)
 #
-# 28 es el valor más alto verificado robusto (no el primero que "pasó una
-# vez"): se repitió la conversión RVC varias veces en ese punto, con una
-# frase corta y una de 13s, sin fallar ninguna vez. Bajar más no compra
-# nada (ya hay de sobra de VRAM libre en 28) y cuesta tok/s de forma
-# notoria entre escalones (28->24 ya es -20% de velocidad).
-num_gpu = 28
+# La columna "RVC" de arriba se midió cuando el avatar corría en el OVERLAY.
+# 28 empezó a fallar de forma intermitente después de pasar a la VENTANA
+# (rem_chat.py) — pero MEDIDO con nvidia-smi, el canvas de la ventana aporta
+# solo ~5 MiB de VRAM NVIDIA (WebKitGTK 2.52 sobre Wayland/NVIDIA no acelera
+# el WebGL por GPU en esta máquina — lo rasteriza por software, ver el proceso
+# WebKitWebProcess con ~2,6 GB de RAM y 0 en nvidia-smi). O sea: el problema
+# de 28 NO es la ventana, es el margen ya justo entre el modelo y el PICO de
+# VRAM de RVC durante la conversión (fragmentación + allocator de Ollama sin
+# liberar) — el mismo que ya hacía fallar a 32. 24 deja margen de sobra.
+#
+# Las mitigaciones de render de rem_avatar.html (CONFIG.render) NO liberan
+# VRAM NVIDIA en esta máquina (el framebuffer no está en la GPU) — bajan CPU/
+# RAM y suben FPS del render por software. Si algún día WebKit acelera el
+# WebGL por GPU, ahí sí valdría medir de nuevo y quizá subir num_gpu; hasta
+# entonces, 24 y no tocar.
+num_gpu = 24
 
 
 [llm.claude]

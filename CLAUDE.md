@@ -463,8 +463,8 @@ intentó una conversión RVC real en CUDA:
 | num_gpu | VRAM modelo | tok/s | RVC (cuda) |
 |---------|-------------|-------|------------|
 | 32 (default de Ollama, todas las capas) | ~2994 MiB | ~40,7 | **FALLA siempre** — CUDA out of memory |
-| 28 | ~2714 MiB | ~25,8 | OK |
-| 24 | ~2430 MiB | ~20,7 | OK |
+| 28 | ~2714 MiB | ~25,8 | **marginal** — a veces OK, a veces cudaMalloc failed |
+| **24** (valor actual) | ~2430 MiB | ~20,7 | OK — robusto |
 | 20 | ~2156 MiB | ~16,9 | OK |
 | 16 | ~1872 MiB | ~12,9 | OK |
 | 12 | ~1596 MiB | ~12,3 | OK |
@@ -480,24 +480,26 @@ stderr — pese a que la VRAM libre en reposo (~1100 MiB) parecía alcanzarle a 
 necesita, el pico real durante la conversión (fragmentación + el propio LLM sin liberar su
 allocator) lo excede.
 
-`num_gpu=28` se verificó robusto (no "la primera que pasó"): conversión repetida varias veces, con
-una frase corta y con una de ~13s de audio, sin fallar ninguna — con VRAM libre de sobra
-(~1300+ MiB) a diferencia del filo de 32. Es el valor más alto que cumple el objetivo ("no bajes más
-de lo necesario"): bajar a 24 ya cuesta ~20% de tok/s sin ganar nada, la VRAM libre en 28 ya sobra.
-Configurado en `config.toml` → `[llm.ollama].num_gpu = 28`, pasado en cada petición vía
+`num_gpu=28` se creyó robusto en su momento (conversión repetida, frase corta y de ~13s, sin
+fallar). **Corrección posterior**: 28 empezó a fallar de forma intermitente
+(`cudaMalloc failed: out of memory`) — bajado a **24**. Se sospechó que la ventana (`rem_chat.py`,
+canvas grande y opaco) consumía más VRAM que el overlay con el que se calibró, pero **medido con
+`nvidia-smi` el canvas aporta solo ~5 MiB** (WebKit no acelera el WebGL por GPU en esta máquina, lo
+rasteriza por software — ver `CONFIG.render` en "Presupuesto de VRAM del render" más abajo). La
+causa real de 28 es la misma que hacía fallar a 32: el margen ya justo entre el modelo y el **pico**
+de VRAM de RVC durante la conversión (fragmentación + allocator de Ollama). 24 (~2430 MiB modelo)
+deja margen de sobra; cuesta ~20% de tok/s frente a 28 pero no revienta.
+Configurado en `config.toml` → `[llm.ollama].num_gpu = 24`, pasado en cada petición vía
 `get_provider()` → `OllamaProvider._options["num_gpu"]` (se reenvía tal cual en el payload, sin
-lista blanca de claves).
-
-La velocidad de generación no se degrada de forma inviable ni siquiera en el otro extremo (CPU
-puro, `num_gpu=0`, ~4,7 tok/s) — no hizo falta evaluar la cuantización Q3_K_M para este objetivo, ya
-que `num_gpu=28` deja tok/s (~25,8) muy por encima del piso aceptable sin sacrificar VRAM de sobra.
+lista blanca de claves). **No volver a 28 sin medir de nuevo con `nvidia-smi`** — ver el comentario
+extenso en la tabla de `config.toml`.
 
 `device` en `config.toml` → `[rvc]` vuelve a `"cuda"` por defecto (`"cpu"` sigue disponible: sirve
 si el provider activo no es `ollama`, o para liberar toda la GPU por algún otro motivo) — vía
 `config.leer_dispositivo_rvc()`, aplicado en `bench_chat.py`, `test_voz.py` y `Rem.py`
 (los tres construyen su `BaseLoader` con `only_cpu=(dispositivo == "cpu")`). Verificado en vivo
-end-to-end tras el cambio: LLM (`num_gpu=28`) → `SentenceSplitter` → RVC en CUDA, dos oraciones de
-una respuesta real, ambas convertidas sin OOM.
+end-to-end: LLM → `SentenceSplitter` → RVC en CUDA, dos oraciones de una respuesta real, ambas
+convertidas sin OOM.
 
 ## SentenceSplitter conectado en bench_chat.py
 `llm/sentence_splitter.py` estaba construido y testeado pero sin ningún consumidor real. Ahora
@@ -1413,7 +1415,7 @@ Animaciones/
 ├── README.md                    (de dónde se baja cada conjunto + términos de uso)
 └── VRMA_MotionPack/             (todos los .vrma acá, por nombre exacto)
     ├── Thinking.vrma Sad.vrma Angry.vrma Surprised.vrma Blush.vrma
-    ├── LookAround.vrma Sleepy.vrma Goodbye.vrma Clapping.vrma   (pack tk256ailab, MIT)
+    ├── LookAround.vrma Sleepy.vrma Goodbye.vrma Clapping.vrma Relax.vrma  (pack tk256ailab, MIT)
     ├── Readme_VRMA_MotionPack_EN.txt
     └── VRMA_01.vrma … VRMA_07.vrma                              (pack oficial VRoid Project)
 ```
@@ -1488,7 +1490,8 @@ Todo configurable sin tocar código:
 | `angry` | `Angry.vrma` | `bucle`, `duracionS: 4` |
 | `surprised` | `Surprised.vrma` | `unaVez` |
 | `happy` | `Blush.vrma` | `unaVez` |
-| `talking`, `idle` | — | sin clip (procedural) |
+| `talking` | — | sin clip (procedural) |
+| `idle` | `Relax.vrma` (`CONFIG.animaciones.idle`) | pose base — ver abajo |
 
 - `modo: 'bucle'` = `LoopRepeat`; `duracionS` opcional = tras N s de controlar el cuerpo hace
   crossfade a procedural (la cara sigue). `modo: 'unaVez'` = `LoopOnce` + `clampWhenFinished`; al
@@ -1496,6 +1499,29 @@ Todo configurable sin tocar código:
 - `sincronizarClipConEstado()` se llama en el `estado !== prevEstado` de `animate()`. Guarda de
   carrera: `_tokenClip` invalida cargas async pendientes si el estado cambió mientras el `.vrma`
   cargaba.
+
+**Clip de POSE BASE de idle** (`CONFIG.animaciones.idle`): `idle` era el único estado sin clip, por
+eso se veía tieso (brazos colgando rectos). `Relax.vrma` da la pose base. No es un gesto ni un clip
+de estado — es **la base**: cede a cualquier gesto/clip de estado con crossfade
+(`reproducirClip`/`sincronizarClipConEstado`) y se vuelve a él al terminar (`volverABaseIdle()`,
+llamada desde `_alTerminarClip` para gestos). Config:
+- `archivo: null` → procedural puro (comportamiento viejo). Un `.vrma` → pose base. Probar también
+  `VRMA_06.vrma`.
+- `modo: 'bucle'` → el clip corre en loop, con `timeScale` variable (`velMin`–`velMax`,
+  `_actualizarVelIdle()`) para romper la periodicidad de un ciclo corto (~4s). `modo: 'poseFija'` →
+  solo el primer frame, congelado (`timeScale = 0`, no `paused` — sigue entrando en la mezcla) —
+  arregla la pose sin aportar movimiento.
+- `mezclaBrazos` (0..1): **del clip solo se toman los brazos** (`_HUESOS_BRAZO_IDLE`: hombro/
+  upperArm/lowerArm/mano). El resto del cuerpo queda 100% procedural — los brazos rectos son el
+  problema real, el resto ya se ve bien. En `actualizarAnimacionClips()`, rama `idleBrazos`
+  (`_accionActual._esIdle && _clipPeso >= 0.999`): `slerp(qProcedural, qClip, mezclaBrazos)` solo en
+  esos huesos, `copy(qProcedural)` en el resto. No se llama `aplicarRespiracionEncima`/
+  `aplicarCabezaSigueMiradaEncima` (lo procedural ya las puso, sería doble).
+- `ampProcedural`: multiplica el ruido Perlin de `getStatePose('idle')` mientras el clip de idle
+  domina la mezcla (`_idleAmpMult`) — >1 rompe más el patrón del bucle.
+- Los gestos de reposo SÍ se disparan sobre el clip de idle (crossfade idle → gesto → idle) —
+  `updateGestos()` ya no bloquea por `_clipPesoObjetivo === 1`, solo por clip de estado / audio /
+  no-idle.
 
 **Gestos de reposo** (`CONFIG.animaciones.gestos`, reemplazan el giro): solo en `estado === 'idle'`
 && `!_audioActivo` && sin clip de estado. Cada `intervaloMinS`–`intervaloMaxS` (25–55s) se elige uno
@@ -1524,12 +1550,23 @@ el llamador cae a lo procedural.
 ### Cómo añadir un clip nuevo
 
 1. Dejar el `.vrma` en `Animaciones/VRMA_MotionPack/`.
-2. Agregar la entrada en `CONFIG.animaciones.porEstado` (estado → clip) o
+2. Agregar la entrada en `CONFIG.animaciones.porEstado` (estado → clip),
    `CONFIG.animaciones.gestos.repertorio` (gesto de reposo con peso, opcionalmente
-   `horaDesde`/`horaHasta`).
+   `horaDesde`/`horaHasta`), o `CONFIG.animaciones.idle` (pose base de idle).
 3. Nada más — la carga es perezosa/cacheada; si el archivo falta o no parsea, cae a lo procedural
    con un aviso en consola. Si el `.vrma` no trae `specVersion`, `normalizarVrma()` lo parchea en
    memoria automáticamente.
+
+### Presupuesto de VRAM del render (`CONFIG.render`)
+
+`pixelRatioMax` (1.0) y `resolucionMaxPx` (~1,6 Mpx) topan el framebuffer del WebGL; `aplicarTamanoRender()`
+(arranque + resize) baja el `devicePixelRatio` efectivo y deja que el canvas se reescale por CSS.
+**Medido con `nvidia-smi`: en esta máquina (WebKitGTK 2.52 sobre Wayland/NVIDIA) el canvas aporta
+solo ~5 MiB de VRAM NVIDIA** — WebKit no acelera el WebGL por GPU acá, lo rasteriza por software
+(`WebKitWebProcess` ~2,6 GB de RAM, 0 en `nvidia-smi`). O sea estas mitigaciones bajan CPU/RAM y
+suben FPS del render por software, pero **no liberan VRAM para el LLM** — el `num_gpu` de
+`config.toml` no depende de esto (ver el comentario de la tabla ahí: 24 es seguro, 28 es marginal
+por el pico de RVC en la conversión, no por la ventana).
 
 Los clips **no tocan expresiones ni mirada**: si un `.vrma` nuevo trae pistas de expresión/mirada,
 `clipDeVrma()` las ignora (usa solo `humanoidTracks`), y si anima `leftEye`/`rightEye`/`jaw` esos
