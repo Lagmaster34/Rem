@@ -29,6 +29,9 @@ Comandos dentro del REPL:
     voz on|off          — activa/desactiva hablar la respuesta (lipsync+RVC+avatar)
     reset                — limpia el historial de la conversación
     state <estado>      — manda ese estado al avatar (idle/talking/thinking/happy/sad/angry/surprised)
+    clip <nombre>       — dispara un clip VRMA por nombre (ej. 'clip VRMA_05', el '.vrma'
+                          es opcional): corre una vez y vuelve al reposo con crossfade,
+                          igual que un gesto — sin esperar al sorteo aleatorio de gestos
     open                 — abre el avatar en el navegador por defecto
     quit                 — cierra limpiamente (o Ctrl+D / Ctrl+C)
 
@@ -142,6 +145,8 @@ def _imprimir_ayuda():
     print("    voz on|off          — activa/desactiva hablar la respuesta (lipsync+RVC+avatar)")
     print("    reset                — limpia el historial de la conversación")
     print(f"    state <estado>    — manda ese estado ({'/'.join(sorted(ESTADOS_VALIDOS))})")
+    print("    clip <nombre>      — dispara un clip VRMA por nombre (ej. 'clip VRMA_05'),")
+    print("                          como un gesto de reposo: corre una vez y vuelve al reposo")
     print("    open               — abre el avatar en el navegador por defecto")
     print("    quit                 — cierra limpiamente (o Ctrl+D / Ctrl+C)")
     print()
@@ -235,11 +240,21 @@ async def repl_standalone(args):
                     continue
                 enviar_estado_o_avisa(estado)
 
+            elif comando == "clip":
+                if not resto:
+                    log("uso: clip <nombre>  (ej. clip VRMA_05 — el '.vrma' es opcional)")
+                    continue
+                n = rem_avatar_server.enviar_debug_clip(resto)
+                if n:
+                    log(f"clip -> {resto}  ({n} cliente{'s' if n != 1 else ''})")
+                else:
+                    log(f"clip -> {resto}: no llegó a nadie (¿el avatar está abierto?)")
+
             elif comando == "open":
                 _abrir_navegador()
 
             else:
-                log(f"comando desconocido: {comando!r} (usa chat / modo / voz / reset / state / open / quit)")
+                log(f"comando desconocido: {comando!r} (usa chat / modo / voz / reset / state / clip / open / quit)")
     finally:
         cola_habla.put_nowait(None)  # deja terminar lo ya encolado (hasta 5s)
         try:
@@ -371,11 +386,18 @@ async def repl_cliente(args):
                 if await _enviar({"tipo": "estado", "estado": estado}):
                     log(f"estado -> {estado}  (enviado al servidor)")
 
+            elif comando == "clip":
+                if not resto:
+                    log("uso: clip <nombre>  (ej. clip VRMA_05 — el '.vrma' es opcional)")
+                    continue
+                if await _enviar({"tipo": "debug_clip", "nombre": resto}):
+                    log(f"clip -> {resto}  (enviado al servidor)")
+
             elif comando == "open":
                 _abrir_navegador()
 
             else:
-                log(f"comando desconocido: {comando!r} (usa chat / modo / voz / reset / state / open / quit)")
+                log(f"comando desconocido: {comando!r} (usa chat / modo / voz / reset / state / clip / open / quit)")
     finally:
         listener.cancel()
         try:

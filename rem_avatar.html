@@ -310,25 +310,49 @@ const CONFIG = {
     // Gestos de reposo aleatorios — reemplazan el "giro de bailarina" a mano.
     // Solo se disparan en estado idle + sin audio. Selección ponderada por 'peso';
     // 'horaDesde'/'horaHasta' (opcionales, hora local 0-23) restringen la franja.
+    // Los dos números que gobiernan cada cuánto se ve un gesto son
+    // intervaloMinS/MaxS (espera) y el 'peso' relativo de cada clip. El ritmo
+    // real es intervalo + duración del clip: VRMA_05 dura 9,3s, así que con
+    // 8-16s de espera sale un gesto cada ~20s.
     gestos: {
-      intervaloMinS: 25,  // mínimo de idle+sin audio antes de poder disparar un gesto
-      intervaloMaxS: 55,  // máximo — se sortea en este rango tras cada gesto
+      intervaloMinS: 8,   // mínimo de idle+sin audio antes de poder disparar un gesto
+      intervaloMaxS: 16,  // máximo — se sortea en este rango tras cada gesto
       repertorio: [
-        { archivo: 'LookAround.vrma', peso: 6 },                              // frecuente
-        { archivo: 'VRMA_05.vrma',    peso: 1 },                              // girar
+        { archivo: 'VRMA_05.vrma',    peso: 10 },                             // girar — el más frecuente
+        { archivo: 'LookAround.vrma', peso: 3 },
         { archivo: 'VRMA_07.vrma',    peso: 1 },                              // flexiones
         { archivo: 'VRMA_01.vrma',    peso: 1 },                              // mostrar cuerpo entero
         { archivo: 'Sleepy.vrma',     peso: 3, horaDesde: 0, horaHasta: 6 }, // solo 00:00-06:00
       ],
       // disponibles pero sin usar por ahora: Goodbye.vrma, Clapping.vrma, VRMA_02.vrma
     },
-    // Clip de POSE BASE para idle — el único estado que no tenía clip, por eso
-    // se veía tieso (brazos colgando rectos). A diferencia de porEstado/gestos,
-    // este es la base: cede el paso a cualquier gesto o clip de estado (crossfade)
-    // y vuelve a él al terminar. Todo lo procedural sigue encima (respiración,
+    // Clip de POSE BASE para idle. A diferencia de porEstado/gestos, este sería
+    // la base: cede el paso a cualquier gesto o clip de estado (crossfade) y
+    // vuelve a él al terminar. Todo lo procedural sigue encima (respiración,
     // saccades, mirada, dedos, traslado de peso, ruido de cabeza).
-    //   archivo:  null → procedural puro (comportamiento viejo, brazos rectos).
-    //             un .vrma → pose base (Relax.vrma, o probar VRMA_06.vrma).
+    //
+    // DESACTIVADO (archivo: null) — el reposo es el idle PROCEDURAL, con los
+    // brazos en CONFIG.brazos.*. Motivo: se probó con Relax.vrma y producía una
+    // T-pose casi permanente. Medido sobre las pistas del .vrma (ángulo Z del
+    // upperArm, ya con el espejo VRM0 que aplica clipDeVrma; el reposo
+    // procedural es ±68,8° = CONFIG.brazos.separacion 1,20 rad):
+    //     t=0,0s  izq +69,7°  der -60,0°   ← coincide con el reposo procedural
+    //     t=0,9s  izq +12,0°  der  -8,4°
+    //     t=1,8s  izq -17,1°  der  +7,0°   ← brazos en horizontal
+    //     t=3,9s  izq -18,5°  der  +1,5°
+    // Es decir: el clip arranca con los brazos abajo y en ~1,2s los sube a la
+    // horizontal, donde se queda el 83-85% de su ciclo de 3,93s — y corre en
+    // bucle, mezclado al 0,8 sobre los brazos (mezclaBrazos). Reposo real =
+    // 0,8 × T-pose. NO es un bug del mixer ni del orden de la mezcla: es el
+    // contenido del clip.
+    //
+    // Si se quiere recuperar la pose de manos/brazos del clip sin la T-pose, el
+    // camino es modo:'poseFija' (congela el frame 0, que SÍ tiene los brazos
+    // abajo), no modo:'bucle'. Antes de habilitar cualquier otro .vrma acá,
+    // medirle el ángulo del upperArm a lo largo del clip, no solo mirar su
+    // primer frame.
+    //   archivo:  null → procedural puro (el reposo por defecto, brazos en CONFIG.brazos.*).
+    //             un .vrma → pose base (ver la advertencia de arriba).
     //   modo:  'bucle'    → el clip corre en loop, con timeScale variable (velMin..
     //                       velMax) para romper la periodicidad de un ciclo corto.
     //          'poseFija'  → solo el primer frame, congelado — arregla la pose sin
@@ -342,8 +366,8 @@ const CONFIG = {
     //   velMin/velMax/velCambioS: solo 'bucle' — timeScale deriva lento entre
     //                             velMin y velMax, objetivo nuevo cada ~velCambioS s.
     idle: {
-      archivo: 'Relax.vrma',
-      modo: 'bucle',
+      archivo: null,          // ver la advertencia de arriba antes de poner un .vrma acá
+      modo: 'poseFija',       // solo aplica si 'archivo' deja de ser null
       mezclaBrazos: 0.8,
       ampProcedural: 1.5,
       velMin: 0.85,
@@ -2144,6 +2168,34 @@ function updateGestos(dt) {
   });
 }
 
+// Depuración: dispara un clip por nombre bajo demanda, como si fuera un gesto
+// de reposo (unaVez + vuelta a la base con crossfade) — para grabar un clip
+// concreto sin esperar al sorteo de updateGestos(). Acepta el nombre con o sin
+// ".vrma". Llega por WebSocket ({tipo:'debug_clip', nombre:'VRMA_05'}, ver
+// rem_avatar_server._ws_handler) o a mano desde la consola del inspector.
+// Se comporta como cualquier gesto: si entra audio o cambia el estado, se
+// interrumpe con crossfade (la voz manda).
+window.dispararClipDebug = function (nombre) {
+  const archivo = /\.vrma$/i.test(nombre) ? nombre : `${nombre}.vrma`;
+  const tok = ++_tokenClip;
+  _gestoActivo = true;   // ya acá, para que updateGestos() no sortee otro mientras carga
+  obtenerClip(archivo).then(entry => {
+    // Otro clip/estado ganó mientras cargaba. Se libera _gestoActivo igual que
+    // hace updateGestos() en su misma rama: si el ganador es otro gesto, ya lo
+    // puso en true por su cuenta; lo que NO puede pasar es que quede en true sin
+    // dueño (un .vrma lento + un cambio de estado dejaría los gestos muertos).
+    if (tok !== _tokenClip) { _gestoActivo = false; return; }
+    if (entry.error) {
+      console.warn(`[Anim] debug_clip "${archivo}": no disponible — no se dispara`);
+      _gestoActivo = false;
+      return;
+    }
+    _gestoTimer = _sortearIntervaloGesto();
+    console.log(`[Anim] debug_clip -> "${archivo}"`);
+    reproducirClip(entry, { modo: 'unaVez', esGesto: true });
+  });
+};
+
 // Respiración encima del clip — aditiva (+=), suave. La respiración real es
 // rítmica (seno limpio), no es lo que hacía ver a Rem como un robot. Se escala
 // por k (= _clipPeso): cuando lo procedural domina la mezcla ya trae su propia
@@ -2537,6 +2589,8 @@ let _ws = null;
         window.__remChat?.onModoActual(d.modo);
       } else if (d.tipo === 'error') {
         window.__remChat?.onError(d.mensaje ?? 'error desconocido');
+      } else if (d.tipo === 'debug_clip') {
+        window.dispararClipDebug?.(String(d.nombre ?? ''));
       } else if (d.estado) {
         estado = d.estado;
       }

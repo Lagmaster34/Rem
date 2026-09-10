@@ -84,6 +84,15 @@ def enviar_estado(estado: str) -> int:
     return _emitir_ws({"estado": estado}, f"estado {estado!r}")
 
 
+def enviar_debug_clip(nombre: str) -> int:
+    """Depuración: pide al avatar que dispare un clip VRMA por nombre (con o sin
+    ".vrma"), como si fuera un gesto de reposo — corre una vez y vuelve a la
+    pose de reposo con crossfade. Sirve para grabar un clip concreto sin esperar
+    al sorteo aleatorio de updateGestos(). Devuelve a cuántos clientes llegó."""
+    return _emitir_ws({"tipo": "debug_clip", "nombre": nombre},
+                      f"debug_clip {nombre!r}")
+
+
 def _broadcast_ws(payload: dict) -> int:
     """Manda `payload` a todos los clientes WS conectados. Genérico — lo usan
     los mensajes del panel de chat (chat_delta/chat_done/modo_actual/error)."""
@@ -386,6 +395,18 @@ async def _ws_handler(websocket):
                 else:
                     _broadcast_ws({"tipo": "error",
                                    "mensaje": f"estado inválido: {est!r}"})
+
+            elif tipo == "debug_clip":
+                # Depuración (comando 'clip <nombre>' de bench_chat.py): igual
+                # que 'estado', se re-difunde a TODOS los clientes, porque el
+                # pedido puede venir de otro proceso (bench_chat.py en modo
+                # cliente) y el avatar vive en el WebView de rem_chat.py.
+                nombre = str(data.get("nombre") or "").strip()
+                if nombre:
+                    enviar_debug_clip(nombre)
+                else:
+                    _broadcast_ws({"tipo": "error",
+                                   "mensaje": "debug_clip sin 'nombre'"})
 
             # cualquier otro tipo (o mensaje sin 'tipo') se ignora — el
             # cliente no manda nada más que el servidor necesite procesar.

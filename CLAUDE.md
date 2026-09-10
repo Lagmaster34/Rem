@@ -1117,6 +1117,8 @@ por un campo `tipo`:
 | cliente → Python | `reset` | — | Limpia el historial de la sesión de chat compartida |
 | cliente → Python | `voz` | `{activa: bool}` | Interruptor de voz del panel (`voz_chat_activa()`) |
 | cliente → Python | `estado` | `{estado}` | Pide poner el avatar en ese estado — se valida y se re-difunde a todos (lo usa el comando `state` de `bench_chat.py` cliente) |
+| cliente → Python | `debug_clip` | `{nombre}` | Depuración: dispara un clip VRMA por nombre — se re-difunde a todos (comando `clip` de `bench_chat.py`, ver "Animación de cuerpo con clips VRMA") |
+| Python → cliente | `debug_clip` | `{nombre}` | El avatar corre ese clip una vez y vuelve al reposo |
 | Python → cliente | `estado` | `{estado}` | Estado emocional/de habla del avatar |
 | Python → cliente | `audio` | `{url, timeline}` | WAV a reproducir + timeline de visemes |
 | Python → cliente | `chat_delta` | `{texto}` | Un fragmento de la respuesta, tal como llega del LLM |
@@ -1491,7 +1493,7 @@ Todo configurable sin tocar código:
 | `surprised` | `Surprised.vrma` | `unaVez` |
 | `happy` | `Blush.vrma` | `unaVez` |
 | `talking` | — | sin clip (procedural) |
-| `idle` | `Relax.vrma` (`CONFIG.animaciones.idle`) | pose base — ver abajo |
+| `idle` | — | sin clip: **procedural** (ver "Clip de POSE BASE de idle" abajo) |
 
 - `modo: 'bucle'` = `LoopRepeat`; `duracionS` opcional = tras N s de controlar el cuerpo hace
   crossfade a procedural (la cara sigue). `modo: 'unaVez'` = `LoopOnce` + `clampWhenFinished`; al
@@ -1500,13 +1502,40 @@ Todo configurable sin tocar código:
   carrera: `_tokenClip` invalida cargas async pendientes si el estado cambió mientras el `.vrma`
   cargaba.
 
-**Clip de POSE BASE de idle** (`CONFIG.animaciones.idle`): `idle` era el único estado sin clip, por
-eso se veía tieso (brazos colgando rectos). `Relax.vrma` da la pose base. No es un gesto ni un clip
-de estado — es **la base**: cede a cualquier gesto/clip de estado con crossfade
-(`reproducirClip`/`sincronizarClipConEstado`) y se vuelve a él al terminar (`volverABaseIdle()`,
-llamada desde `_alTerminarClip` para gestos). Config:
-- `archivo: null` → procedural puro (comportamiento viejo). Un `.vrma` → pose base. Probar también
-  `VRMA_06.vrma`.
+**Clip de POSE BASE de idle** (`CONFIG.animaciones.idle`) — **DESACTIVADO (`archivo: null`)**. El
+mecanismo sigue existiendo entero; lo que se apagó es su uso. La pose de reposo es el **idle
+procedural**, con los brazos en `CONFIG.brazos.*` (`separacion` 1,20 rad, `codoFlexionBase` -0,30).
+
+**Por qué se apagó: `Relax.vrma` producía una T-pose casi permanente.** Se midió el ángulo Z del
+`upperArm` sobre las pistas crudas del `.vrma` (ya con el espejo VRM0 que aplica `clipDeVrma()`;
+el reposo procedural es ±68,8°):
+
+| t | leftUpperArm | rightUpperArm |
+|---|---|---|
+| 0,0s | **+69,7°** | **−60,0°** (= reposo procedural) |
+| 0,9s | +12,0° | −8,4° |
+| 1,8s | −17,1° | +7,0° (= horizontal) |
+| 3,9s | −18,5° | +1,5° |
+
+El clip arranca con los brazos abajo y en ~1,2s los sube a la horizontal, donde se queda el **83-85%
+de su ciclo de 3,93s** — y corría en `modo: 'bucle'` mezclado al 0,8 sobre los brazos
+(`mezclaBrazos`), o sea reposo real = 0,8 × T-pose, para siempre.
+
+**No era un bug del mixer ni del orden de la mezcla** (se descartaron las dos hipótesis obvias): los
+gestos sí corrían `LoopOnce` y sí volvían a la base (`[Anim] idle base:` en el log tras cada uno), y
+`actualizarAnimacionClips()` **compone** correctamente (procedural → snapshot de `.quaternion` →
+`_mixer.update()` → `slerp(qProc, qClip, peso)` → `vrm.update()`), no sobrescribe. Era el contenido
+del clip.
+
+Si se quiere recuperar la pose de manos/brazos de un clip sin la T-pose, el camino es
+`modo: 'poseFija'` (congela el frame 0, que sí tiene los brazos abajo), no `modo: 'bucle'`. **Antes
+de habilitar cualquier `.vrma` como pose base, medirle el ángulo del `upperArm` a lo largo de todo el
+clip, no solo mirar su primer frame.**
+
+Cuando está activo, no es un gesto ni un clip de estado — es **la base**: cede a cualquier gesto/clip
+de estado con crossfade (`reproducirClip`/`sincronizarClipConEstado`) y se vuelve a él al terminar
+(`volverABaseIdle()`, llamada desde `_alTerminarClip` para gestos). Config:
+- `archivo: null` → procedural puro (**el valor actual**). Un `.vrma` → pose base.
 - `modo: 'bucle'` → el clip corre en loop, con `timeScale` variable (`velMin`–`velMax`,
   `_actualizarVelIdle()`) para romper la periodicidad de un ciclo corto (~4s). `modo: 'poseFija'` →
   solo el primer frame, congelado (`timeScale = 0`, no `paused` — sigue entrando en la mezcla) —
@@ -1524,18 +1553,36 @@ llamada desde `_alTerminarClip` para gestos). Config:
   no-idle.
 
 **Gestos de reposo** (`CONFIG.animaciones.gestos`, reemplazan el giro): solo en `estado === 'idle'`
-&& `!_audioActivo` && sin clip de estado. Cada `intervaloMinS`–`intervaloMaxS` (25–55s) se elige uno
-por peso:
+&& `!_audioActivo` && sin clip de estado. Cada `intervaloMinS`–`intervaloMaxS` (**8–16s**) se elige
+uno por peso:
 
 | clip | peso | nota |
 |---|---|---|
-| `LookAround.vrma` | 6 | frecuente |
-| `VRMA_05.vrma` (girar) | 1 | reemplaza el giro a mano |
+| `VRMA_05.vrma` (girar) | 10 | el más frecuente; reemplaza el giro a mano |
+| `LookAround.vrma` | 3 | |
 | `VRMA_07.vrma` (flexiones) | 1 | |
 | `VRMA_01.vrma` (cuerpo entero) | 1 | |
 | `Sleepy.vrma` | 3 | solo `horaDesde:0`–`horaHasta:6` (00:00–06:00, `new Date().getHours()`) |
 
 `Goodbye.vrma`/`Clapping.vrma`/`VRMA_02.vrma` quedan disponibles pero fuera del repertorio.
+
+**Ritmo real = intervalo + duración del clip.** `VRMA_05.vrma` dura 9,3s, así que con 8–16s de
+espera sale un gesto cada ~20s. Medido en vivo: **~1 `VRMA_05` por minuto** (4 de 7 gestos en 4
+minutos de reposo). Los dos únicos números a tocar para subirlo o bajarlo son `intervaloMinS/MaxS` y
+el `peso` relativo del clip — los dos en `CONFIG.animaciones.gestos`, nada hardcodeado.
+
+**`debug_clip` — disparar un clip por nombre bajo demanda** (para grabar video sin esperar al
+sorteo). `window.dispararClipDebug(nombre)` en `rem_avatar.html` lo corre como si fuera un gesto de
+reposo (`unaVez` + vuelta al reposo con crossfade); acepta el nombre con o sin `.vrma`. Se llega por
+WebSocket (`{tipo: "debug_clip", nombre: "VRMA_05"}`) desde `bench_chat.py` (comando `clip <nombre>`,
+en los dos modos) o desde la consola del inspector remoto. Si el `.vrma` no existe, avisa en consola
+y no dispara nada. Se comporta como cualquier gesto: si entra audio o cambia el estado, se interrumpe
+con crossfade (la voz manda).
+- Guarda de carrera: usa `_tokenClip` igual que `updateGestos()`, y en la rama de token obsoleto
+  **libera `_gestoActivo`**. Sin eso, un `.vrma` grande (VRMA_03 son 1,3 MB) pisado por otro pedido
+  mientras cargaba dejaba `_gestoActivo` en `true` sin dueño y **los gestos de reposo no volvían a
+  dispararse nunca**. Reproducido a propósito (dos `debug_clip` en paralelo, el lento perdiendo el
+  token) y verificado que los gestos espontáneos siguen después.
 
 **Interrupción (la voz manda)**: si llega audio o cambia el estado a mitad de un gesto o clip,
 `updateGestos()`/`sincronizarClipConEstado()` disparan `volverAProcedural()` o un `crossFadeTo` al
