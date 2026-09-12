@@ -164,6 +164,55 @@
     display: flex;
     gap: 8px;
     padding: 10px 16px 16px;
+    /* Contexto de posicionamiento para #chat-paleta, que se ancla encima
+       con bottom:100% — así la paleta queda SIEMPRE dentro del panel de
+       chat, sin desbordarlo ni taparse con el borde de la ventana. */
+    position: relative;
+  }
+
+  /* Paleta de comandos "/" — ver crearPanelChat()/COMANDOS en el script.
+     Flotante encima de la barra de input, dentro del panel. */
+  #chat-paleta {
+    position: absolute;
+    left: 16px; right: 16px;
+    bottom: 100%;
+    margin-bottom: 6px;
+    z-index: 5;
+    max-height: 240px;
+    overflow-y: auto;
+    background: #081a20;
+    border: 1px solid rgba(43,232,255,0.30);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px -8px rgba(0,0,0,0.75);
+    padding: 4px;
+  }
+  #chat-paleta::-webkit-scrollbar { width: 8px; }
+  #chat-paleta::-webkit-scrollbar-thumb { background: #244047; border-radius: 4px; }
+  #chat-paleta::-webkit-scrollbar-track { background: transparent; }
+  #chat-paleta .pal-vacio {
+    padding: 9px 11px;
+    font-size: 13px;
+    color: #7d94a3;
+    font-style: italic;
+  }
+  #chat-paleta .pal-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 8px 11px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #eaf6ff;
+  }
+  #chat-paleta .pal-item.sel { background: rgba(43,232,255,0.14); }
+  #chat-paleta .pal-item .pal-nombre { font-weight: 600; white-space: nowrap; }
+  #chat-paleta .pal-item .pal-desc {
+    color: #7d94a3;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   #chat-input {
     flex: 1 1 auto;
@@ -289,6 +338,44 @@ const CONFIG = {
   // saccades, mirada a cámara y jaw se aplican siempre encima del mixer.
   animaciones: {
     carpeta: '/Animaciones/VRMA_MotionPack/',
+    // ── CATÁLOGO: el registro de TODOS los .vrma disponibles ─────────────
+    // Única fuente de verdad del nombre legible y del giro de cuerpo. Lo usan
+    // la precarga del arranque (construirRegistroClips) y la paleta de
+    // comandos "/animaciones" del panel de chat. porEstado/gestos de más abajo
+    // referencian estos archivos y heredan la etiqueta de acá — no se duplica.
+    //
+    //   etiqueta:   nombre legible que muestra la paleta.
+    //   giraCuerpo: el clip rota el torso lo bastante como para que Rem deje
+    //               de mirar a cámara. MEDIDO sobre la pista de rotación del
+    //               hueso 'hips' de cada .vrma (yaw desenrollado, para contar
+    //               los giros que cruzan ±180°): solo VRMA_01 (418°) y VRMA_05
+    //               (408°) dan vueltas completas; el siguiente del ranking es
+    //               LookAround con 40°, que no saca a Rem de cámara. El corte
+    //               entre 40° y 408° no es ambiguo.
+    //               Estos clips NO se disparan a mano mientras Rem habla: se
+    //               encolan y salen al vaciarse la cola de audio (ver
+    //               dispararClipManual en crearPanelChat).
+    catalogo: {
+      'Angry.vrma':      { etiqueta: 'Enfado',                giraCuerpo: false },
+      'Blush.vrma':      { etiqueta: 'Sonrojo',               giraCuerpo: false },
+      'Clapping.vrma':   { etiqueta: 'Aplaudir',              giraCuerpo: false },
+      'Goodbye.vrma':    { etiqueta: 'Despedida',             giraCuerpo: false },
+      'LookAround.vrma': { etiqueta: 'Mirar alrededor',       giraCuerpo: false },
+      'Relax.vrma':      { etiqueta: 'Relajarse',             giraCuerpo: false },
+      'Sad.vrma':        { etiqueta: 'Tristeza',              giraCuerpo: false },
+      'Sleepy.vrma':     { etiqueta: 'Sueño',                 giraCuerpo: false },
+      'Surprised.vrma':  { etiqueta: 'Sorpresa',              giraCuerpo: false },
+      'Thinking.vrma':   { etiqueta: 'Pensar',                giraCuerpo: false },
+      // Pack oficial VRoid — etiquetas tomadas de su propio Readme
+      // (Readme_VRMA_MotionPack_EN.txt), no inventadas.
+      'VRMA_01.vrma':    { etiqueta: 'Mostrar cuerpo entero', giraCuerpo: true  },
+      'VRMA_02.vrma':    { etiqueta: 'Saludo',                giraCuerpo: false },
+      'VRMA_03.vrma':    { etiqueta: 'Señal de V',            giraCuerpo: false },
+      'VRMA_04.vrma':    { etiqueta: 'Disparar',              giraCuerpo: false },
+      'VRMA_05.vrma':    { etiqueta: 'Giro de bailarina',     giraCuerpo: true  },
+      'VRMA_06.vrma':    { etiqueta: 'Pose de modelo',        giraCuerpo: false },
+      'VRMA_07.vrma':    { etiqueta: 'Sentadillas',           giraCuerpo: false },
+    },
     crossfadeS: 0.4,  // toda transición (procedural<->clip, clip<->clip) — 0,3-0,5s
     // Estado emocional -> clip. talking/idle NO tienen clip (siguen procedurales).
     //   modo 'bucle'  : el clip se repite. duracionS (opcional) = tope de segundos
@@ -666,6 +753,7 @@ function _cargarVRM(intento = 1) {
       vrm.scene.traverse(o => { o.frustumCulled = false; });
       scene.add(vrm.scene);
       inicializarAnimacionClips(); // mixer + lista de huesos normalizados para la mezcla
+      precargarClips();        // .vrma del catálogo en paralelo, sin bloquear el render
 
       // Medición inicial por Box3 — placeholder para el primer frame o dos, hasta
       // que la remedición por huesos (más abajo, en animate()) la corrija. Se
@@ -893,6 +981,9 @@ function _avanzarCola() {
   } else {
     _audioPlaying = false;
     if (estado === 'talking') estado = 'idle';
+    // Cola de voz vacía: es el momento de soltar un clip que gira el cuerpo y
+    // quedó esperando a que Rem terminara de hablar (ver _clipEnEspera).
+    _intentarLanzarClipEnEspera();
   }
 }
 
@@ -1834,6 +1925,11 @@ const _vClipTmp = new THREE.Vector3();
 const _hipsPosProc = new THREE.Vector3();
 let _tokenClip = 0;            // invalida cargas async pendientes si el estado/gesto cambió mientras tanto
 
+// ¿El cuerpo lo controla ahora mismo un clip pedido A MANO? (paleta
+// "/animaciones" o 'clip <nombre>' de bench_chat.py). Se lee de la acción en
+// curso, así que no hay flag de módulo que pueda quedarse pegado.
+function hayClipManual() { return _accionActual?._esManual === true; }
+
 // Gestos de reposo: máquina de estados chica (esperando -> reproduciendo).
 let _gestoTimer = _sortearIntervaloGesto();
 let _gestoActivo = false;      // un gesto de reposo controla el cuerpo (o está cargando)
@@ -1966,7 +2062,60 @@ async function obtenerClip(archivo) {
   return entry;
 }
 
-function reproducirClip(entry, { modo, duracionS, esGesto }) {
+// ── REGISTRO DE CLIPS + PRECARGA ─────────────────────────────────────────
+// Registro en memoria de CONFIG.animaciones.catalogo con el resultado real de
+// cargar cada .vrma. Lo consume la paleta de comandos "/animaciones" del panel
+// de chat: un clip que no parsea (p.ej. si normalizarVrma() no logra arreglarle
+// el specVersion) queda en estado 'error' y NO se ofrece en la paleta, en vez
+// de aparecer y no hacer nada al elegirlo.
+const _registroClips = new Map(); // archivo -> {nombre, etiqueta, giraCuerpo, estado, motivo}
+
+function infoClip(archivo) { return _registroClips.get(archivo) ?? null; }
+
+// Etiqueta legible de un archivo, con el nombre crudo como respaldo para un
+// .vrma que se dispare por WS sin estar en el catálogo (bench_chat.py puede
+// mandar cualquier nombre).
+function etiquetaClip(archivo) {
+  return CONFIG.animaciones.catalogo[archivo]?.etiqueta ?? archivo.replace(/\.vrma$/i, '');
+}
+
+function clipGiraCuerpo(archivo) {
+  return CONFIG.animaciones.catalogo[archivo]?.giraCuerpo === true;
+}
+
+// Clips cargados correctamente, en el orden del catálogo — lo que lista la
+// paleta. Devuelve [] mientras la precarga no haya terminado.
+function clipsDisponibles() {
+  return [..._registroClips.values()].filter(c => c.estado === 'ok');
+}
+
+// Precarga TODOS los clips del catálogo en paralelo. No bloquea el render: se
+// lanza y no se espera (obtenerClip ya es perezoso/cacheado y nunca lanza, así
+// que cada .vrma queda listo para el primer disparo real sin pagar la descarga
+// en ese momento). Se llama una sola vez, al cargar el VRM.
+function precargarClips() {
+  const cat = CONFIG.animaciones.catalogo;
+  const archivos = Object.keys(cat);
+  return Promise.all(archivos.map(async archivo => {
+    const entry = await obtenerClip(archivo);
+    _registroClips.set(archivo, {
+      nombre: archivo,
+      etiqueta: cat[archivo].etiqueta,
+      giraCuerpo: cat[archivo].giraCuerpo === true,
+      estado: entry.error ? 'error' : 'ok',
+      motivo: entry.error ? entry.error.message : '',
+    });
+  })).then(() => {
+    const fallidos = [..._registroClips.values()].filter(c => c.estado !== 'ok');
+    console.log(`[Anim] precarga: ${archivos.length - fallidos.length}/${archivos.length} clips cargados`);
+    if (fallidos.length) {
+      console.warn('[Anim] clips NO disponibles (fuera de la paleta):',
+        fallidos.map(c => `${c.nombre} (${c.motivo})`).join(' | '));
+    }
+  });
+}
+
+function reproducirClip(entry, { modo, duracionS, esGesto, esManual }) {
   if (!_mixer || !entry?.clip) return;
   const CF = CONFIG.animaciones.crossfadeS;
   const nueva = _mixer.clipAction(entry.clip);
@@ -1975,6 +2124,7 @@ function reproducirClip(entry, { modo, duracionS, esGesto }) {
   if (nueva === _accionActual && _clipPesoObjetivo === 1 && !nueva.paused) {
     _clipTopeTimer = (duracionS != null) ? duracionS : null;
     _gestoActivo = !!esGesto;
+    nueva._esManual = !!esManual;
     return;
   }
   nueva.reset();
@@ -1986,6 +2136,12 @@ function reproducirClip(entry, { modo, duracionS, esGesto }) {
   nueva.setEffectiveWeight(1);
   nueva._esGesto = !!esGesto;
   nueva._esIdle = false;
+  // Disparo explícito (paleta "/animaciones" o 'clip <nombre>' de
+  // bench_chat.py): lo pedido a mano no lo interrumpe el audio ni un cambio de
+  // estado que no traiga clip propio — ver updateGestos/sincronizarClipConEstado.
+  // Vive en la ACCIÓN, no en una variable de módulo: cuando _accionActual
+  // cambia o se anula, el flag desaparece con ella y no puede quedar colgado.
+  nueva._esManual = !!esManual;
   nueva.play();
 
   if (_accionActual && _accionActual !== nueva) {
@@ -2112,6 +2268,12 @@ function sincronizarClipConEstado() {
     });
     return;
   }
+  // Un clip manual en curso sobrevive a un estado que no trae clip propio
+  // (idle/talking): si no, terminar de hablar (talking -> idle) cortaba a la
+  // mitad el clip que el usuario acababa de pedir. Un estado CON clip mapeado
+  // sí gana — lo resuelve el bloque de arriba, antes de llegar acá.
+  if (hayClipManual()) { _gestoActivo = true; return; }
+
   // Sin clip de estado: idle usa el clip de pose base (si está configurado);
   // talking (y idle con el clip desactivado) van a procedural.
   if (estado === 'idle' && CONFIG.animaciones.idle?.archivo) {
@@ -2138,7 +2300,11 @@ function updateGestos(dt) {
   if (_gestoActivo) {
     // Interrupción (regla: la voz manda): si dejó de ser elegible a mitad de
     // gesto, crossfade de vuelta a la base (clip de idle o procedural).
-    if (estado !== 'idle' || _audioActivo) {
+    // EXCEPCIÓN: un clip pedido a mano no se corta por audio ni por estado —
+    // se pidió explícitamente. Los que SÍ molestarían mientras habla (los de
+    // giraCuerpo, que la sacan de cámara) ni siquiera llegan acá: se encolan
+    // antes de dispararse (ver dispararClipManual en crearPanelChat).
+    if (!hayClipManual() && (estado !== 'idle' || _audioActivo)) {
       volverABaseIdle();
       _gestoActivo = false;
       _gestoTimer = _sortearIntervaloGesto();
@@ -2192,9 +2358,48 @@ window.dispararClipDebug = function (nombre) {
     }
     _gestoTimer = _sortearIntervaloGesto();
     console.log(`[Anim] debug_clip -> "${archivo}"`);
-    reproducirClip(entry, { modo: 'unaVez', esGesto: true });
+    reproducirClip(entry, { modo: 'unaVez', esGesto: true, esManual: true });
   });
 };
+
+// ── CLIP EN ESPERA (solo los de giraCuerpo) ──────────────────────────────
+// Un clip que gira el cuerpo mientras Rem habla la saca de cámara a mitad de
+// frase, así que no se dispara: queda acá y sale al vaciarse la cola de audio
+// (_avanzarCola, más arriba). Solo se guarda UNO: un pedido nuevo reemplaza al
+// anterior en vez de encolarse detrás.
+//
+// _gestoActivo NO se toca al encolar — se pone recién en dispararClipDebug, en
+// el momento del disparo real. Un clip que queda en espera y nunca llega a
+// dispararse (lo reemplaza otro, o la ventana se cierra) no deja nada colgado.
+let _clipEnEspera = null;     // nombre de archivo, o null
+let _clipEsperaTimer = null;  // setTimeout del rebote, o null
+
+// Con voz por oraciones (ver SentenceSplitter en CLAUDE.md) la cola se vacía un
+// instante ENTRE dos frases de la misma respuesta. Por eso no se dispara en el
+// acto: se espera un poco y se vuelve a comprobar que no haya arrancado otro
+// audio, para no soltar el giro en mitad de la respuesta.
+const _ESPERA_TRAS_AUDIO_MS = 700;
+
+function hayVozSonando() {
+  return _audioActivo || _audioPlaying || _audioPlayQueue.length > 0 || estado === 'talking';
+}
+
+function ponerClipEnEspera(archivo) { _clipEnEspera = archivo; }
+
+// Llamada desde _avanzarCola() cuando la cola de audio queda vacía.
+function _intentarLanzarClipEnEspera() {
+  if (!_clipEnEspera || _clipEsperaTimer !== null) return;
+  _clipEsperaTimer = setTimeout(() => {
+    _clipEsperaTimer = null;
+    const archivo = _clipEnEspera;
+    if (!archivo) return;                 // lo cancelaron mientras esperaba
+    if (hayVozSonando()) return;          // llegó otra frase: sigue en espera
+    _clipEnEspera = null;
+    _gestoTimer = _sortearIntervaloGesto();
+    window.dispararClipDebug(archivo);
+    window.__remChat?.onClipLanzado?.(archivo);
+  }, _ESPERA_TRAS_AUDIO_MS);
+}
 
 // Respiración encima del clip — aditiva (+=), suave. La respiración real es
 // rítmica (seno limpio), no es lo que hacía ver a Rem como un robot. Se escala
@@ -2318,6 +2523,13 @@ function animate() {
     applySpringConfig();
     sincronizarClipConEstado(); // mapea estado -> clip VRMA (o crossfade a procedural)
     prevEstado = estado;
+    // Segunda salida para el clip en espera, además de _avanzarCola(): con la
+    // voz del panel apagada NO hay audio, pero el backend igual manda
+    // estado='talking' con el primer delta — sin esto, un clip encolado por
+    // "está hablando" se quedaba encolado para siempre, porque _avanzarCola()
+    // nunca llega a correr. _intentarLanzarClipEnEspera() revalida que no haya
+    // voz sonando antes de soltarlo, así que llamarlo de más es inofensivo.
+    if (estado !== 'talking') _intentarLanzarClipEnEspera();
   }
 
   // Decaer snap de sorpresa
@@ -2416,7 +2628,8 @@ function crearPanelChat() {
     <div id="chat-messages"></div>
     <div id="chat-status"></div>
     <div id="chat-inputbar">
-      <input id="chat-input" type="text" placeholder="Escribile algo a Rem..." autocomplete="off">
+      <div id="chat-paleta"></div>
+      <input id="chat-input" type="text" placeholder="Escribile algo a Rem... (/ para comandos)" autocomplete="off">
       <button id="chat-send" type="button" title="Enviar">➤</button>
     </div>
   `;
@@ -2429,6 +2642,7 @@ function crearPanelChat() {
   const $voz      = panel.querySelector('#chat-voz');
   const $reset    = panel.querySelector('#chat-reset');
   const $modoBtns = panel.querySelectorAll('#chat-modeselect button');
+  const $paleta   = panel.querySelector('#chat-paleta');
 
   let modoActivo = 'ia';
   let esperandoRespuesta = false;
@@ -2466,9 +2680,176 @@ function crearPanelChat() {
     $send.disabled = esperandoRespuesta;
   }
 
+  // ═══════════════════════════════════════════════════
+  // COMANDOS "/" — se resuelven ENTEROS en el frontend
+  // ═══════════════════════════════════════════════════
+  // Nunca salen por el WebSocket: el registro de clips solo lo conoce esta
+  // página, así que un comando no genera chat_message ni turno del LLM.
+  //
+  // Cada comando: {descripcion, listar()?, ejecutar(arg)}. listar() (opcional)
+  // es lo que hace que la paleta tenga un segundo nivel — devuelve
+  // [{valor, titulo, desc}]. Un solo argumento posicional a propósito: no hace
+  // falta un parser genérico de flags para lo que se necesita acá.
+
+  // Dispara un clip a mano. Regla: los que giran el cuerpo (giraCuerpo, ver
+  // CONFIG.animaciones.catalogo) sacan a Rem de cámara, así que mientras haya
+  // voz sonando NO se disparan — quedan en espera y salen al vaciarse la cola
+  // de audio. Los demás salen al momento, aunque esté hablando.
+  function dispararClipManual(archivo) {
+    const etiqueta = etiquetaClip(archivo);
+    if (clipGiraCuerpo(archivo) && hayVozSonando()) {
+      ponerClipEnEspera(archivo);   // reemplaza al anterior; solo se guarda uno
+      agregarSistema(`⏳ ${etiqueta} — en espera: gira el cuerpo y Rem está hablando`);
+      return;
+    }
+    // El disparo manual corre el temporizador de gestos espontáneos, para que
+    // no se encadene uno automático encima del que se acaba de pedir.
+    _gestoTimer = _sortearIntervaloGesto();
+    window.dispararClipDebug(archivo);   // MISMA función que el handler WS debug_clip
+    agregarSistema(`▶ ${etiqueta}`);
+  }
+
+  const COMANDOS = {
+    animaciones: {
+      descripcion: 'Disparar un clip de animación',
+      listar() {
+        return clipsDisponibles().map(c => ({
+          valor: c.nombre,
+          titulo: c.etiqueta,
+          desc: c.giraCuerpo ? 'gira el cuerpo' : '',
+        }));
+      },
+      ejecutar(arg) {
+        const disponibles = clipsDisponibles();
+        if (disponibles.length === 0) {
+          agregarSistema('No hay clips de animación cargados.');
+          return;
+        }
+        const f = (arg || '').trim().toLowerCase();
+        if (!f) { agregarSistema('Uso: /animaciones <nombre>'); return; }
+        const hit = disponibles.find(c => c.nombre.toLowerCase() === f)
+                 ?? disponibles.find(c => c.etiqueta.toLowerCase() === f)
+                 ?? disponibles.find(c => c.etiqueta.toLowerCase().includes(f));
+        if (!hit) { agregarSistema(`No hay ninguna animación que coincida con "${arg}".`); return; }
+        dispararClipManual(hit.nombre);
+      },
+    },
+  };
+
+  // ── Paleta ────────────────────────────────────────────────────────────
+  let palAbierta = false;
+  let palItems = [];      // [{valor, titulo, desc}]
+  let palSel = 0;
+  let palNivel = 'raiz';  // 'raiz' o el nombre del comando cuyo argumento se elige
+
+  // "/" SOLO como primer carácter: "a/b" no abre nada. Devuelve null si el
+  // texto no es un comando.
+  function parsearEntrada(v) {
+    if (!v.startsWith('/')) return null;
+    const m = v.match(/^\/([^\s]*)(\s([\s\S]*))?$/);
+    if (!m) return null;
+    return { comando: m[1], tieneArg: m[2] !== undefined, arg: m[3] ?? '' };
+  }
+
+  function cerrarPaleta() {
+    palAbierta = false;
+    palItems = [];
+    $paleta.style.display = 'none';
+    $paleta.innerHTML = '';
+  }
+
+  function pintarPaleta() {
+    $paleta.innerHTML = '';
+    if (palItems.length === 0) {
+      const v = document.createElement('div');
+      v.className = 'pal-vacio';
+      v.textContent = 'Sin coincidencias';
+      $paleta.appendChild(v);
+      return;
+    }
+    palItems.forEach((it, i) => {
+      const fila = document.createElement('div');
+      fila.className = 'pal-item' + (i === palSel ? ' sel' : '');
+      const n = document.createElement('span');
+      n.className = 'pal-nombre';
+      n.textContent = it.titulo;
+      fila.appendChild(n);
+      if (it.desc) {
+        const d = document.createElement('span');
+        d.className = 'pal-desc';
+        d.textContent = it.desc;
+        fila.appendChild(d);
+      }
+      // mousedown, no click: preventDefault evita que el input pierda el foco,
+      // así el flujo de dos niveles sigue siendo tecleable sin volver a clickear.
+      fila.addEventListener('mousedown', e => { e.preventDefault(); elegir(i); });
+      $paleta.appendChild(fila);
+    });
+    const sel = $paleta.querySelector('.pal-item.sel');
+    if (sel) sel.scrollIntoView({ block: 'nearest' });
+  }
+
+  function actualizarPaleta() {
+    const p = parsearEntrada($input.value);
+    if (!p) { cerrarPaleta(); return; }
+    const cmd = COMANDOS[p.comando];
+    if (p.tieneArg && cmd && cmd.listar) {
+      palNivel = p.comando;
+      const f = p.arg.trim().toLowerCase();
+      palItems = cmd.listar().filter(i =>
+        !f || i.titulo.toLowerCase().includes(f) || i.valor.toLowerCase().includes(f));
+    } else {
+      palNivel = 'raiz';
+      const f = p.comando.toLowerCase();
+      palItems = Object.entries(COMANDOS)
+        .filter(([n]) => n.toLowerCase().startsWith(f))
+        .map(([n, c]) => ({ valor: n, titulo: '/' + n, desc: c.descripcion }));
+    }
+    palSel = 0;
+    palAbierta = true;
+    $paleta.style.display = '';
+    pintarPaleta();
+  }
+
+  function elegir(i) {
+    const it = palItems[i];
+    if (!it) return;
+    if (palNivel === 'raiz') {
+      // Primer nivel: deja el comando escrito y pasa a listar sus argumentos.
+      $input.value = `/${it.valor} `;
+      $input.focus();
+      if (COMANDOS[it.valor]?.listar) actualizarPaleta();
+      else cerrarPaleta();
+      return;
+    }
+    COMANDOS[palNivel]?.ejecutar(it.valor);
+    $input.value = '';
+    cerrarPaleta();
+    $input.focus();
+  }
+
+  // Texto que empieza por "/" — se resuelve acá y NUNCA se manda al backend.
+  function ejecutarComandoTexto(texto) {
+    const p = parsearEntrada(texto);
+    const cmd = p && COMANDOS[p.comando];
+    if (!cmd) { agregarSistema(`Comando desconocido: ${texto}`); return; }
+    cmd.ejecutar(p.arg);
+  }
+
+  $input.addEventListener('input', actualizarPaleta);
+
   function enviarMensaje() {
     const texto = $input.value.trim();
     if (!texto || esperandoRespuesta) return;
+    // Un comando "/" se resuelve entero en el frontend: ni chat_message ni
+    // turno del LLM. Va antes del chequeo de WS a propósito — /animaciones
+    // funciona aunque el socket esté caído, no necesita backend.
+    if (texto.startsWith('/')) {
+      ejecutarComandoTexto(texto);
+      $input.value = '';
+      cerrarPaleta();
+      return;
+    }
     if (!_ws || _ws.readyState !== WebSocket.OPEN) {
       agregarSistema('Sin conexión con Rem — reintentando...');
       return;
@@ -2484,6 +2865,30 @@ function crearPanelChat() {
 
   $send.addEventListener('click', enviarMensaje);
   $input.addEventListener('keydown', e => {
+    // La paleta se atiende PRIMERO y en el MISMO listener que el envío: así
+    // el preventDefault de Enter llega seguro antes de enviarMensaje(), sin
+    // depender del orden en que se hayan registrado los handlers.
+    if (palAbierta) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (palItems.length) { palSel = (palSel + 1) % palItems.length; pintarPaleta(); }
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (palItems.length) { palSel = (palSel - 1 + palItems.length) % palItems.length; pintarPaleta(); }
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        // Con la paleta abierta Enter SELECCIONA, nunca envía — ni siquiera
+        // cuando no hay coincidencias (si no, un "/anim" a medio escribir se
+        // le mandaría al LLM).
+        e.preventDefault();
+        elegir(palSel);
+        return;
+      }
+      if (e.key === 'Escape') { e.preventDefault(); cerrarPaleta(); return; }
+    }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMensaje(); }
   });
 
@@ -2553,8 +2958,14 @@ function crearPanelChat() {
         agregarSistema(`Modo: ${modo === 'ia' ? 'IA' : 'Eco'}`);
       }
     },
+    // Lo llama _intentarLanzarClipEnEspera() cuando por fin sale un clip que
+    // estaba esperando a que Rem terminara de hablar.
+    onClipLanzado(archivo) {
+      agregarSistema(`▶ ${etiquetaClip(archivo)}`);
+    },
   };
 
+  cerrarPaleta();   // arranca oculta
   $input.focus();
 }
 crearPanelChat();
@@ -2606,6 +3017,8 @@ let _ws = null;
 })();
 
 window.setEstado = s => { estado = s; };
+
+
 </script>
 </body>
 </html>

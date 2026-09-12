@@ -1105,6 +1105,85 @@ de texto del panel (con un punto que pulsa) y la pose/gesticulación del avatar 
 sincronizados sin necesidad de audio real — este panel es solo texto, no pasa por TTS/RVC/lipsync
 en absoluto (el pipeline de voz no se tocó).
 
+## Paleta de comandos "/" en el panel de chat
+
+Comandos escritos en el input del panel que se resuelven **enteros en el frontend**: nunca salen por
+el WebSocket, no generan `chat_message` ni turno del LLM. Motivo de diseño: el registro de clips solo
+lo conoce `rem_avatar.html` (ver `CONFIG.animaciones.catalogo`), así que el backend no tiene nada que
+aportar. Todo vive en `crearPanelChat()`.
+
+**`COMANDOS`**: `{ animaciones: {descripcion, listar(), ejecutar(arg)} }`. `listar()` es opcional y es
+lo que le da a la paleta un **segundo nivel**. Un solo argumento posicional a propósito — no hay
+parser genérico de flags. La estructura queda lista para sumar `modo`/`voz`/`reset` después.
+
+**Apertura**: solo si el texto empieza por `/` **como primer carácter** — `a/b` o `hola /animaciones`
+no abren nada (`parsearEntrada()` devuelve `null`). Filtra en vivo con lo que se siga escribiendo.
+
+**Dos niveles**: `/` lista los comandos; al elegir `/animaciones` el input queda en `"/animaciones "`
+y la paleta pasa a listar los clips con estado `'ok'` **por su etiqueta**; al elegir uno se ejecuta y
+el input se limpia.
+
+**Teclado**: `ArrowUp`/`ArrowDown` navegan, `Enter`/`Tab` seleccionan, `Escape` cierra, click también
+(vía `mousedown` + `preventDefault`, para no perder el foco del input entre niveles). **La paleta se
+atiende al principio del MISMO listener de `keydown` que el envío** — no en un listener aparte: así el
+`preventDefault()` de `Enter` llega seguro antes de `enviarMensaje()` sin depender del orden en que se
+registraron los handlers. Con la paleta abierta `Enter` **nunca** envía, ni siquiera sin coincidencias
+(si no, un `/anim` a medio escribir se le mandaría al LLM).
+
+**CSS**: `#chat-paleta` es `position:absolute; bottom:100%` dentro de `#chat-inputbar`, que por eso
+pasó a `position:relative` — queda siempre dentro del panel de chat. Con los 17 clips mide 240px de
+alto visible sobre 535px de contenido, o sea scroll propio y cero desbordamiento (medido en vivo con
+`getBoundingClientRect()`).
+
+**Regla de disparo** (`dispararClipManual()`):
+- Usa **la misma** `window.dispararClipDebug()` que el handler WS `debug_clip` de `bench_chat.py` —
+  no hay lógica duplicada.
+- Si el clip tiene `giraCuerpo` **y hay voz sonando**, no se dispara: queda en `_clipEnEspera` y sale
+  al vaciarse la cola de audio, con burbuja de sistema avisando. Solo se guarda **uno**; un pedido
+  nuevo reemplaza al anterior.
+- Si `giraCuerpo` es `false`, dispara al momento aunque esté hablando.
+- Todo disparo manual resetea `_gestoTimer`, para que no se encadene un gesto espontáneo encima.
+- Feedback con burbuja `.msg.sistema` (`▶ <etiqueta>` / `⏳ ... en espera`), ya distinta de las de
+  usuario y de Rem.
+
+### Un clip manual no lo interrumpe ni el audio ni un estado sin clip
+
+`updateGestos()` corta cualquier gesto si hay audio ("la voz manda"), así que un clip pedido a mano
+mientras Rem hablaba **moría al frame siguiente**. Se marca la acción con `_esManual` **en la propia
+`AnimationAction`**, no en una variable de módulo — mismo criterio que evitó repetir el bug de
+`_gestoActivo`: cuando `_accionActual` cambia o se anula, el flag se va con ella y no puede quedarse
+pegado (`hayClipManual()` lo lee de ahí). Con eso:
+- `updateGestos()` no lo corta por audio ni por estado.
+- `sincronizarClipConEstado()` lo respeta si el estado nuevo **no** trae clip propio (`idle`/`talking`)
+  — si no, terminar de hablar (`talking → idle`) cortaba a la mitad el clip recién pedido. Un estado
+  **con** clip mapeado (`thinking`/`sad`/...) sigue ganando.
+- Alcanza también al `clip <nombre>` de `bench_chat.py`, que pasa por la misma función.
+
+### Dos salidas para el clip en espera, no una
+
+`_avanzarCola()` (cola de audio vacía) es la salida obvia, pero **solo corre si hubo audio real**. Con
+la voz del panel apagada no hay ninguno y aun así el backend manda `estado='talking'` con el primer
+delta: un clip encolado por "está hablando" se quedaba encolado **para siempre**. Por eso `animate()`
+también llama a `_intentarLanzarClipEnEspera()` al salir de `talking`. La función revalida
+`hayVozSonando()` antes de soltar nada, así que llamarla de más es inofensivo.
+
+Además hay un rebote de **700ms** (`_ESPERA_TRAS_AUDIO_MS`) antes de disparar: con la voz por oraciones
+(ver `SentenceSplitter`) la cola se vacía un instante **entre** dos frases de la misma respuesta, y sin
+el rebote el giro salía a mitad de respuesta.
+
+**`_gestoActivo` — todas las rutas nuevas lo liberan.** Encolar **no** lo toca (se pone recién en
+`dispararClipDebug()`, en el disparo real), así que un clip que queda en espera y nunca se dispara
+—reemplazado por otro, o la ventana se cierra— no deja nada colgado. Las rutas de token obsoleto y de
+error de carga ya lo liberaban.
+
+**Verificado en vivo** con una autoprueba temporal contra el DOM real dentro de la ventana (inyectada,
+ejecutada y eliminada): **20/20** comprobaciones — `a/b` no abre, `Enter` con la paleta abierta no
+envía (ni con la lista vacía), filtrado en vivo, los dos niveles, comando desconocido a burbuja de
+sistema sin enviar, clip sin giro disparando al instante mientras habla, y el ciclo completo
+giro → espera → disparo al terminar. Tras 5 disparos manuales seguidos los gestos espontáneos
+volvieron solos (prueba de que `_gestoActivo` no quedó colgado), y `bench_chat.py` con
+`clip VRMA_06` siguió funcionando igual.
+
 ## WebSocket bidireccional y `chat_sesion.py`
 El WS de `:18766` es bidireccional. `_ws_handler()` en `rem_avatar_server.py` procesa lo que manda
 el cliente (el panel de `rem_avatar.html`, o `bench_chat.py` en modo cliente), con mensajes tipados
@@ -1481,6 +1560,53 @@ arriba.
 - Al llegar `_clipPeso` a 0: `_mixer.stopAllAction()` + `vrm.humanoid.resetNormalizedPose()` (deja
   en reposo piernas/`hips.position` que el clip movió y lo procedural no toca).
 
+### Catálogo de clips, precarga y registro (`CONFIG.animaciones.catalogo`)
+
+`catalogo` es la **única fuente de verdad** del nombre legible y del giro de cuerpo de cada `.vrma`.
+Registra los **17** clips del pack (no 16), incluidos los que `porEstado`/`gestos` no usan
+(`Clapping`, `Goodbye`, `VRMA_02/03/04/06`): la paleta de comandos los ofrece igual. `porEstado`/
+`gestos` siguen referenciando archivos y heredan la etiqueta de acá — no se duplica nada.
+
+| Archivo | `etiqueta` | Archivo | `etiqueta` |
+|---|---|---|---|
+| `Angry.vrma` | Enfado | `VRMA_01.vrma` | Mostrar cuerpo entero |
+| `Blush.vrma` | Sonrojo | `VRMA_02.vrma` | Saludo |
+| `Clapping.vrma` | Aplaudir | `VRMA_03.vrma` | Señal de V |
+| `Goodbye.vrma` | Despedida | `VRMA_04.vrma` | Disparar |
+| `LookAround.vrma` | Mirar alrededor | `VRMA_05.vrma` | Giro de bailarina |
+| `Relax.vrma` | Relajarse | `VRMA_06.vrma` | Pose de modelo |
+| `Sad.vrma` | Tristeza | `VRMA_07.vrma` | Sentadillas |
+| `Sleepy.vrma` | Sueño | | |
+| `Surprised.vrma` | Sorpresa | | |
+| `Thinking.vrma` | Pensar | | |
+
+Las del pack VRoid salen de su propio `Readme_VRMA_MotionPack_EN.txt`, no están inventadas. Ojo:
+`VRMA_07` es **"Squat" = sentadillas**; el repo lo venía llamando "flexiones", que era incorrecto.
+
+**`giraCuerpo` está MEDIDO, no supuesto.** Se extrajo la pista de rotación del hueso `hips` de los 17
+`.vrma` y se calculó el yaw **desenrollado** (acumulando los cruces de ±180°, que si no se leen como
+saltos en vez de como un giro continuo):
+
+| clip | rango de yaw | `giraCuerpo` |
+|---|---|---|
+| `VRMA_01` | **418,5°** | `true` |
+| `VRMA_05` | **408,2°** | `true` |
+| `LookAround` | 40,4° | `false` |
+| `VRMA_04` | 38,3° | `false` |
+| `VRMA_06` | 36,2° | `false` |
+| resto | ≤ 27° | `false` |
+
+El corte no es ambiguo: los dos marcados dan vuelta y media completa y el siguiente del ranking está
+diez veces por debajo. `VRMA_01` ("mostrar cuerpo entero") gira porque es un giro de exhibición.
+
+**Precarga**: `precargarClips()` corre al cargar el VRM (justo después de `inicializarAnimacionClips()`,
+que es cuando ya existe `vrm.humanoid`, que `clipDeVrma()` necesita) y carga los 17 en **paralelo**
+sin bloquear el render — `obtenerClip()` ya es perezoso/cacheado y nunca lanza. Llena
+`_registroClips` (`archivo → {nombre, etiqueta, giraCuerpo, estado, motivo}`) y loguea
+`[Anim] precarga: 17/17 clips cargados` más la lista de fallidos. Un clip que no parsea queda en
+estado `'error'` y **no aparece en la paleta**, en vez de ofrecerse y no hacer nada al elegirlo.
+`clipsDisponibles()` devuelve solo los `'ok'`, en el orden del catálogo.
+
 ### Mapeo estado → clip y gestos de reposo (`CONFIG.animaciones`)
 
 Todo configurable sin tocar código:
@@ -1597,11 +1723,14 @@ el llamador cae a lo procedural.
 ### Cómo añadir un clip nuevo
 
 1. Dejar el `.vrma` en `Animaciones/VRMA_MotionPack/`.
-2. Agregar la entrada en `CONFIG.animaciones.porEstado` (estado → clip),
+2. Agregar la entrada en `CONFIG.animaciones.catalogo` (`etiqueta` + `giraCuerpo`) — con eso solo
+   ya se precarga y aparece en la paleta `/animaciones`. Para `giraCuerpo`, **medir el yaw del hueso
+   `hips` a lo largo del clip**, no adivinar (ver la tabla más arriba).
+3. Si además tiene que dispararse solo, agregarlo a `CONFIG.animaciones.porEstado` (estado → clip),
    `CONFIG.animaciones.gestos.repertorio` (gesto de reposo con peso, opcionalmente
    `horaDesde`/`horaHasta`), o `CONFIG.animaciones.idle` (pose base de idle).
-3. Nada más — la carga es perezosa/cacheada; si el archivo falta o no parsea, cae a lo procedural
-   con un aviso en consola. Si el `.vrma` no trae `specVersion`, `normalizarVrma()` lo parchea en
+4. Nada más — la carga es perezosa/cacheada; si el archivo falta o no parsea, cae a lo procedural
+   con un aviso en consola (y queda fuera de la paleta). Si el `.vrma` no trae `specVersion`, `normalizarVrma()` lo parchea en
    memoria automáticamente.
 
 ### Presupuesto de VRAM del render (`CONFIG.render`)
