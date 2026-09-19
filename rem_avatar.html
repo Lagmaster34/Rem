@@ -376,7 +376,21 @@ const CONFIG = {
       'VRMA_06.vrma':    { etiqueta: 'Pose de modelo',        giraCuerpo: false },
       'VRMA_07.vrma':    { etiqueta: 'Sentadillas',           giraCuerpo: false },
     },
-    crossfadeS: 0.4,  // toda transición (procedural<->clip, clip<->clip) — 0,3-0,5s
+    crossfadeS: 0.4,  // transición clip<->clip (nativa del mixer, AnimationAction.crossFadeTo)
+    // Fundido procedural<->clip (el peso de mezcla, _clipPeso — ver
+    // actualizarAnimacionClips). Con easing (easeInOutCubic), no lineal.
+    // fadeIn: al entrar a un clip (procedural -> clip). Empieza a contar
+    //   ANTES de que el clip corra a pleno peso (mismo mecanismo de siempre).
+    // fadeOut: salida NATURAL — arranca en los últimos `fadeOut` segundos del
+    //   clip (medidos contra su duración real), así el peso ya llega a 0
+    //   justo cuando el clip termina, en vez de saltar de golpe al último
+    //   frame y recién ahí empezar a desvanecer.
+    // fadeOutInterrupcion: salida FORZADA (llegó audio, cambió de estado, un
+    //   estado sin clip propio corta lo que hubiera) — más corta que fadeOut
+    //   a propósito: "la voz manda" tiene que notarse, no arrastrarse 0,8s.
+    fadeIn: 0.5,
+    fadeOut: 0.8,
+    fadeOutInterrupcion: 0.3,
     // Estado emocional -> clip. talking/idle NO tienen clip (siguen procedurales).
     //   modo 'bucle'  : el clip se repite. duracionS (opcional) = tope de segundos
     //                   que el clip controla el cuerpo; al vencer hace crossfade de
@@ -394,16 +408,17 @@ const CONFIG = {
       surprised: { archivo: 'Surprised.vrma', modo: 'unaVez' },
       happy:     { archivo: 'Blush.vrma',     modo: 'unaVez' },
     },
+    // Intervalo de reposo entre gestos — se sortea en este rango CADA VEZ que
+    // termina un gesto (ver _alTerminarClip/updateGestos), nunca desde que
+    // empieza: la espera es tiempo de reposo real, no tiempo total de ciclo.
+    // El ritmo real visible es intervalo + duración del clip elegido.
+    intervaloReposo: { minS: 4, maxS: 9 },
     // Gestos de reposo aleatorios — reemplazan el "giro de bailarina" a mano.
-    // Solo se disparan en estado idle + sin audio. Selección ponderada por 'peso';
-    // 'horaDesde'/'horaHasta' (opcionales, hora local 0-23) restringen la franja.
-    // Los dos números que gobiernan cada cuánto se ve un gesto son
-    // intervaloMinS/MaxS (espera) y el 'peso' relativo de cada clip. El ritmo
-    // real es intervalo + duración del clip: VRMA_05 dura 9,3s, así que con
-    // 8-16s de espera sale un gesto cada ~20s.
+    // Solo se disparan en estado idle + sin audio. Selección ponderada por
+    // 'peso'; 'horaDesde'/'horaHasta' (opcionales, hora local 0-23) restringen
+    // la franja. No se repite el mismo clip dos veces seguidas (ver
+    // _elegirGestoPorPeso).
     gestos: {
-      intervaloMinS: 8,   // mínimo de idle+sin audio antes de poder disparar un gesto
-      intervaloMaxS: 16,  // máximo — se sortea en este rango tras cada gesto
       repertorio: [
         { archivo: 'VRMA_05.vrma',    peso: 10 },                             // girar — el más frecuente
         { archivo: 'LookAround.vrma', peso: 3 },
@@ -1925,6 +1940,17 @@ const _vClipTmp = new THREE.Vector3();
 const _hipsPosProc = new THREE.Vector3();
 let _tokenClip = 0;            // invalida cargas async pendientes si el estado/gesto cambió mientras tanto
 
+// Fundido procedural<->clip (ver CONFIG.animaciones.fadeIn/fadeOut/
+// fadeOutInterrupcion). _clipPeso sigue siendo el progreso LINEAL 0..1 (lo
+// que ya leen los umbrales/ramas de actualizarAnimacionClips sin cambiar);
+// easeInOutCubic(_clipPeso) es el peso real usado para mezclar cuaterniones,
+// respiración y mirada — así el umbral "<=0.001"/">=0.999" sigue siendo
+// exacto (ease(0)=0, ease(1)=1, monótona) y solo la curva de MEZCLA cambia.
+let _clipFadeSalidaS = null; // duración de la salida en curso (fadeOut o fadeOutInterrupcion) — null = no hay salida en curso
+function easeInOutCubic(x) {
+  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+}
+
 // ¿El cuerpo lo controla ahora mismo un clip pedido A MANO? (paleta
 // "/animaciones" o 'clip <nombre>' de bench_chat.py). Se lee de la acción en
 // curso, así que no hay flag de módulo que pueda quedarse pegado.
@@ -1932,11 +1958,12 @@ function hayClipManual() { return _accionActual?._esManual === true; }
 
 // Gestos de reposo: máquina de estados chica (esperando -> reproduciendo).
 let _gestoTimer = _sortearIntervaloGesto();
-let _gestoActivo = false;      // un gesto de reposo controla el cuerpo (o está cargando)
+let _gestoActivo = false;      // un gesto de reposo controla el cuerpo (incluida la salida con fundido)
+let _ultimoGestoDisparado = null; // archivo del último gesto — para no repetirlo dos veces seguidas
 
 function _sortearIntervaloGesto() {
-  const { intervaloMinS, intervaloMaxS } = CONFIG.animaciones.gestos;
-  return intervaloMinS + Math.random() * (intervaloMaxS - intervaloMinS);
+  const { minS, maxS } = CONFIG.animaciones.intervaloReposo;
+  return minS + Math.random() * (maxS - minS);
 }
 
 function inicializarAnimacionClips() {
@@ -2164,9 +2191,10 @@ function reproducirClip(entry, { modo, duracionS, esGesto, esManual }) {
 // no se toca — la maneja updateExpressions() por 'estado', así que si el estado
 // emocional sigue activo la expresión se conserva mientras el cuerpo vuelve a
 // respirar/moverse en procedural.
-function volverAProcedural() {
+function volverAProcedural(interrumpido = false) {
   _clipPesoObjetivo = 0;
   _clipTopeTimer = null;
+  _clipFadeSalidaS = interrumpido ? CONFIG.animaciones.fadeOutInterrupcion : CONFIG.animaciones.fadeOut;
 }
 
 // Clip de POSE BASE de idle (CONFIG.animaciones.idle). No es un gesto ni un clip
@@ -2216,11 +2244,13 @@ async function reproducirIdle() {
 
 // Fin de un gesto de reposo, o su interrupción: volver a la BASE — al clip de
 // idle si está configurado y seguimos elegibles, o a lo procedural.
-function volverABaseIdle() {
+// interrumpido: true si esto es un corte forzado (audio/estado) en vez de un
+// final natural — decide fadeOutInterrupcion vs fadeOut en volverAProcedural.
+function volverABaseIdle(interrumpido = false) {
   if (estado === 'idle' && !_audioActivo && CONFIG.animaciones.idle?.archivo) {
-    reproducirIdle();
+    reproducirIdle(); // entrada al clip de idle — fundido de ENTRADA (fadeIn), no de salida
   } else {
-    volverAProcedural();
+    volverAProcedural(interrumpido);
   }
 }
 
@@ -2239,18 +2269,17 @@ function _actualizarVelIdle(dt) {
 
 function _alTerminarClip(e) {
   if (e.action !== _accionActual) return;   // una acción vieja terminando su fade — ignorar
-  const eraGesto = e.action._esGesto;
-  if (eraGesto) {
-    // Gesto de reposo terminó → volver a la base (clip de idle o procedural).
-    _gestoActivo = false;
-    _gestoTimer = _sortearIntervaloGesto();
-    volverABaseIdle();
-  } else {
-    // Clip 'unaVez' (surprised/happy) terminó → procedural SIEMPRE, aunque el
-    // estado emocional siga activo (la cara conserva la emoción vía
-    // updateExpressions) — nunca se deja el cuerpo plantado en el frame final.
-    volverAProcedural();
-  }
+  // Backstop: el fundido de salida NATURAL ya debería estar en curso desde
+  // los últimos CONFIG.animaciones.fadeOut segundos del propio clip (ver el
+  // chequeo de "restante" en actualizarAnimacionClips) — esto solo cubre el
+  // caso de un clip más corto que fadeOut, o timeScale atípico, donde ese
+  // disparo anticipado no llegó a activarse. Si ya estaba en curso, esto es
+  // un no-op (el objetivo ya es 0).
+  if (e.action._esGesto) volverABaseIdle(false); else volverAProcedural(false);
+  // _gestoActivo/_gestoTimer NO se tocan acá: se liberan/resortean recién
+  // cuando el peso realmente llega a 0 (ver actualizarAnimacionClips) — si no,
+  // updateGestos() podría sortear y arrancar OTRO gesto encima mientras este
+  // todavía se está desvaneciendo.
 }
 
 // estado -> clip mapeado (CONFIG.animaciones.porEstado). Sin mapeo (talking/idle)
@@ -2263,7 +2292,7 @@ function sincronizarClipConEstado() {
   if (m) {
     obtenerClip(m.archivo).then(entry => {
       if (tok !== _tokenClip) return;                 // el estado cambió mientras cargaba
-      if (entry.error) { volverAProcedural(); return; } // fallback a procedural
+      if (entry.error) { volverAProcedural(true); return; } // fallback a procedural, forzado
       reproducirClip(entry, { modo: m.modo, duracionS: m.duracionS, esGesto: false });
     });
     return;
@@ -2275,18 +2304,27 @@ function sincronizarClipConEstado() {
   if (hayClipManual()) { _gestoActivo = true; return; }
 
   // Sin clip de estado: idle usa el clip de pose base (si está configurado);
-  // talking (y idle con el clip desactivado) van a procedural.
+  // talking (y idle con el clip desactivado) van a procedural. Un cambio de
+  // estado que corta lo que hubiera antes es siempre un corte FORZADO
+  // (fadeOutInterrupcion), nunca un final natural.
   if (estado === 'idle' && CONFIG.animaciones.idle?.archivo) {
     reproducirIdle();
   } else {
-    volverAProcedural();
+    volverAProcedural(true);
   }
 }
 
-function _elegirGestoPorPeso() {
+// excluir: archivo a evitar repetir (el último gesto disparado) — solo se
+// respeta si queda al menos otro candidato elegible, para no bloquearse
+// cuando el repertorio disponible (p.ej. de noche, solo Sleepy) tiene uno solo.
+function _elegirGestoPorPeso(excluir) {
   const hora = new Date().getHours();
-  const disp = CONFIG.animaciones.gestos.repertorio.filter(g =>
+  let disp = CONFIG.animaciones.gestos.repertorio.filter(g =>
     g.horaDesde == null || (hora >= g.horaDesde && hora < g.horaHasta));
+  if (excluir != null) {
+    const sinRepetir = disp.filter(g => g.archivo !== excluir);
+    if (sinRepetir.length > 0) disp = sinRepetir;
+  }
   const total = disp.reduce((s, g) => s + g.peso, 0);
   if (total <= 0) return null;
   let r = Math.random() * total;
@@ -2294,18 +2332,28 @@ function _elegirGestoPorPeso() {
   return disp[disp.length - 1];
 }
 
+// Log temporal de diagnóstico de frecuencia — cada disparo real, cada
+// cancelación, y el timestamp (clock.getElapsedTime()) de ambos. Se deja
+// permanente (bajo console.log, sin costo real) para poder auditar la
+// cadencia real sin instrumentar de nuevo si el reporte vuelve a diferir de
+// lo esperado.
+function _logGesto(msg) {
+  console.log(`[Gesto] t=${clock.getElapsedTime().toFixed(1)}s ${msg}`);
+}
+
 function updateGestos(dt) {
   const hayClipEstado = !!CONFIG.animaciones.porEstado[estado];
 
   if (_gestoActivo) {
     // Interrupción (regla: la voz manda): si dejó de ser elegible a mitad de
-    // gesto, crossfade de vuelta a la base (clip de idle o procedural).
-    // EXCEPCIÓN: un clip pedido a mano no se corta por audio ni por estado —
-    // se pidió explícitamente. Los que SÍ molestarían mientras habla (los de
-    // giraCuerpo, que la sacan de cámara) ni siquiera llegan acá: se encolan
-    // antes de dispararse (ver dispararClipManual en crearPanelChat).
+    // gesto, fundido corto (fadeOutInterrupcion) de vuelta a la base (clip de
+    // idle o procedural). EXCEPCIÓN: un clip pedido a mano no se corta por
+    // audio ni por estado — se pidió explícitamente. Los que SÍ molestarían
+    // mientras habla (los de giraCuerpo, que la sacan de cámara) ni siquiera
+    // llegan acá: se encolan antes de dispararse (dispararClipManual).
     if (!hayClipManual() && (estado !== 'idle' || _audioActivo)) {
-      volverABaseIdle();
+      _logGesto(`interrumpido (motivo: ${estado !== 'idle' ? `estado=${estado}` : 'audio'})`);
+      volverABaseIdle(true); // fundido CORTO (fadeOutInterrupcion) — la voz manda
       _gestoActivo = false;
       _gestoTimer = _sortearIntervaloGesto();
     }
@@ -2321,15 +2369,26 @@ function updateGestos(dt) {
 
   _gestoTimer -= dt;
   if (_gestoTimer > 0) return;
-  _gestoTimer = _sortearIntervaloGesto();
 
-  const g = _elegirGestoPorPeso();
-  if (!g) return;
+  const g = _elegirGestoPorPeso(_ultimoGestoDisparado);
+  if (!g) { _gestoTimer = _sortearIntervaloGesto(); return; }
   _gestoActivo = true;
   const tok = ++_tokenClip;
   obtenerClip(g.archivo).then(entry => {
-    if (tok !== _tokenClip || estado !== 'idle' || _audioActivo) { _gestoActivo = false; return; }
-    if (entry.error) { _gestoActivo = false; return; }
+    if (tok !== _tokenClip || estado !== 'idle' || _audioActivo) {
+      _logGesto(`cancelado antes de reproducir "${g.archivo}" (motivo: ${tok !== _tokenClip ? 'token obsoleto' : (estado !== 'idle' ? `estado=${estado}` : 'audio')})`);
+      _gestoActivo = false;
+      _gestoTimer = _sortearIntervaloGesto();
+      return;
+    }
+    if (entry.error) {
+      _logGesto(`cancelado — "${g.archivo}" no disponible (${entry.error.message})`);
+      _gestoActivo = false;
+      _gestoTimer = _sortearIntervaloGesto();
+      return;
+    }
+    _ultimoGestoDisparado = g.archivo;
+    _logGesto(`disparando "${g.archivo}"`);
     reproducirClip(entry, { modo: 'unaVez', esGesto: true });
   });
 }
@@ -2435,13 +2494,41 @@ function actualizarAnimacionClips(dt, t) {
   if (!_mixer) { _idleAmpMult = 1; aplicarCuerpoProcedural(t, dt); return; } // aún no cargó el VRM
   updateGestos(dt);
 
+  // Salida NATURAL de un clip 'bucle' con tope (sad/angry, duracionS): arranca
+  // el fundido en los últimos fadeOut segundos del tope, no de golpe al llegar
+  // a 0 — mismo criterio que el chequeo de abajo para clips 'unaVez'.
   if (_clipTopeTimer != null) {
     _clipTopeTimer -= dt;
-    if (_clipTopeTimer <= 0) { _clipTopeTimer = null; volverABaseIdle(); }
+    if (_clipTopeTimer <= CONFIG.animaciones.fadeOut) { _clipTopeTimer = null; volverABaseIdle(false); }
   }
 
-  const cf = CONFIG.animaciones.crossfadeS;
-  _clipPeso += clamp(_clipPesoObjetivo - _clipPeso, -dt / cf, dt / cf);
+  // Salida NATURAL de un clip 'unaVez' (gesto, o surprised/happy): arranca el
+  // fundido en los últimos fadeOut segundos de SU PROPIA duración —medida
+  // contra el reloj interno del clip (accion.time), no contra el evento
+  // 'finished' del mixer, que solo dispara recién al terminar del todo. Así
+  // el peso ya está en (o cerca de) 0 cuando el clip realmente termina, en
+  // vez de saltar del último frame a la pose procedural y ahí SÍ empezar a
+  // desvanecer. Si ya se disparó un corte forzado este mismo frame (arriba,
+  // en updateGestos), _clipPesoObjetivo ya es 0 y esto no hace nada.
+  if (_accionActual && _accionActual.loop === THREE.LoopOnce && !_accionActual.paused && _clipPesoObjetivo === 1) {
+    const dur = _accionActual.getClip().duration;
+    const restante = isFinite(dur) ? (dur - _accionActual.time) / Math.abs(_accionActual.timeScale || 1) : Infinity;
+    if (restante <= CONFIG.animaciones.fadeOut) {
+      if (_accionActual._esGesto) volverABaseIdle(false); else volverAProcedural(false);
+    }
+  }
+
+  // Rampa de _clipPeso (progreso LINEAL 0..1) con duración distinta según la
+  // dirección: fadeIn al entrar, fadeOut/fadeOutInterrupcion al salir (el que
+  // corresponda, fijado en volverAProcedural/volverABaseIdle). La curva de
+  // easing se aplica solo al PESO DE MEZCLA (pesoBlend, más abajo) — los
+  // umbrales de acá (0.001/0.999/0.5) siguen leyendo el progreso lineal.
+  {
+    const subiendo = _clipPesoObjetivo > _clipPeso;
+    const dur = subiendo ? CONFIG.animaciones.fadeIn : (_clipFadeSalidaS ?? CONFIG.animaciones.fadeOut);
+    _clipPeso += clamp(_clipPesoObjetivo - _clipPeso, -dt / dur, dt / dur);
+  }
+  const pesoBlend = easeInOutCubic(clamp(_clipPeso, 0, 1));
 
   const esIdleClip = _accionActual?._esIdle === true;
   // Ruido procedural amplificado solo mientras el clip de idle domina la mezcla.
@@ -2450,10 +2537,19 @@ function actualizarAnimacionClips(dt, t) {
   if (_clipPeso <= 0.001) {
     _clipPeso = 0;
     if (_accionActual || _accionAnterior) {
+      const eraGesto = _accionActual?._esGesto === true;
       _mixer.stopAllAction();
       _accionActual = _accionAnterior = null;
       vrm.humanoid.resetNormalizedPose(); // huesos que el clip movió y el procedural no toca (piernas, hips.position)
+      // El gesto se da por terminado recién ACÁ (peso realmente en 0), no en
+      // 'finished' ni al disparar el fundido — ver _alTerminarClip/updateGestos.
+      if (eraGesto && _gestoActivo) {
+        _logGesto('fundido de salida completo — libre para el próximo');
+        _gestoActivo = false;
+        _gestoTimer = _sortearIntervaloGesto();
+      }
     }
+    _clipFadeSalidaS = null;
     _idleAmpMult = 1;
     aplicarCuerpoProcedural(t, dt);
     return;
@@ -2495,16 +2591,16 @@ function actualizarAnimacionClips(dt, t) {
   if (mezclando) {
     for (const h of _huesosNorm) {
       _qClipTmp.copy(h.node.quaternion);
-      h.node.quaternion.slerpQuaternions(h.q, _qClipTmp, _clipPeso);
+      h.node.quaternion.slerpQuaternions(h.q, _qClipTmp, pesoBlend);
     }
     if (_hipsNode) {
       _vClipTmp.copy(_hipsNode.position);
-      _hipsNode.position.lerpVectors(_hipsPosProc, _vClipTmp, _clipPeso);
+      _hipsNode.position.lerpVectors(_hipsPosProc, _vClipTmp, pesoBlend);
     }
   }
 
-  aplicarRespiracionEncima(t, _clipPeso);
-  if (estado !== 'thinking') aplicarCabezaSigueMiradaEncima(_clipPeso);
+  aplicarRespiracionEncima(t, pesoBlend);
+  if (estado !== 'thinking') aplicarCabezaSigueMiradaEncima(pesoBlend);
 }
 
 // ═══════════════════════════════════════════════════
