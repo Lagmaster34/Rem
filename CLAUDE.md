@@ -27,20 +27,22 @@ no basta con copiar la carpeta.
 ## Archivos principales
 | Archivo | Qué hace |
 |---------|----------|
-| `rem_chat.py` | **La aplicación**: levanta el servidor HTTP/WS y abre la ventana GTK + WebView. Ver "Ventana de escritorio" más abajo |
-| `rem_avatar_server.py` | Servidor HTTP `:18765` + WebSocket `:18766` para el avatar |
-| `rem_avatar.html` | Frontend Three.js/VRM del avatar — animación (clips VRMA para el cuerpo + procedural para respiración/mirada/gestos) + panel de chat HTML/CSS/JS |
+| `rem_chat.py` | **La aplicación**: levanta el servidor HTTP/WS y abre UNA presentación, `--modo ventana` (default) o `--modo overlay`. Ver "Modo overlay" más abajo |
+| `rem_avatar_server.py` | Servidor HTTP `:18765` + WebSocket `:18766` para el avatar, más la orquestación de push-to-talk (`ptt_start`/`ptt_stop`). Ver "Modo overlay: push-to-talk" más abajo |
+| `rem_avatar.html` | Frontend Three.js/VRM del avatar — animación (clips VRMA para el cuerpo + procedural para respiración/mirada/gestos) + panel de chat HTML/CSS/JS en modo ventana, caja de texto mínima en modo overlay |
 | `bench_chat.py` | REPL de depuración: si hay servidor lo usa como cliente WS, si no lo levanta él (standalone). Ver "Puntos de entrada" más abajo |
 | `Rem.py` | Asistente Tkinter (legacy, en retirada — no arranca en el venv actual: sin `_tkinter`) |
 | `Animaciones/` | Clips `.vrma` del avatar — no van al repo, se descargan a mano. Ver `Animaciones/README.md` y "Animación de cuerpo con clips VRMA" más abajo |
-| `chat_sesion.py` | `SesionChat` + `procesar_turno()` — estado de una conversación y el turno "en crudo" contra el LLM, compartido entre `bench_chat.py` y el panel de chat de `rem_chat.py`. Ver "Panel de chat" más abajo |
-| `habla.py` | Pipeline de voz de un turno (TTS -> RVC -> `enviar_audio()`), compartido entre `bench_chat.py` y el panel de chat. Ver "Voz en la ventana de chat" más abajo |
+| `chat_sesion.py` | `SesionChat` + `procesar_turno()` — estado de una conversación y el turno "en crudo" contra el LLM, compartido entre `bench_chat.py` y el panel/caja de chat de `rem_chat.py`. Ver "Panel de chat" más abajo |
+| `habla.py` | Pipeline de voz de salida de un turno (TTS -> RVC -> `enviar_audio()`), compartido entre `bench_chat.py` y `rem_chat.py`. Ver "Voz en la ventana de chat" más abajo |
+| `stt/` | Capa de abstracción de voz de ENTRADA (STT): contrato + providers (`local.py` = faster-whisper, `groq.py`). Ver "Modo overlay: push-to-talk" más abajo |
+| `rem_ptt.py` | CLI del push-to-talk: `rem_ptt.py start\|stop` manda `ptt_start`/`ptt_stop` al servidor por WS — pensado para atarlo a una tecla mantenida en Hyprland |
 | `fairseq_shim/__init__.py` | Shim que reemplaza el `__init__.py` de fairseq para compatibilidad PyTorch |
 | `fairseq_shim/checkpoint_utils.py` | Fork de fairseq con `torch.load(weights_only=False)` |
 | `apply_shim.py` | Copia `fairseq_shim/` sobre el fairseq instalado en `venv/`. Ejecutar tras cualquier reinstalación de fairseq |
 | `llm/` | Capa de abstracción de LLM (contrato + providers). Ver "Capa de abstracción de LLM" más abajo |
 | `config.py` | Módulo compartido: carga `.env` y lee `config.toml`. Lo usan `rem_chat.py`/`bench_chat.py`/`Rem.py` |
-| `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — hoy solo `[llm]` / `[llm.claude]` |
+| `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — `[llm]`/`[llm.claude]`/`[app]`/`[overlay]`/`[stt]` |
 
 ## Capa de abstracción de LLM (`llm/`)
 Contrato común para poder cambiar de backend (Claude, Groq, un modelo local a futuro) sin tocar
@@ -384,13 +386,18 @@ la clave `"programas"` del JSON, que no existe en el schema que lee `personalida
 ## Puntos de entrada
 
 ```bash
-venv/bin/python rem_chat.py     # LA APLICACIÓN — levanta el servidor y abre la ventana
-venv/bin/python bench_chat.py   # REPL de depuración (ver abajo)
-venv/bin/python Rem.py          # asistente Tkinter legacy (no arranca en este venv: sin _tkinter)
+venv/bin/python rem_chat.py                    # LA APLICACIÓN — modo ventana (default de config.toml)
+venv/bin/python rem_chat.py --modo overlay     # LA APLICACIÓN — modo overlay (ver "Modo overlay" más abajo)
+venv/bin/python bench_chat.py                  # REPL de depuración (ver abajo)
+venv/bin/python Rem.py                         # asistente Tkinter legacy (no arranca en este venv: sin _tkinter)
 ```
 
-- **`rem_chat.py`** es la aplicación: llama a `rem_avatar_server.iniciar_servidor_avatar()` (levanta
-  HTTP `:18765` + WS `:18766`, o detecta que ya están y los reusa) y abre la ventana GTK + WebView.
+- **`rem_chat.py`** es la aplicación: llama a `rem_avatar_server.iniciar_servidor_avatar(permitir_reuso=False)`
+  (levanta HTTP `:18765` + WS `:18766`) y abre UNA presentación — `--modo ventana` o `--modo overlay`
+  (default: `config.toml` -> `[app].modo`), nunca las dos a la vez. A diferencia de `bench_chat.py`,
+  si los puertos ya están ocupados **no** los reusa: sale con un error claro (`ServidorOcupadoError`)
+  en vez de abrir una segunda presentación pegada a un servidor ajeno — ver "Modo overlay" más abajo,
+  "Instancia única".
 - **`bench_chat.py`** se adapta a si ya hay un servidor:
   - **modo cliente** (hay servidor): se conecta como cliente WebSocket y manda `state`/`chat`/`modo`/
     `voz`/`reset` por ahí. El servidor los procesa y la ventana los ve. El turno de LLM lo corre el
@@ -805,15 +812,17 @@ frame del `gltf.load()` callback, porque recién ahí el esqueleto refleja la po
 seguir en un estado intermedio del importador). La medición inicial por `Box3` se conserva como
 placeholder para el primer frame o dos, y ambas cifras (Box3 y huesos) quedan logueadas para comparar.
 
-## Layer surface acotada (histórico — el overlay se eliminó)
-Cuando existía `rem_overlay.py`, su layer surface se anclaba solo a `RIGHT`+`BOTTOM` con tamaño
-fijo (no a los 4 bordes) para no estirar un canvas WebGL transparente del tamaño del monitor entero
-renderizando a 60fps sobre todo el escritorio. Eso trajo dos regresiones que se arreglaron en su
-momento (click-through que no sobrevivía a la reasignación de superficie; `_ajustarAnclasPorAspect()`
-colapsando `anchorX` a 0,5 en superficies verticales). **Nada de esto aplica ya**: una ventana
-normal (`rem_chat.py`) no tiene ese problema de rendimiento ni es click-through, y
-`_ajustarAnclasPorAspect()` se eliminó. Se deja el apunte por si el reporte de "canvas WebGL a
-pantalla completa cuesta caro" reaparece con otra forma.
+## Layer surface acotada (histórico — de `rem_overlay.py`, el archivo eliminado)
+Cuando existía `rem_overlay.py` (proceso aparte, eliminado — ver "Ventana de escritorio" más
+arriba), su layer surface se anclaba solo a `RIGHT`+`BOTTOM` con tamaño fijo (no a los 4 bordes)
+para no estirar un canvas WebGL transparente del tamaño del monitor entero renderizando a 60fps
+sobre todo el escritorio. Eso trajo dos regresiones que se arreglaron en su momento (click-through
+que no sobrevivía a la reasignación de superficie; `_ajustarAnclasPorAspect()` colapsando `anchorX`
+a 0,5 en superficies verticales). El primer bug (click-through que no sobrevive a la reasignación
+de superficie) SÍ reapareció, con otra forma, en el modo overlay nuevo (ver "Modo overlay:
+click-through y la caja de texto" más abajo — ahí se documenta el fix real, `queue_draw()` tras
+`input_shape_combine_region()`). `_ajustarAnclasPorAspect()` en sí no volvió: el modo overlay nuevo
+no tiene ancho/alto por modo que colapsar, solo el encuadre de medio cuerpo de `CONFIG.overlay`.
 
 ## Conflicto de puertos: un solo servidor entre varios procesos
 `rem_avatar_server.iniciar_servidor_avatar()` levanta HTTP (`:18765`) + WS (`:18766`) **o** detecta
@@ -877,19 +886,22 @@ disco de WebKit2GTK persiste entre lanzamientos y puede enmascarar cambios reci�
    de rendición — confirma que no reintenta indefinidamente.
 
 ## Ventana de escritorio (`rem_chat.py`)
-`rem_chat.py` es GTK3 + WebKit2: ventana normal decorada, opaca, con foco de teclado, título "Rem",
-1100×620 redimensionable. Levanta el servidor del avatar
-(`rem_avatar_server.iniciar_servidor_avatar()`) y carga `rem_avatar.html?modo=ventana` en el WebView.
-Es **la aplicación** — el overlay transparente de escritorio (`rem_overlay.py`, layer surface
-click-through con `gtk-layer-shell`) se eliminó; esta ventana lo sustituye por completo.
+`rem_chat.py` es GTK3 + WebKit2 y tiene DOS presentaciones (`--modo ventana|overlay`, nunca las dos
+a la vez — ver "Modo overlay" más abajo para el segundo). En modo ventana: ventana normal decorada,
+opaca, con foco de teclado, título "Rem", 1100×620 redimensionable. Levanta el servidor del avatar
+(`rem_avatar_server.iniciar_servidor_avatar(permitir_reuso=False)`) y carga
+`rem_avatar.html?modo=ventana` en el WebView. **Es la aplicación** en los dos modos — un solo
+proceso, un solo servidor, mismo pipeline de voz y LLM.
 
-**El overlay eliminado — qué se fue con él**: `rem_overlay.py`, `_lanzar_overlay()`/`_overlay_proc`
-en `rem_avatar_server.py`, las env `REM_LAYER`/`REM_OVERLAY_W`/`REM_OVERLAY_H`, la dependencia de
-`gtk-layer-shell`, y el modo `?modo=overlay` de `rem_avatar.html` (con `CONFIG.modos.overlay`, el
-fondo transparente y `_ajustarAnclasPorAspect()` — ya no hay superficie angosta/vertical que
-colapsar a `anchorX=0.5`). `rem_avatar.html` quedó con un único modo (ventana); `?modo=ventana`
-sigue en la URL pero ya no cambia nada. `iniciar_avatar()`/`cerrar_avatar()` quedan como alias
-vacíos de `iniciar_servidor_avatar()` solo para no romper `Rem.py` (legacy).
+**Historia: el overlay se eliminó y después volvió.** `rem_overlay.py` (layer surface
+click-through con `gtk-layer-shell`, proceso APARTE lanzado por `rem_avatar_server._lanzar_overlay()`)
+se eliminó por completo en su momento — la ventana decorada lo sustituyó. El modo overlay actual
+**no es una resurrección de ese archivo**: es `--modo overlay` DENTRO de `rem_chat.py` (mismo
+proceso que la ventana, mismo servidor), reconstruido desde cero reusando lo que `rem_overlay.py`
+ya tenía bien resuelto (recuperado del historial de git: `WebsitePolicies(autoplay=ALLOW)`, el
+volcado de consola con `os.dup2`, el inspector remoto, el retry exponencial de carga) — ver "Modo
+overlay" más abajo para el diseño nuevo (click-through parcial con una caja de texto interactiva,
+algo que `rem_overlay.py` nunca tuvo, y push-to-talk).
 
 **El venv sí puede tener GTK.** `pip install pygobject pycairo` en el venv compila sin problema
 contra las libs GTK3/WebKit2GTK-4.1 ya instaladas en el sistema (Arch no separa paquetes `-dev`).
@@ -1853,6 +1865,281 @@ librerías de Mesa carga el proceso `WebKitWebProcess` en runtime:
 `grep -i 'swrast\|llvmpipe\|iris\|i965' /proc/<pid_de_WebKitWebProcess>/maps` — `swrast`/`llvmpipe`
 confirma software puro, `iris`/`i965` confirmaría que sí usa la iGPU Intel por DRI. No se hizo
 todavía (hace falta encontrar el PID del proceso hijo correcto, no el de `rem_chat.py`).
+
+## Modo overlay: arranque, superficie y exclusión mutua con el modo ventana
+
+`rem_chat.py --modo overlay` (o `config.toml` -> `[app].modo = "overlay"`) abre, en el MISMO
+proceso y con el MISMO servidor que el modo ventana, una layer surface (`gtk-layer-shell`)
+transparente anclada IZQUIERDA+ABAJO, tamaño configurable en `config.toml` -> `[overlay]`
+(`ancho`/`alto`/`margen_izquierdo`/`margen_inferior`/`capa`/`zona_exclusiva`, default 420×600,
+capa `top`). El avatar se ve de medio cuerpo (cadera hacia arriba) sobre el escritorio, con una
+caja de texto discreta abajo. Nunca los dos modos a la vez — ver "Instancia única" más abajo.
+
+`GDK_BACKEND=wayland` se fuerza en el proceso ANTES de que GDK se inicialice, solo en modo overlay
+(en modo ventana no hace falta y no se toca): `gtk-layer-shell` aborta si GDK arrancó con XWayland,
+y `GtkLayerShell` se importa ANTES que `Gtk`/`WebKit2`/`Gdk` (exige enlazarse antes que
+`libwayland-client`) — mismo orden que ya usaba `rem_overlay.py` (ver "Ventana de escritorio" más
+arriba). Si el paquete de sistema `gtk-layer-shell` no está instalado, `rem_chat.py --modo overlay`
+sale con un mensaje claro (`sudo pacman -S gtk-layer-shell`) en vez de un `ImportError` críptico.
+
+**Instancia única — `ServidorOcupadoError`.** `iniciar_servidor_avatar()` ahora toma
+`permitir_reuso: bool` (default `True`, sin cambios para `bench_chat.py`/`Rem.py` legacy, que
+siguen reusando un servidor ya levantado sin competir por el puerto). `rem_chat.py` llama con
+`permitir_reuso=False`: si los puertos `:18765`/`:18766` ya están ocupados (otra instancia de
+`rem_chat.py`, en cualquier modo), sale con un error claro a la terminal Y al log (código 1) en vez
+de abrir una segunda presentación pegada al servidor de la primera — el chequeo va ANTES de abrir
+`rem_chat.log` con `'w'`, que si no truncaría el log de la instancia que sigue viva.
+`_comprobar_instancia_unica()` además nombra el proceso que tiene el puerto (`ss -ltnp`) para que
+el mensaje sea accionable, no solo "ocupado". Verificado en vivo: con una instancia corriendo (en
+cualquier modo), lanzar una segunda en cualquier modo sale con `exit=1` y el mensaje nombra el pid
+real; el log de la primera instancia queda intacto (no se pisa).
+
+**Bind HTTP también robusto ahora, con el mismo patrón que el WS.** `_iniciar_http()` tenía el
+mismo bug que `_iniciar_ws()` ya tenía arreglado (ver "Conflicto de puertos" más arriba): si el
+bind fallaba (carrera entre el chequeo de `_puerto_activo()` y el bind real), el hilo daemon moría
+en silencio y el llamador creía que había levantado. Ahora usa el mismo mecanismo
+(`_http_ready`/`_http_bind_error`) que `_ws_ready`/`_ws_bind_error`.
+
+## Modo overlay: click-through y la caja de texto (la región interactiva la mide la PÁGINA)
+
+El overlay es click-through en TODA la superficie salvo el rectángulo de la caja de texto — pero,
+a diferencia de un overlay estático, ese rectángulo se mueve (la caja puede reposicionarse/cambiar
+de tamaño con un resize de la ventana o un cambio de CSS) y solo la PÁGINA sabe dónde está de
+verdad. `rem_chat.py` no adivina la geometría: `crearOverlayUI()` en `rem_avatar.html` mide la caja
+con `getBoundingClientRect()` (vía un `ResizeObserver` + al arrancar) y se lo manda a Python por un
+`WebKitUserContentManager` script message handler llamado `"rem"`
+(`window.webkit.messageHandlers.rem.postMessage(JSON.stringify({tipo:'region', x,y,w,h}))`) — el
+mismo canal que ya usa `bench_chat.py`/el panel para nada relacionado, registrado aparte para esto.
+`_EntradaOverlay.on_mensaje()` en `rem_chat.py` recibe ese mensaje y llama a
+`gdk_win.input_shape_combine_region()` con esa región exacta (o una región VACÍA — todo
+click-through — mientras la página todavía no reportó nada: mejor una caja inalcanzable unos
+segundos que una superficie de 420×600 que se traga los clics del escritorio desde el frame cero).
+
+**Bug real encontrado y arreglado: la región nueva no se aplicaba sin forzar un redibujado.**
+`input_shape_combine_region()` por sí solo no bastaba — confirmado en vivo con
+`wlr-virtual-pointer` contra un Hyprland anidado (ver "Verificación en vivo" más abajo): el
+puntero seguía cayendo en la ventana de abajo incluso sobre la caja. La causa: GDK/Wayland aplica
+la input region recién en el PRÓXIMO commit del toplevel, y el contenido lo pinta el WebView (su
+propio commit) — sin forzar un `queue_draw()` del toplevel después de
+`input_shape_combine_region()`, la región nueva podía quedar sin comitear indefinidamente. Se
+arregló agregando `self.win.queue_draw()` justo después — mismo síntoma, otra forma, del bug
+documentado en "Layer surface acotada" más arriba (`rem_overlay.py` lo resolvía reaplicando la
+región en más eventos, no forzando el redibujado; acá alcanzó con esto).
+
+**`WebKit2.Settings` en `_crear_webview()` es ahora compartido entre los dos modos** (antes vivía
+solo en `main()` de la ventana) — la única diferencia por modo es `transparente` (color de fondo
+`RGBA(0,0,0,0)` en overlay vs. el violeta oscuro opaco de siempre en ventana). Todo lo demás
+(WebGL, `WebsitePolicies(autoplay=ALLOW)`, volcado de consola, developer extras) es idéntico.
+
+**Teclado: `ON_DEMAND` fijo secuestraba el foco — se hizo dinámico.** Medido en vivo en Hyprland
+(que sigue el puntero, `follow_mouse`): con `GtkLayerShell.KeyboardMode.ON_DEMAND` fijado una vez
+al crear la layer surface, bastaba con que el puntero PASARA por encima de la caja (sin clic) para
+que la superficie tomara el foco de teclado — y lo CONSERVABA al alejarse, hasta que otra ventana
+se enfocara a la fuerza, dejando el resto del escritorio sin poder escribir. `_EntradaOverlay`
+alterna el modo en runtime: `NONE` por defecto, `ON_DEMAND` solo mientras el puntero está sobre la
+caja (`enter-notify-event`/`leave-notify-event` de GTK, filtrando `Gdk.NotifyType.INFERIOR` para no
+contar cruces internos con hijos) **o** la caja de texto tiene el foco real dentro de la página (la
+página lo avisa con `{tipo:'foco', caja: bool}` por el mismo canal de mensajes, en los eventos
+`focus`/`blur` del `<input>`) — así escribir sin soltar el mouse de la caja, o alejar el mouse a
+mitad de frase, no corta el foco. Al dejar de cumplirse las dos condiciones, vuelve a `NONE` y
+Hyprland le devuelve el teclado a la ventana de antes. `Enter` con texto también suelta el foco
+explícitamente (`$input.blur()`) tras enviar, para no quedarse con el teclado secuestrado sin
+querer escribir más.
+
+**Verificado en vivo — click-through, foco de teclado, push-to-talk, cambio de modo**: instrumentado
+con un cliente C mínimo de `wlr-virtual-pointer-unstable-v1` (mueve/clickea el puntero por protocolo,
+sin depender de X11) contra la sesión Wayland REAL (Hyprland) y, para las pruebas de foco de
+teclado más invasivas, un Hyprland ANIDADO aparte (otro `WAYLAND_DISPLAY`, otro cursor, aislado de
+la sesión real) con dos ventanas `foot` de prueba a los lados:
+- Hover sobre CUALQUIER punto de la superficie que NO sea la caja (esquina transparente, el cuerpo
+  opaco de Rem) atraviesa a la ventana de abajo — sin eventos en la página, sin captura de
+  puntero/teclado.
+- Hover sobre la caja SÍ la atraviesa: `mouseenter` en la página, `teclado -> ON_DEMAND` en el log
+  de `rem_chat.py`. Al alejarse sin clic, vuelve a `NONE` — la ventana de abajo recupera el
+  teclado.
+- Clic en la caja: foco real (`focus` de la página, captura confirmada con `ydotool type` escribiendo
+  el texto en la caja — capturado en pantalla, ver `ui_*.png` en el historial de la sesión de
+  pruebas). Alejar el puntero MIENTRAS se escribe conserva el foco (no cae a `NONE`) gracias al aviso
+  `{tipo:'foco'}` — solo se suelta al perder el foco real de la caja (blur, Enter, Escape).
+- Cambio de modo ventana <-> overlay en la misma sesión: ambos arrancan, cargan el VRM, hacen su
+  encuadre respectivo y hablan sin errores nuevos — solo se puede tener uno a la vez (ver
+  "Instancia única" más arriba).
+
+## Modo overlay: encuadre de medio cuerpo
+
+`CONFIG.overlay.encuadre` (en `rem_avatar.html`) controla el recorte — medido por huesos, mismo
+criterio que el encuadre de cuerpo entero del modo ventana (`medirAlturaHuesos()`, ver "Encuadre
+del avatar" más arriba), no por `Box3` (que da la mitad de la altura real en un `SkinnedMesh`, ver
+esa misma sección). `medirMedioCuerpo()` mide dos cosas, con `vrm.scene.position.y` puesto en 0
+durante la medición (mismo fix que `medirAlturaHuesos()`, para no contaminar el centro con el
+offset de una pasada anterior — ver "Bug de encuadre" más arriba):
+
+- **Alto**: el tramo desde el hueso `hips` (menos `bajoCaderaFrac` del tramo cadera-cabeza, para
+  bajar el corte un poco por debajo de la cintura) hasta el hueso `head` (más `sobreCabezaFrac`,
+  margen para pelo/adornos sin hueso propio) — `ocupaAltoFrac` de esa altura en fracción del alto
+  visible de la superficie.
+- **Ancho**: la mayor distancia lateral al eje de la cadera entre hombros/brazos/manos (con los
+  brazos YA en su pose de reposo — ver más abajo, "sin T-pose"), más `anchoExtraFrac` de margen
+  (mangas sueltas/volados del vestido no tienen hueso propio y sobresalen de las manos medidas —
+  0,18 no alcanzaba, subido a 0,34 tras verlo recortado en captura real).
+
+`recalcularEncuadre()` calcula la altura visible objetivo por las DOS restricciones (alto y ancho)
+y usa la MÁS RESTRICTIVA (`Math.max`): en una superficie vertical angosta (420×600, aspect ~0,7) el
+cuerpo con los brazos separados es más ancho que alto — ajustar solo por alto (lo que hacía la
+primera versión) cortaba los brazos por los costados, confirmado con captura real antes del fix.
+El resto de la fórmula (distancia de cámara, `setViewOffset`, `anchorX`/`anchorY`) es la misma que
+el modo ventana — `_anclasEncuadre()` decide qué fracciones usar según `ES_OVERLAY`, sin ramificar
+el resto del código de encuadre.
+
+**El corte de cadera se apoya en el borde INFERIOR de la superficie**, no centrado — a diferencia
+del modo ventana (donde el centro del cuerpo cae en `anchorY`), acá el sobrante vertical (si
+`ocupaAltoFrac` deja margen) queda ARRIBA, transparente, no como un hueco entre Rem y la caja de
+texto de abajo (`CONFIG.overlay.encuadre.baseSobreBordeFrac`, 0 por defecto).
+
+**Sin T-pose ni clips VRMA: el cuerpo es 100% procedural, congelado en el estado `idle`.**
+`estadoCorporal()` devuelve siempre `'idle'` en modo overlay, sin importar el `estado` real (que
+sigue variando y sí afecta cara/mirada) — así los brazos quedan en la pose de reposo de
+`CONFIG.brazos` (nunca T-pose ni gesticulando) y nunca se dispara `sincronizarClipConEstado()` (que
+retorna de inmediato si `ES_OVERLAY`, sin tocar el mixer — no existe mixer en overlay:
+`inicializarAnimacionClips()`/`precargarClips()` no se llaman). `getStatePose()`/`updateLook()` y
+el guard de `updateSaccades()` para `thinking` leen `estadoCorporal()` en vez de `estado` crudo, por
+la misma razón. `window.dispararClipDebug()` (comando `clip` de `bench_chat.py`/paleta
+`/animaciones`) es un no-op explícito en overlay, con log, en vez de fallar contra un mixer que no
+existe.
+
+**El VRM nace oculto y solo se muestra tras el primer encuadre real** (`vrm.scene.visible = false`
+al cargar, `true` recién en `animate()` tras `medirMedioCuerpo()` + `recalcularEncuadre()`) — sin
+esto, el frame o dos entre la carga (T-pose, encuadre provisorio por `Box3` con el recorte de
+cuerpo entero) y la primera medición real se verían, sobre un fondo TRANSPARENTE, como un parpadeo
+feo de la T-pose mal encuadrada. En modo ventana no hace falta (el fondo synthwave ya tapa ese
+instante).
+
+**Sin suelo, sin panel de chat.** `crearSueloSynthwave()` no se llama en overlay (`if (!ES_OVERLAY)
+crearSueloSynthwave();`) — sin geometría de piso ni niebla, y el renderer usa `alpha: true` +
+`setClearColor(0x000000, 0)` en vez del fondo opaco violeta del modo ventana. `crearPanelChat()`
+tampoco se llama; en su lugar, `crearOverlayUI()` monta solo el indicador de estado + la caja
+(`<html class="overlay">`, fijada por un `<script>` inline en el `<head>`, ANTES del script
+principal, para que el CSS `pointer-events:none`/fondo transparente aplique desde el primer frame
+sin esperar al módulo — un frame de fondo oscuro sobre el escritorio real sería un parpadeo
+visible).
+
+## Modo overlay: push-to-talk (voz de entrada, `stt/`)
+
+Paquete `stt/` (mismo patrón que `llm/`): `base.py` (`STTProvider`, ABC — `transcribir(audio:
+np.ndarray) -> str`, sincrónico a propósito, ver su docstring), `local.py`
+(`LocalSTTProvider`, faster-whisper), `groq.py` (`GroqSTTProvider`, Whisper por la API de Groq — 
+implementado por trivial, **sin verificar en vivo** con una API key real en esta máquina),
+`microfono.py` (`Grabador`, captura con `sounddevice`/PortAudio sobre PipeWire, abierto SOLO entre
+`iniciar()`/`detener()`), `__init__.py` (`get_stt_provider()`/`obtener_stt()` — instancia única por
+proceso, mismo criterio que `llm.get_provider()`: `REM_STT_PROVIDER` (env) > `[stt].provider` en
+`config.toml` > `"local"`).
+
+**`local` (default) corre en CPU a propósito** — mismo motivo que RVC comparte la GPU con Ollama
+(ver "RVC vuelve a GPU" más arriba): la VRAM (4 GB) ya está justa entre el LLM local y RVC, no hay
+margen para un tercer modelo. `config.toml` -> `[stt.local]`: `model="small"`,
+`compute_type="int8"`, `device="cpu"`, `language="es"`, `beam_size=1` (decodificación voraz, la más
+rápida — ver la comparación de latencia más abajo), `initial_prompt` con vocabulario del proyecto
+(Rem, Ollama, Claude, Hyprland, etc., para sesgar nombres propios/técnicos). `WhisperModel.transcribe()`
+corre con `vad_filter=True` (recorta silencio antes de decodificar — sin esto Whisper alucina texto
+sobre pausas/ruido de fondo) y `condition_on_previous_text=False` (cada push-to-talk es un
+enunciado suelto; arrastrar texto previo como contexto solo propaga alucinaciones).
+
+**Precarga igual que RVC**: `rem_chat.py` lanza `stt.precargar_stt()` en un hilo daemon, ANTES de
+levantar el servidor, en los dos modos (la voz de entrada es de primera clase, sin flag para
+omitirla — mismo criterio que la precarga de RVC). `LocalSTTProvider._lock` (un `threading.Lock`)
+serializa carga y transcripciones — mismo motivo que `habla._rvc_lock`: la precarga en hilo de
+fondo y un primer `ptt_stop` real pueden coincidir.
+
+**Push-to-talk end-to-end**: `rem_ptt.py start|stop` (proceso corto, pensado para atarse a una
+tecla mantenida) manda `{tipo:'ptt_start'}`/`{tipo:'ptt_stop'}` por WS al servidor de `rem_chat.py`
+y espera una confirmación (`ptt_estado`) antes de salir — nunca falla en silencio: código 0
+aceptado, 1 sin conexión/sin respuesta, 2 ignorado (con el motivo impreso). Toda la lógica vive en
+`rem_avatar_server.py` (`_ptt_iniciar()`/`_ptt_detener()`), corriendo en `_ws_loop` sin locks (un
+solo hilo): `ptt_start` abre `stt.microfono.Grabador` (`asyncio.to_thread`, no bloquea el loop),
+manda `ptt_estado: escuchando`; `ptt_stop` lo cierra, descarta grabaciones más cortas que
+`[stt].min_grabacion_s` (toque accidental), transcribe (`asyncio.to_thread`), muestra el texto en
+la caja/panel (`ptt_transcripcion`, con `[stt].mostrar_transcripcion_s` de pausa para que se vea
+qué entendió antes de mandarlo) y recién entonces lo corre como un `chat_message` normal
+(`_procesar_mensaje_chat(texto, t_ref=...)`) — mismo turno de LLM/voz que si se hubiera escrito, sin
+duplicar ese pipeline. Un tope de grabación (`[stt].max_grabacion_s`) se agenda con
+`call_later()` al abrir el micrófono, por si se pierde el `ptt_stop` (tecla soltada fuera de foco,
+proceso `rem_ptt.py stop` muerto).
+
+**Decisión — `ptt_start` mientras Rem habla: SE IGNORA, no la interrumpe.** Documentado en el
+propio código (comentario extenso sobre `_ptt_motivo_ocupada()`): interrumpir exigiría cancelar el
+turno de LLM en curso, vaciar la cola de síntesis (TTS/RVC corre en un hilo que no se puede
+cancelar a mitad) y cortar el `<audio>` del frontend, coordinado entre procesos — mucha superficie
+para un beneficio dudoso. Ignorar garantiza lo que sí importa: **el micrófono nunca está abierto
+mientras suena la voz de Rem**, así que no puede grabarse a sí misma. `_ptt_motivo_ocupada()`
+compone la razón real de "Rem está ocupada" con varias señales, ninguna sola alcanza: turno de LLM
+en curso (`_chat_turno_activo`), la cola de síntesis con trabajo pendiente
+(`cola._unfinished_tasks` — frases encoladas O en conversión que el worker no marcó todavía),
+**algún frontend reportando audio sonando** (`voz_estado`, ver el punto siguiente — necesario
+porque el turno de LLM y la síntesis pueden haber terminado mientras el `<audio>` del navegador
+sigue sonando) y un margen tras el último fin de habla (`[stt].espera_tras_habla_s`, eco de sala).
+El pedido ignorado nunca es silencioso: se difunde `ptt_estado: ignorado` con el motivo, que la UI
+muestra como aviso.
+
+**`voz_estado` — el frontend le dice al backend cuándo suena de verdad, no cuándo lo despachó.**
+`rem_avatar.html` manda `{tipo:'voz_estado', reproduciendo: bool}` por WS al recibir un audio nuevo
+(`true`, en `encolarAudio()` — cierra el hueco entre que el servidor lo despacha y que el
+`<audio>` realmente empieza a sonar) y al vaciarse la cola (`false`, en `_avanzarCola()`).
+`_registrar_voz_estado()` en el servidor mantiene `_ws_reproduciendo` (el set de websockets con
+audio sonando) y marca `_ultimo_fin_habla` al vaciarse — de ahí sale `espera_tras_habla_s`.
+
+**Casos límite probados en vivo, no solo el camino feliz**: toque muy corto (`start`+`stop`
+inmediato) descarta la grabación por `min_grabacion_s` sin transcribir nada; un `ptt_stop` SIN
+`ptt_start` previo (huérfano — puede pasar si el `stop` de un toque corto de verdad llega ANTES que
+su propio `start`, dos procesos `rem_ptt.py` distintos) ahora SIEMPRE contesta con el estado actual
+(antes se quedaba mudo y `rem_ptt.py` esperaba el timeout de 2s sin respuesta — bug real encontrado
+durante la prueba, arreglado agregando un `ptt_estado` explícito en esa rama); ese mismo huérfano
+sirve de guarda contra la carrera de un toque muy corto (`_ptt_stop_huerfano_t`, ventana de 0,5s):
+un `ptt_start` que llega justo después de un `stop` huérfano se ignora también (`"toque muy corto"`)
+en vez de abrir el micrófono y dejarlo grabando hasta el tope; `ptt_start` repetido mientras ya se
+está grabando/transcribiendo se ignora con el motivo correspondiente.
+
+**Mediciones en vivo, esta máquina** (RTX 3050, `faster-whisper` "small" int8 en CPU; frases de
+prueba sintetizadas con `edge-tts` e inyectadas por un sumidero nulo de PulseAudio/PipeWire —
+`module-null-sink` + `PULSE_SOURCE=<sink>.monitor`/`REM_MIC_DEVICE=pulse` — para no depender de
+hablar de verdad frente al micrófono real, y reproducibles):
+- **Latencia de STT** (duración del audio vs. tiempo de transcripción, `beam_size=1`): factor
+  ~0,17-0,38× tiempo real — una frase de ~4s tarda ~1,1-1,3s en transcribir. Cargado el modelo, la
+  primera transcripción real de la sesión no paga penalidad de arranque en frío (la precarga ya
+  hizo una de calentamiento).
+- **Tiempo total, soltar la tecla -> primer audio de Rem SONANDO** (no solo despachado — mide hasta
+  el evento `voz_estado: true` real): ~6-9s para una respuesta corta de Claude, dominado por el
+  turno de LLM + TTS/RVC de la primera oración, no por el STT (que es la porción más chica,
+  ~1-1,3s de esos 6-9s). `habla.TurnoHabla` ahora acepta un `t_ref` opcional (el instante en que se
+  soltó la tecla, pasado por `_ptt_detener()`) para que el log de "primer audio enviado" muestre
+  las dos cifras: desde que arrancó el turno de LLM, y desde que el usuario soltó la tecla — la
+  segunda es la que le importa a la latencia percibida.
+- **RAM de faster-whisper** (`/proc/self/status`, VmRSS): proceso recién importado ~38 MiB ->
+  provider creado sin modelo ~40 MiB -> modelo "small" int8 cargado + calentado ~900 MiB (pico
+  ~1,4 GiB durante la carga) -> tras transcribir, estable en ~960 MiB. Con RVC + Ollama ya cargados
+  en el proceso real de `rem_chat.py`, el total medido en vivo (`faster-whisper` cargado dentro del
+  mismo proceso) llegó a ~4 GiB de RSS del proceso Python — RAM del sistema (23,6 GiB en esta
+  máquina), no VRAM: no compite con la calibración de `num_gpu`.
+- **Micrófono real**: `sounddevice.InputStream` abre en ~2ms sobre PipeWire (medido con el
+  dispositivo predeterminado del sistema). No se pudo grabar audio real de una persona hablando
+  frente al micrófono en esta sesión (el `@DEFAULT_SOURCE@` del sistema está silenciado —
+  `pactl get-source-mute` devuelve `yes`, una configuración preexistente de la máquina, no algo que
+  tocara esta implementación) — por eso las mediciones end-to-end de arriba usan el sumidero nulo.
+  El camino de código es el mismo (`Grabador` no distingue el origen); si el mute se destraba, no
+  hace falta cambiar nada para que capture voz real.
+
+## Líneas de Hyprland para push-to-talk (SUPER+V mantenida)
+
+No se editó `hyprland.conf` — son las líneas a agregar a mano, sección `binds` o `bindr`:
+
+```
+bind = SUPER, V, exec, /mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_ptt.py start
+bindr = SUPER, V, exec, /mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_ptt.py stop
+```
+
+`bind` (sin `r`) dispara al PRESIONAR, `bindr` dispara al SOLTAR — juntas dan un push-to-talk real
+sin necesidad de un daemon aparte escuchando eventos de teclado. `rem_ptt.py` es un proceso corto
+por invocación (se conecta, manda el comando, espera confirmación, sale) — el costo de spawnear un
+proceso Python por pulsación es imperceptible frente a la latencia real del pipeline (segundos).
 
     # IMPORTANTE: 
     AL MOMENTO DE HACER COMMIT NO PONGAS TU AUDITORIA Claude/Anthropic DETRO DEL COMMIT

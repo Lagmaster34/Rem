@@ -74,7 +74,7 @@ async def _pasar_por(chunks, on_chunk):
 
 async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
                           on_delta=None, on_tool_call=None, cola_habla=None,
-                          incluir_contexto=True):
+                          incluir_contexto=True, t_ref=None):
     """Manda `texto` al provider activo de `sesion` y consume stream_chat().
     Compartido entre el REPL de bench_chat.py y el panel de chat de
     rem_chat.py (vía rem_avatar_server.py) — cada consumidor decide qué hacer
@@ -98,6 +98,10 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
     (modo eco: no hay LLM al que informarle, y anteponerlo igual solo logra
     que se repita en voz/texto el porcentaje de CPU en vez de lo que se
     escribió).
+
+    `t_ref` (time.perf_counter(), opcional): instante desde el que se mide
+    "tiempo hasta el primer audio" además del propio inicio del turno — el
+    push-to-talk pasa el momento en que se soltó la tecla.
 
     Devuelve (texto_completo, done_chunk, turno_habla) — turno_habla es la
     instancia de habla.TurnoHabla (mide tiempo hasta el primer audio) si
@@ -130,7 +134,7 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
     turno_habla = None
     if cola_habla is not None:
         from habla import TurnoHabla
-        turno_habla = TurnoHabla()
+        turno_habla = TurnoHabla(t_ref)
         async for oracion in dividir_en_oraciones(_pasar_por(stream, _on_chunk)):
             cola_habla.put_nowait((oracion, turno_habla))
     else:

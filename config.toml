@@ -111,3 +111,71 @@ device = "cuda"   # "cpu" | "cuda"
 # ningún modelo concreto). Ver models/README.md para modelos alternativos
 # y sus condiciones de licencia.
 modelo = "models/rem_naenae.vrm"   # "rem.vrm" | "models/rem_naenae.vrm"
+
+
+[app]
+# Cómo se presenta Rem. Override: rem_chat.py --modo ventana|overlay.
+#   "ventana" → ventana GTK normal con avatar + panel de chat (el de siempre).
+#   "overlay" → layer surface transparente en una esquina (ver [overlay]).
+# Nunca los dos a la vez: es un solo proceso con un solo modo, y un segundo
+# rem_chat.py aborta con un error claro si ya hay uno corriendo.
+modo = "ventana"
+
+
+[overlay]
+# Superficie del modo overlay (rem_chat.py --modo overlay), anclada
+# IZQUIERDA + ABAJO. Transparente y click-through en todo salvo la caja de
+# texto (su rectángulo lo mide rem_avatar.html y se lo manda a GTK).
+ancho = 420
+alto  = 600
+# Separación respecto de los bordes de la pantalla, en px.
+margen_izquierdo = 0
+margen_inferior  = 0
+# "top" queda sobre las ventanas normales y bajo las fullscreen; "overlay"
+# queda sobre todo, fullscreen incluidas.
+capa = "top"
+# 0 = respeta la zona exclusiva de otros paneles (Rem se apoya sobre la barra);
+# -1 = ignora los paneles y se solapa con ellos.
+zona_exclusiva = 0
+
+
+[stt]
+# Voz de entrada (push-to-talk). Override: variable REM_STT_PROVIDER.
+# "local" → faster-whisper en CPU | "groq" → Whisper por la API de Groq.
+provider = "local"
+# Tope de una grabación, por si se pierde el ptt_stop (tecla soltada fuera
+# de foco, proceso muerto...). Al vencer se corta y se procesa lo grabado.
+max_grabacion_s = 30
+# Grabaciones más cortas que esto se descartan (un toque accidental de la tecla).
+min_grabacion_s = 0.4
+# Cuánto se muestra lo transcrito en la caja de texto ANTES de mandárselo al
+# LLM, para ver qué entendió.
+mostrar_transcripcion_s = 1.0
+# Margen tras el último audio de Rem antes de aceptar otro ptt_start (cola de
+# reproducción/eco de sala).
+espera_tras_habla_s = 0.5
+# Micrófono: "" = el predeterminado del sistema (PipeWire). Índice o nombre de
+# sounddevice (p. ej. "pulse"). Override: variable REM_MIC_DEVICE.
+dispositivo_entrada = ""
+
+
+[stt.local]
+# faster-whisper. EN CPU a propósito: la VRAM (4 GB) ya está llena con Ollama
+# + RVC (ver [llm.ollama].num_gpu), no se toca la GPU.
+model        = "small"
+compute_type = "int8"
+device       = "cpu"
+language     = "es"
+# 1 = decodificación voraz (la más rápida); subir mejora algo la precisión
+# a costa de latencia. Medido en CLAUDE.md, "Voz de entrada".
+beam_size    = 1
+# 0 = que decida ctranslate2.
+cpu_threads  = 0
+# Sesga el vocabulario hacia los nombres propios/técnicos que Rem oye seguido.
+initial_prompt = "Conversación con Rem, una asistente virtual. Vocabulario: Rem, Esteban, Ollama, Claude, Anthropic, Hyprland, Arch Linux, Python, PipeWire, GTK, WebKit, Whisper, RVC, VRM."
+
+
+[stt.groq]
+# Requiere GROQ_API_KEY en .env. Sin verificar en vivo en esta máquina.
+model = "whisper-large-v3-turbo"
+language = "es"

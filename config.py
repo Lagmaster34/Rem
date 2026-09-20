@@ -58,3 +58,31 @@ def leer_dispositivo_rvc() -> str:
     rvc_config = leer_config_toml().get("rvc", {})
     valor = str(rvc_config.get("device", "cuda")).strip().lower()
     return "cpu" if valor == "cpu" else "cuda"
+
+
+def leer_modo_app() -> str:
+    """Modo de presentación de rem_chat.py, desde config.toml [app].modo:
+    "ventana" (default) u "overlay". Cualquier otro valor cae a "ventana".
+    rem_chat.py --modo lo pisa."""
+    valor = str(leer_config_toml().get("app", {}).get("modo", "ventana")).strip().lower()
+    return valor if valor in ("ventana", "overlay") else "ventana"
+
+
+def leer_config_overlay() -> dict:
+    """[overlay] de config.toml con defaults: geometría, capa y zona exclusiva
+    de la layer surface del modo overlay."""
+    cfg = leer_config_toml().get("overlay", {})
+    def _int(clave, default):
+        try:
+            return int(cfg.get(clave, default))
+        except (TypeError, ValueError):
+            return default
+    capa = str(cfg.get("capa", "top")).strip().lower()
+    return {
+        "ancho": max(100, _int("ancho", 420)),
+        "alto": max(100, _int("alto", 600)),
+        "margen_izquierdo": _int("margen_izquierdo", 0),
+        "margen_inferior": _int("margen_inferior", 0),
+        "capa": capa if capa in ("top", "overlay") else "top",
+        "zona_exclusiva": _int("zona_exclusiva", 0),
+    }
