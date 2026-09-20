@@ -22,6 +22,11 @@ models/**/*.pth
 models/**/*.index
 rem.vrm
 
+# Modelos VRM alternativos (ver README de models/ para la fuente y licencia
+# de cada uno) — nunca se versionan, igual que rem.vrm arriba.
+*.glb
+models/*.vrm
+
 # Clips de animación VRMA (descargar manualmente — ver Animaciones/README.md).
 # El README sí se versiona; los .vrma y el pack descargado, no.
 Animaciones/*

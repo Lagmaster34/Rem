@@ -499,7 +499,129 @@ const CONFIG = {
     cabezaFraccion: 0.3,         // 0..1 — cuánto de la mirada (grados, ya convertidos a rad) gira también la cabeza/cuello
     cabezaVelocidad: 6,          // lerp/s de la cabeza hacia la mirada — más alto = menos retardo respecto a los ojos
   },
+  // ── SELECCIÓN DE MODELO ──────────────────────────────────────────────
+  // rem_chat.py/bench_chat.py arman la URL con ?modelo=<ruta> (ver
+  // rem_avatar_server.url_avatar(), que lo lee de config.toml
+  // [avatar].modelo) — la clave acá es esa MISMA ruta, tal cual. El código
+  // de lipsync/expresiones ya NO asume ningún modelo concreto: todo lo que
+  // depende del archivo vive en el perfil de su entrada acá.
+  //
+  // lipsync.visemas: por cada uno de los 15 visemes canónicos que manda
+  // lipsync.py (timeline[].viseme, formato "vrc.v_*" — el nombre es una
+  // convención interna de este proyecto, no depende de que el modelo tenga
+  // morphs con ESE nombre literal), la lista de morphs REALES de este VRM a
+  // los que contribuye y con qué peso. La resolución es SIEMPRE por nombre
+  // contra morphTargetDictionary (ver localizarMallaFacial/aplicarViseme):
+  // nunca se escribe un índice a ciegas, y un nombre que no exista en el
+  // modelo queda logueado y sin efecto (no rompe nada). Un viseme con lista
+  // vacía es a propósito "sin morph" (p.ej. boca cerrada en silencio/bilabial
+  // en un modelo sin ese matiz) — no es lo mismo que un nombre no encontrado.
+  modelos: {
+    'rem.vrm': {
+      // Los 15 visemes VRChat/Oculus completos, 1:1. Igual que antes de esta
+      // refactor, PERO ya no por índice hardcodeado: con este loader
+      // (GLTFLoader + VRMLoaderPlugin@2/VRMUtils.removeUnnecessaryJoints),
+      // morphTargetDictionary en runtime NO conserva los nombres reales del
+      // glTF — degenera a claves numéricas en STRING ("0".."58" acá). Esto
+      // se creía específico de cómo se exportó rem.vrm (ver CLAUDE.md,
+      // "Cómo three.js construye morphTargetDictionary"), pero se confirmó
+      // en vivo que TAMBIÉN pasa con models/rem_naenae.vrm — un archivo que
+      // sí nombra sus targets en el glTF crudo — así que es un fenómeno del
+      // LOADER, no de cómo se exportó cada archivo. La resolución sigue
+      // siendo por nombre (se busca "4" como clave real en
+      // morphTargetDictionary, nunca se escribe un índice a ciegas); estas
+      // claves específicas se confirmaron leyendo el extras.targetNames
+      // crudo del glTF con dump_vrm.py y correlacionando con el orden que
+      // preserva la degeneración numérica (todas las primitives de un mismo
+      // mesh comparten el mismo orden, así que la posición sigue siendo
+      // válida pese a perder el nombre).
+      lipsync: {
+        visemas: {
+          'vrc.v_aa': [{ morph: '4',  peso: 1 }],
+          'vrc.v_ch': [{ morph: '5',  peso: 1 }],
+          'vrc.v_dd': [{ morph: '6',  peso: 1 }],
+          'vrc.v_e':  [{ morph: '7',  peso: 1 }],
+          'vrc.v_ff': [{ morph: '8',  peso: 1 }],
+          'vrc.v_ih': [{ morph: '9',  peso: 1 }],
+          'vrc.v_kk': [{ morph: '10', peso: 1 }],
+          'vrc.v_nn': [{ morph: '11', peso: 1 }],
+          'vrc.v_oh': [{ morph: '12', peso: 1 }],
+          'vrc.v_ou': [{ morph: '13', peso: 1 }],
+          'vrc.v_pp': [{ morph: '14', peso: 1 }],
+          'vrc.v_rr': [{ morph: '15', peso: 1 }],
+          'vrc.v_sil':[{ morph: '16', peso: 1 }],
+          'vrc.v_ss': [{ morph: '17', peso: 1 }],
+          'vrc.v_th': [{ morph: '18', peso: 1 }],
+        },
+      },
+      // "Surprised" bindea (entre otros) un morph de boca ("Huh") — se
+      // suprime mientras hay audio para que no compita con los visemes.
+      expresionesSuprimirHabla: ['surprised'],
+    },
+    'models/rem_naenae.vrm': {
+      // Solo 5 morphs reales de boca (vocales VRoid estándar Fcl_MTH_*), sin
+      // el set VRChat completo. El glTF crudo de este archivo SÍ nombra sus
+      // targets (extras.targetNames trae "Face.M_..._Fcl_MTH_A", etc. —
+      // confirmado por inspección directa) pero en runtime, con este loader
+      // (GLTFLoader + VRMLoaderPlugin@2/VRMUtils.removeUnnecessaryJoints),
+      // morphTargetDictionary NO conserva esos nombres: degenera a claves
+      // numéricas en STRING ("0".."40"), exactamente el mismo fenómeno que
+      // rem.vrm — confirmado en vivo en los DOS modelos, así que no es un
+      // problema de cómo se exportó este archivo en particular, es de esta
+      // versión del loader. Las 10 primitives de Facebaked comparten el
+      // mismo orden de targets, así que la clave numérica sigue siendo
+      // válida en las 10 por igual (mismo criterio que rem.vrm). Posiciones
+      // reales (dump directo del glTF): Fcl_MTH_A=29, I=30, U=31, E=32,
+      // O=33. Punto de partida pedido: sil/pp -> boca cerrada de verdad (sin
+      // morph), las 5 vocales 1:1, "ff" parcial sobre "ih", consonantes sin
+      // viseme propio aproximadas con peso bajo de ih/aa — todo ajustable
+      // acá sin tocar código. Verificado en vivo (Esteban, no con capturas
+      // fijas): el lipsync se ve bien, incluso mejor que en rem.vrm.
+      lipsync: {
+        visemas: {
+          'vrc.v_sil': [],
+          'vrc.v_pp':  [],
+          'vrc.v_aa':  [{ morph: '29', peso: 1 }],    // Fcl_MTH_A
+          'vrc.v_e':   [{ morph: '32', peso: 1 }],    // Fcl_MTH_E
+          'vrc.v_ih':  [{ morph: '30', peso: 1 }],    // Fcl_MTH_I
+          'vrc.v_oh':  [{ morph: '33', peso: 1 }],    // Fcl_MTH_O
+          'vrc.v_ou':  [{ morph: '31', peso: 1 }],    // Fcl_MTH_U
+          'vrc.v_ff':  [{ morph: '30', peso: 0.3 }],
+          'vrc.v_dd':  [{ morph: '30', peso: 0.2 }],
+          'vrc.v_nn':  [{ morph: '30', peso: 0.2 }],
+          'vrc.v_ss':  [{ morph: '30', peso: 0.3 }],
+          'vrc.v_th':  [{ morph: '30', peso: 0.2 }],
+          'vrc.v_kk':  [{ morph: '29', peso: 0.3 }],
+          'vrc.v_rr':  [{ morph: '30', peso: 0.25 }],
+          'vrc.v_ch':  [{ morph: '30', peso: 0.4 }],
+        },
+      },
+      // Los 5 blendShapeGroups de emoción de este modelo (Angry/Fun/Joy/
+      // Sorrow/Surprised) bindean cada uno un ÚNICO morph "Fcl_ALL_*" —
+      // convención VRoid para "expresión completa" (ceja+ojo+BOCA en un
+      // solo shape esculpido), a diferencia de rem.vrm donde solo Surprised
+      // competía con la boca. Se suprimen las 4 que puede alcanzar
+      // EXPR_PROFILES/updateExpressions (happy/sad/angry/surprised) mientras
+      // hay audio — mismo mecanismo que rem.vrm, más expresiones en la lista.
+      expresionesSuprimirHabla: ['happy', 'sad', 'angry', 'surprised'],
+    },
+  },
 };
+
+// ═══════════════════════════════════════════════════
+// SELECCIÓN DE MODELO — ver CONFIG.modelos más arriba
+// ═══════════════════════════════════════════════════
+// ?modelo=... lo arma rem_avatar_server.url_avatar() (Python) leyendo
+// config.toml [avatar].modelo — default "rem.vrm" si falta el param (abrir
+// la página a mano, sin query, sigue funcionando) o si el valor no tiene
+// perfil en CONFIG.modelos (typo en config.toml: mejor caer a algo que
+// funciona que a un modelo sin lipsync configurado).
+const MODELO_ACTIVO = new URLSearchParams(location.search).get('modelo') || 'rem.vrm';
+const PERFIL_MODELO = CONFIG.modelos[MODELO_ACTIVO] ?? (() => {
+  console.warn(`[Modelo] "${MODELO_ACTIVO}" no tiene perfil en CONFIG.modelos — usando el de "rem.vrm"`);
+  return CONFIG.modelos['rem.vrm'];
+})();
+console.log(`[Modelo] activo: "${MODELO_ACTIVO}"`);
 
 // ═══════════════════════════════════════════════════
 // RENDERER + ESCENA
@@ -509,6 +631,25 @@ const CONFIG = {
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
+
+// Renderer WebGL real (Fase 0 del comparativo de modelos) — WEBGL_debug_renderer_info
+// es la única forma de saber si WebGL corre por la GPU (NVIDIA/iGPU) o por
+// software (llvmpipe/SwiftShader/Mesa "software rasterizer"), más allá de lo
+// que reporte nvidia-smi (que solo ve lo que llega a la GPU NVIDIA, no dice
+// nada si el compositor rasteriza por CPU). La extensión puede no estar
+// disponible (algunos navegadores la bloquean por fingerprinting) — se
+// loguea ese caso también, no se asume nada en silencio.
+(() => {
+  const gl = renderer.getContext();
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  if (!dbg) {
+    console.warn('[GPU] WEBGL_debug_renderer_info no disponible — no se puede identificar el renderer real');
+    return;
+  }
+  const renderer_ = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL);
+  const vendor_   = gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL);
+  console.log(`[GPU] UNMASKED_RENDERER_WEBGL: "${renderer_}" | UNMASKED_VENDOR_WEBGL: "${vendor_}"`);
+})();
 
 // Tamaño del framebuffer con tope de VRAM (CONFIG.render). setPixelRatio(r) +
 // setSize(w,h) → framebuffer = w·r × h·r, canvas CSS = w × h: con r<1 renderiza
@@ -602,10 +743,26 @@ function medirAlturaHuesos() {
     return null;
   }
 
+  // Medir con vrm.scene.position.y en 0 — si no, el offset Y que ya haya
+  // puesto la pasada anterior (Box3, o esta misma función en una llamada
+  // previa tras un resize) se filtra en "centro". "altura" es una RESTA
+  // (head - pie) y cancela ese offset sola, pero "centro" es un PROMEDIO y
+  // no lo cancela — sin este reset, recalcularEncuadre() queda contaminado
+  // con el offset anterior completo. Confirmado en vivo con
+  // models/rem_naenae.vrm: sin esto, el modelo terminaba ~0.93u más arriba
+  // de lo debido (cabeza fuera de cuadro); rem.vrm tenía el mismo bug pero
+  // ~0.46u, nunca lo bastante grave como para notarse a simple vista.
+  const yPrevio = vrm.scene.position.y;
+  vrm.scene.position.y = 0;
+  vrm.scene.updateMatrixWorld(true);
+
   const headPos = new THREE.Vector3(), lFootPos = new THREE.Vector3(), rFootPos = new THREE.Vector3();
   headB.getWorldPosition(headPos);
   lFootB.getWorldPosition(lFootPos);
   rFootB.getWorldPosition(rFootPos);
+
+  vrm.scene.position.y = yPrevio;
+  vrm.scene.updateMatrixWorld(true);
 
   const pieY = Math.min(lFootPos.y, rFootPos.y);
   const alturaCruda = headPos.y - pieY;   // hueso head al pie más bajo, sin margen
@@ -754,8 +911,10 @@ loader.register(p => new VRMAnimationLoaderPlugin(p));
 const VRM_MAX_INTENTOS = 5;
 
 function _cargarVRM(intento = 1) {
-  loader.load('/rem.vrm',
+  const _t0Carga = performance.now();
+  loader.load('/' + MODELO_ACTIVO,
     gltf => {
+      console.log(`[Modelo] "${MODELO_ACTIVO}" descargado+parseado en ${(performance.now() - _t0Carga).toFixed(0)}ms`);
       vrm = gltf.userData.vrm;
       window.__rem.vrm = vrm;
       VRMUtils.removeUnnecessaryJoints(vrm.scene);
@@ -842,6 +1001,13 @@ function _cargarVRM(intento = 1) {
         console.log('[VRM] piernas (para clips VRMA):',
                     !!getB('rightUpperLeg'), !!getB('rightLowerLeg'),
                     !!getB('leftUpperLeg'), !!getB('leftLowerLeg'));
+        // Sin jaw, aplicarVisemesPostUpdate() ya lo tolera (jawB queda null,
+        // ver el guard `if (jawB)`) — esto es solo para que se note en el
+        // log de arranque, no un chequeo funcional.
+        if (!vrm.humanoid.getRawBoneNode('jaw')) {
+          console.log('[VRM] sin hueso "jaw" — la apertura de mandíbula no se anima por hueso; '
+                     + 'los visemes (morph targets) siguen moviendo la boca igual.');
+        }
       }
       _exprMap = buildExprMap(names);
       localizarMallaFacial();
@@ -919,16 +1085,18 @@ const EXPR_PROFILES = {
 };
 const curExpr = { happy: 0, sad: 0, angry: 0, surprised: 0 };
 
+// Qué expresiones (claves de EXPR_PROFILES/_exprMap) bindean morphs de boca
+// en ESTE modelo y hay que suprimir mientras hay audio, para que no compitan
+// con los visemes — ver CONFIG.modelos[...].expresionesSuprimirHabla. Un
+// Set, no el array crudo, para el chequeo por frame de abajo.
+const _expresionesSuprimirHabla = new Set(PERFIL_MODELO.expresionesSuprimirHabla ?? []);
+
 function updateExpressions(dt) {
   const profile = EXPR_PROFILES[estado] ?? EXPR_PROFILES.idle;
-  // "Surprised" bindea (entre otros) el morph "Huh" — un gesto de boca. Con
-  // lipsync activo lo suprimimos para que no compita con los visemes (ver
-  // diagnosticarExpressionBinds() / CLAUDE.md). "Talk" nunca se llama desde
-  // este sistema, así que no hace falta suprimirla aparte.
   const suprimirBocaExpr = _audioActivo;
   for (const [k, target] of Object.entries(profile)) {
     curExpr[k] = lerp(curExpr[k], target, dt * 2.5);
-    trySetExpr(k, (k === 'surprised' && suprimirBocaExpr) ? 0 : curExpr[k]);
+    trySetExpr(k, (suprimirBocaExpr && _expresionesSuprimirHabla.has(k)) ? 0 : curExpr[k]);
   }
 }
 
@@ -1028,30 +1196,33 @@ _audioEl.addEventListener('stalled', () => {
     '| readyState:', _audioEl.readyState, '| networkState:', _audioEl.networkState);
 });
 
-// Morph targets vrc.* que puede tocar el timeline (ver lipsync.py FONEMA_A_VISEME)
+// Vocabulario canónico de 15 visemes que manda el timeline de lipsync.py
+// (timeline[].viseme, "vrc.v_*") — es una convención INTERNA de este
+// proyecto para hablar de "el viseme de la vocal a", no un nombre que se
+// asuma presente en ningún VRM. Cada modelo declara en CONFIG.modelos[...]
+// .lipsync.visemas a qué morph(s) REAL(es) de SU archivo contribuye cada uno
+// de estos 15 nombres, y con qué peso — ver localizarMallaFacial() más abajo,
+// que resuelve esos nombres reales contra morphTargetDictionary. Ya no hay
+// ningún índice fijo en el código: si un modelo no declara un viseme, o
+// declara un morph que no existe en el archivo, se loguea y ese viseme
+// simplemente no mueve nada (nunca se escribe a ciegas en una posición).
 const VISEME_NAMES = [
   'vrc.v_aa', 'vrc.v_e', 'vrc.v_ih', 'vrc.v_oh', 'vrc.v_ou',
   'vrc.v_pp', 'vrc.v_ff', 'vrc.v_ss', 'vrc.v_dd', 'vrc.v_kk',
-  'vrc.v_nn', 'vrc.v_rr', 'vrc.v_ch', 'vrc.v_sil',
+  'vrc.v_nn', 'vrc.v_rr', 'vrc.v_ch', 'vrc.v_sil', 'vrc.v_th',
 ];
-
-// Índices confirmados por inspección directa del glTF (ver CLAUDE.md, "Cómo
-// three.js construye morphTargetDictionary"): las 72 primitives de Body.baked
-// comparten el mismo extras.targetNames, en el mismo orden, así que un índice
-// es válido en las 72 por igual — no depende del nombre que le asigne three-vrm
-// en runtime (que en este modelo es genérico, tipo "Bodybaked_NN").
-const VISEME_INDEX = {
-  'vrc.v_aa': 4,  'vrc.v_ch': 5,  'vrc.v_dd': 6,  'vrc.v_e': 7,   'vrc.v_ff': 8,
-  'vrc.v_ih': 9,  'vrc.v_kk': 10, 'vrc.v_nn': 11, 'vrc.v_oh': 12, 'vrc.v_ou': 13,
-  'vrc.v_pp': 14, 'vrc.v_rr': 15, 'vrc.v_sil': 16, 'vrc.v_ss': 17, 'vrc.v_th': 18,
-};
-const VISEME_INDEX_MAX = 18; // índice más alto de la tabla — una malla necesita al menos esto+1 influences
 
 const JAW_MAX_RAD        = 0.25;  // apertura máxima del hueso jaw, en radianes (eje X)
 const JAW_SMOOTH_SPEED   = 20;    // suavizado exponencial (lerp con dt)
 
-let _visemeIndex    = {};  // nombre canónico (VISEME_NAMES) -> [{mesh, idx}, ...]  (vía "nombre")
-let _visemeMeshesPorIndice = []; // mallas con morphTargetInfluences.length > VISEME_INDEX_MAX (vía "indice")
+// nombre canónico -> [{mesh, idx, peso}, ...], resuelto en localizarMallaFacial()
+// contra el perfil del modelo activo (PERFIL_MODELO.lipsync.visemas).
+let _visemeSlots = {};
+// Deduplicado de TODOS los (mesh,idx) que aparecen en _visemeSlots — para
+// poder poner todo en 0 una vez por frame antes de sumar los visemes activos
+// (varios visemes canónicos pueden compartir el mismo morph real, ver el
+// perfil "reducido" del modelo nuevo: dd/nn/ss/th/rr/ch comparten "ih").
+let _visemeSlotsUnicos = [];
 let _audioPlayQueue = [];  // cola FIFO: {url, timeline} — para no solapar frases
 let _audioPlaying  = false;
 let _timeline       = [];
@@ -1069,14 +1240,15 @@ function actualizarHablaEnergia(dt) {
   _hablaEnergia = lerp(_hablaEnergia, objetivo, dt * 8);
 }
 
-// Tres vías de lipsync, en orden de preferencia:
-//   'indice'           — escribe morphTargetInfluences[índice] directo en TODAS las
-//                         mallas que lo tengan (72 primitives en este modelo). Preferida:
-//                         los 15 visemes completos, no depende de nombres.
-//   'nombre'           — busca los 15 nombres vrc.* en morphTargetDictionary. Portable a
-//                         otros modelos que sí expongan esos nombres.
-//   'expressionManager' — último recurso: 5 presets estándar de VRM (aa/ee/ih/oh/ou) vía
-//                         setValue(), para modelos sin ninguno de los morphs vrc.*.
+// Dos vías de lipsync, en orden de preferencia:
+//   'directo'           — resuelve PERFIL_MODELO.lipsync.visemas contra
+//                         morphTargetDictionary (por NOMBRE, nunca por índice
+//                         fijo) y escribe morphTargetInfluences. Cubre tanto
+//                         un modelo con los 15 visemes completos (rem.vrm)
+//                         como uno con un set reducido (el modelo nuevo).
+//   'expressionManager' — último recurso, si el perfil del modelo no resolvió
+//                         NINGÚN morph real: 5 presets estándar de VRM
+//                         (aa/ee/ih/oh/ou) vía setValue().
 let _viaLipsync = 'expressionManager';
 const VRM_VISEME_KEYS = ['aa', 'ee', 'ih', 'oh', 'ou'];
 
@@ -1088,29 +1260,20 @@ function _normalizarNombreMorph(s) {
 }
 
 function localizarMallaFacial() {
-  _visemeIndex = {};
-  for (const nombre of VISEME_NAMES) _visemeIndex[nombre] = [];
-  _visemeMeshesPorIndice = [];
-
-  const porNormalizado = {};
-  for (const nombre of VISEME_NAMES) porNormalizado[_normalizarNombreMorph(nombre)] = nombre;
+  _visemeSlots = {};
+  for (const nombre of VISEME_NAMES) _visemeSlots[nombre] = [];
 
   let mallasConDiccionario = 0;
   let mallasSinDiccionario = 0;
-  const clavesUnicas = new Set();   // vía B: unión de TODAS las claves reales vistas
-  const mallasGrandes = [];         // vía B: mallas con > 40 claves (candidatas a "la" malla facial)
+  const clavesUnicas = new Set();   // diagnóstico: unión de TODAS las claves reales vistas
+  const mallasGrandes = [];         // diagnóstico: mallas con > 40 claves (candidatas a "la" malla facial)
+  // nombre real de morph (tal cual aparece en morphTargetDictionary) -> [{mesh, idx}, ...]
+  // — varias mallas (primitives de un mismo mesh baked) pueden compartir la
+  // misma clave, hay que escribir en todas o la cara se movería a trozos.
+  const todosLosMorphsPorNombre = {};
 
   vrm.scene.traverse(obj => {
     if (!obj.isMesh) return;
-
-    // Vía "índice": cualquier malla con espacio suficiente en morphTargetInfluences
-    // para cubrir el índice más alto de la tabla (18), sin importar el nombre.
-    // Body.baked se carga como 72 Mesh separadas (una por primitive/material) —
-    // TODAS comparten el mismo orden de morph targets, así que hay que registrarlas
-    // todas: escribir el índice en una sola movería la cara a trozos.
-    if (Array.isArray(obj.morphTargetInfluences) && obj.morphTargetInfluences.length > VISEME_INDEX_MAX) {
-      _visemeMeshesPorIndice.push(obj);
-    }
 
     const morphCount = obj.geometry?.morphAttributes?.position?.length ?? 0;
 
@@ -1119,9 +1282,9 @@ function localizarMallaFacial() {
         // GLTFLoader solo construye morphTargetDictionary si
         // mesh.morphTargetInfluences.length === extras.targetNames.length.
         // Si este primitive trae una cantidad de morph attributes distinta a
-        // los 59 de targetNames (común cuando el exportador reparte los
-        // morphs de forma desigual entre primitives), el diccionario NUNCA
-        // se crea — sin importar el nombre. Buscá en la consola el warning
+        // la de targetNames (común cuando el exportador reparte los morphs
+        // de forma desigual entre primitives), el diccionario NUNCA se crea
+        // — sin importar el nombre. Buscá en la consola el warning
         // "THREE.GLTFLoader: Invalid extras.targetNames length" para confirmarlo.
         mallasSinDiccionario++;
         console.warn(`[Lipsync] malla "${obj.name}": ${morphCount} morph attributes en la geometría` +
@@ -1137,38 +1300,59 @@ function localizarMallaFacial() {
     if (claves.length > 40) mallasGrandes.push(obj.name);
 
     for (const clave of claves) {
-      const canonico = porNormalizado[_normalizarNombreMorph(clave)];
-      if (canonico) {
-        _visemeIndex[canonico].push({ mesh: obj, idx: obj.morphTargetDictionary[clave] });
-      }
+      (todosLosMorphsPorNombre[clave] ??= []).push({ mesh: obj, idx: obj.morphTargetDictionary[clave] });
     }
   });
 
-  const resueltosPorNombre = VISEME_NAMES.filter(n => _visemeIndex[n].length > 0);
-  console.log(`[Lipsync] mallas registradas para índice directo: ${_visemeMeshesPorIndice.length}`);
-  console.log(`[Lipsync] visemes resueltos por nombre: ${resueltosPorNombre.length}/${VISEME_NAMES.length} ->`, resueltosPorNombre);
-
-  // Vía B — diagnóstico agregado: qué nombres hay REALMENTE en los diccionarios,
-  // de un vistazo, sin tener que revisar los logs por-malla de arriba uno a uno.
   console.log(`[Lipsync][diag] claves únicas en los ${mallasConDiccionario} diccionarios `
             + `(${clavesUnicas.size} distintas):`, [...clavesUnicas].sort());
   console.log('[Lipsync][diag] mallas con más de 40 claves:', mallasGrandes);
 
-  // Decidir qué vía de lipsync usar, en orden de preferencia: índice > nombre > expressionManager.
-  if (_visemeMeshesPorIndice.length > 0) {
-    _viaLipsync = 'indice';
-    console.log(`[Lipsync] VÍA ACTIVA: índice directo — 15/15 visemes, `
-              + `${_visemeMeshesPorIndice.length} malla(s) registrada(s)`);
-  } else if (resueltosPorNombre.length > 0) {
-    _viaLipsync = 'nombre';
-    console.log(`[Lipsync] VÍA ACTIVA: nombre (morphTargetDictionary) — `
-              + `${resueltosPorNombre.length}/${VISEME_NAMES.length} visemes resueltos`);
-  } else {
-    _viaLipsync = 'expressionManager';
+  // Resolver PERFIL_MODELO.lipsync.visemas contra lo que realmente existe en
+  // este archivo. Nunca se escribe a ciegas: un morph declarado que no
+  // aparece en NINGÚN diccionario queda logueado y sin efecto.
+  const tabla = PERFIL_MODELO.lipsync?.visemas ?? {};
+  const morphsNoEncontrados = [];
+  const visemesSinDeclarar = [];
+  const _visemeSlotsUnicosSet = new Set(); // dedupe por mesh+idx (mesh.uuid+':'+idx)
+
+  for (const nombre of VISEME_NAMES) {
+    const entradas = tabla[nombre];
+    if (entradas === undefined) { visemesSinDeclarar.push(nombre); continue; }
+    for (const { morph, peso } of entradas) {
+      const encontrados = todosLosMorphsPorNombre[morph];
+      if (!encontrados || encontrados.length === 0) {
+        morphsNoEncontrados.push(`${nombre} -> "${morph}"`);
+        continue;
+      }
+      for (const { mesh, idx } of encontrados) {
+        _visemeSlots[nombre].push({ mesh, idx, peso });
+        const clave = mesh.uuid + ':' + idx;
+        if (!_visemeSlotsUnicosSet.has(clave)) {
+          _visemeSlotsUnicosSet.add(clave);
+          _visemeSlotsUnicos.push({ mesh, idx });
+        }
+      }
+    }
+  }
+
+  const resueltos = VISEME_NAMES.filter(n => _visemeSlots[n].length > 0);
+  console.log(`[Lipsync] perfil "${MODELO_ACTIVO}": ${resueltos.length}/${VISEME_NAMES.length} `
+            + `visemes resueltos por nombre, ${_visemeSlotsUnicos.length} slot(s) de morph únicos ->`, resueltos);
+  if (visemesSinDeclarar.length) {
+    console.log(`[Lipsync] visemes sin declarar en el perfil (se quedan en 0 siempre): ${visemesSinDeclarar.join(', ')}`);
+  }
+  if (morphsNoEncontrados.length) {
+    console.warn(`[Lipsync] morphs del perfil que NO existen en este VRM (sin efecto): ${morphsNoEncontrados.join(', ')}`);
+  }
+
+  _viaLipsync = resueltos.length > 0 ? 'directo' : 'expressionManager';
+  if (_viaLipsync === 'expressionManager') {
     console.warn(`[Lipsync] VÍA ACTIVA: fallback a vrm.expressionManager (aa/ee/ih/oh/ou) — `
-               + `${VRM_VISEME_KEYS.length}/${VISEME_NAMES.length} visemes (parciales), `
-               + `sin morph targets vrc.* ni por índice ni por nombre.`,
+               + `el perfil de "${MODELO_ACTIVO}" no resolvió ningún morph real.`,
                'expressionManager expone:', vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? []);
+  } else {
+    console.log(`[Lipsync] VÍA ACTIVA: directo (por nombre) — ${resueltos.length}/${VISEME_NAMES.length} visemes`);
   }
 
   diagnosticarExpressionBinds();
@@ -1197,25 +1381,22 @@ function diagnosticarExpressionBinds() {
   }
 }
 
-// Aplica un viseme vrc.* (por su nombre canónico) según la vía activa.
-// 'indice': escribe el índice fijo de VISEME_INDEX en TODAS las mallas
-// registradas (72 primitives comparten el mismo orden — hay que escribir en
-// todas, si no la cara se movería a trozos). 'nombre': usa el índice resuelto
-// por morphTargetDictionary en localizarMallaFacial().
-function setViseme(name, value) {
-  if (_viaLipsync === 'indice') {
-    const idx = VISEME_INDEX[name];
-    if (idx === undefined) return;
-    for (const mesh of _visemeMeshesPorIndice) {
-      mesh.morphTargetInfluences[idx] = value;
+// Escribe los visemes ACTIVOS de este frame (0, 1 o 2 — actual + siguiente
+// durante el crossfade del timeline) resueltos vía _visemeSlots. Pone a 0
+// primero TODOS los slots únicos (varios visemes canónicos pueden compartir
+// el mismo morph real — ver el perfil "reducido" del modelo nuevo, donde
+// dd/nn/ss/th/rr/ch comparten "ih") y después SUMA (no pisa) cada
+// contribución activa, para que dos visemes que comparten morph se mezclen
+// bien durante el crossfade en vez de que el segundo pise al primero.
+// activos: [{nombre, peso}, ...] — nombre es un canónico de VISEME_NAMES.
+function _escribirVisemes(activos) {
+  for (const { mesh, idx } of _visemeSlotsUnicos) mesh.morphTargetInfluences[idx] = 0;
+  for (const { nombre, peso } of activos) {
+    const entradas = _visemeSlots[nombre];
+    if (!entradas) continue;
+    for (const { mesh, idx, peso: pesoConfig } of entradas) {
+      mesh.morphTargetInfluences[idx] += peso * pesoConfig;
     }
-    return;
-  }
-
-  const entradas = _visemeIndex[name];
-  if (!entradas) return;
-  for (const { mesh, idx } of entradas) {
-    mesh.morphTargetInfluences[idx] = value;
   }
 }
 
@@ -1298,17 +1479,21 @@ function aplicarVisemesPostUpdate(dt) {
   if (_viaLipsync !== 'expressionManager') {
     if (_estadoVisemeFrame) {
       const { actual, siguiente, alpha } = _estadoVisemeFrame;
-      for (const nombre of VISEME_NAMES) setViseme(nombre, 0);
-      setViseme(actual.viseme, 1 - alpha);
-      if (siguiente !== actual) setViseme(siguiente.viseme, alpha);
+      const activos = [{ nombre: actual.viseme, peso: 1 - alpha }];
+      if (siguiente !== actual) activos.push({ nombre: siguiente.viseme, peso: alpha });
+      _escribirVisemes(activos);
     } else {
-      for (const nombre of VISEME_NAMES) setViseme(nombre, 0);
+      _escribirVisemes([]);
     }
   }
 
   if (_estadoVisemeFrame) objetivoApertura = _estadoVisemeFrame.actual.apertura ?? 0;
 
   _jawApertura = lerp(_jawApertura, objetivoApertura, dt * JAW_SMOOTH_SPEED);
+  // Modelos sin hueso jaw (ver CONFIG.modelos / models/README.md): la
+  // apertura de mandíbula simplemente no se anima por hueso — los visemes
+  // (arriba) siguen moviendo la boca igual, jawB es la única fuente de esa
+  // apertura extra y su ausencia no es un error.
   const jawB = vrm?.humanoid?.getRawBoneNode('jaw');
   if (jawB) jawB.rotation.x = _jawApertura * JAW_MAX_RAD;
 }

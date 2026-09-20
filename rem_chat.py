@@ -148,7 +148,7 @@ def main():
 
     win.add(webview)
 
-    url = f"http://localhost:{rem_avatar_server.HTTP_PORT}/rem_avatar.html?modo=ventana"
+    url = rem_avatar_server.url_avatar("ventana")
 
     # ── Carga con retry exponencial: el Network Process de WebKit2GTK 2.52.5
     # puede crashear en el peor momento (ver CLAUDE.md, "crash interno del

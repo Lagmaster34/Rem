@@ -67,7 +67,8 @@ import config
 import rem_avatar_server
 from rem_avatar_server import HTTP_PORT, WS_PORT, ESTADOS_VALIDOS
 
-URL_AVATAR = f"http://localhost:{HTTP_PORT}/rem_avatar.html"
+URL_AVATAR_BASE = f"http://localhost:{HTTP_PORT}/rem_avatar.html"  # sin query — para el healthcheck HTTP
+URL_AVATAR = rem_avatar_server.url_avatar()  # con ?modelo=... (config.toml [avatar]) — para abrir en el navegador
 WS_URI = f"ws://127.0.0.1:{WS_PORT}"
 ESPERA_HTTP_S = 5.0     # tiempo máximo para que el servidor HTTP responda antes de --open
 
@@ -80,7 +81,7 @@ def _esperar_http(timeout=ESPERA_HTTP_S):
     t_limite = time.time() + timeout
     while time.time() < t_limite:
         try:
-            urllib.request.urlopen(URL_AVATAR, timeout=1.0)
+            urllib.request.urlopen(URL_AVATAR_BASE, timeout=1.0)
             return True
         except urllib.error.URLError:
             time.sleep(0.2)

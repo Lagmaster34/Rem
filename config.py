@@ -40,6 +40,16 @@ def leer_config_toml(ruta: str = TOML_PATH) -> dict:
         return tomlkit.parse(f.read())
 
 
+def leer_modelo_avatar() -> str:
+    """Ruta (relativa a la raíz del proyecto) del modelo VRM a cargar en el
+    avatar, desde config.toml [avatar].modelo (default "rem.vrm"). La sirve
+    rem_avatar_server.py (que sirve todo BASE_DIR) y la consume
+    rem_avatar.html vía el query param ?modelo=... que arma
+    rem_avatar_server.url_avatar()."""
+    avatar_config = leer_config_toml().get("avatar", {})
+    return str(avatar_config.get("modelo", "rem.vrm")).strip() or "rem.vrm"
+
+
 def leer_dispositivo_rvc() -> str:
     """Dispositivo para RVC: "cpu" o "cuda", desde config.toml [rvc].device
     (default "cuda"). Cualquier valor que no sea exactamente "cpu" se trata

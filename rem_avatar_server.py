@@ -162,6 +162,20 @@ def enviar_audio(ruta_wav: str, timeline: list) -> bool:
 # Estados válidos para el avatar
 ESTADOS_VALIDOS = {'idle', 'talking', 'thinking', 'happy', 'sad', 'angry', 'surprised'}
 
+
+def url_avatar(modo: str = "ventana") -> str:
+    """URL de rem_avatar.html con el modelo VRM activo (config.toml ->
+    [avatar].modelo) como query param — único punto que arma esta URL, para
+    que rem_chat.py y bench_chat.py no dupliquen la lectura de config.toml.
+    rem_avatar.html lee ?modelo=... para elegir el perfil correspondiente en
+    CONFIG.modelos (ver "Selección de modelo" en ese archivo)."""
+    import config as _config
+    import urllib.parse
+    modelo = _config.leer_modelo_avatar()
+    qs = urllib.parse.urlencode({"modo": modo, "modelo": modelo})
+    return f"http://localhost:{HTTP_PORT}/rem_avatar.html?{qs}"
+
+
 def enviar_estado_emocional(emocion: str):
     """Envía un estado emocional al avatar. Válidos: happy, sad, angry, surprised."""
     if emocion in ESTADOS_VALIDOS:

@@ -99,3 +99,15 @@ model = "llama-3.3-70b-versatile"
 # día el LLM activo no es "ollama" (nada compitiendo por VRAM, da igual) o
 # si se necesita liberar toda la GPU por otro motivo.
 device = "cuda"   # "cpu" | "cuda"
+
+
+[avatar]
+# Modelo VRM a cargar en rem_avatar.html — ruta relativa a la raíz del
+# proyecto (servida por rem_avatar_server.py, que sirve todo BASE_DIR).
+# rem_avatar_server.url_avatar() lee esto y lo agrega como ?modelo=... a la
+# URL de la página; rem_avatar.html usa ese valor para elegir el perfil
+# correspondiente en CONFIG.modelos (lipsync, expresiones a suprimir al
+# hablar, etc. — cada modelo tiene su propio perfil, el código no asume
+# ningún modelo concreto). Ver models/README.md para modelos alternativos
+# y sus condiciones de licencia.
+modelo = "models/rem_naenae.vrm"   # "rem.vrm" | "models/rem_naenae.vrm"

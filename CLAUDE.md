@@ -1748,5 +1748,111 @@ Los clips **no tocan expresiones ni mirada**: si un `.vrma` nuevo trae pistas de
 `clipDeVrma()` las ignora (usa solo `humanoidTracks`), y si anima `leftEye`/`rightEye`/`jaw` esos
 huesos se excluyen. No hay que hacer nada especial para eso.
 
+## Soporte multimodelo del avatar
+
+El código de `rem_avatar.html` ya no asume un modelo VRM concreto — soporta `rem.vrm` (raíz del
+proyecto) y `models/rem_naenae.vrm` (ver `models/README.md` para su origen/licencia), y agregar
+uno nuevo no toca lógica, solo `CONFIG.modelos`.
+
+**Cómo se elige el modelo**: `config.toml` → `[avatar].modelo` (por defecto
+`"models/rem_naenae.vrm"`; `"rem.vrm"` sigue disponible como alternativa, ninguno de los dos se
+borra). `config.leer_modelo_avatar()` lo lee; `rem_avatar_server.url_avatar(modo)` es el ÚNICO
+punto que arma la URL de la página con `?modelo=...` — lo usan tanto `rem_chat.py` como
+`bench_chat.py` (`_abrir_navegador()`/`URL_AVATAR`), así que no hay dos lugares leyendo
+`config.toml` por separado. En `rem_avatar.html`, `MODELO_ACTIVO` sale de
+`new URLSearchParams(location.search).get('modelo')` (default `"rem.vrm"` si falta el param —
+abrir la página a mano sin query sigue funcionando) y `PERFIL_MODELO = CONFIG.modelos[MODELO_ACTIVO]`
+cae a `CONFIG.modelos['rem.vrm']` con un warning si el valor no tiene perfil (typo en config.toml).
+
+**Qué declara cada entrada de `CONFIG.modelos`**:
+- `lipsync.visemas`: por cada uno de los 15 visemes canónicos que manda `lipsync.py`
+  (`timeline[].viseme`, formato `"vrc.v_*"` — es una convención interna del proyecto, no un nombre
+  que se asuma presente en ningún VRM), la lista de `{morph, peso}` a la(s) que contribuye. `morph`
+  es la CLAVE real que hay que buscar en `morphTargetDictionary` de este archivo en particular (ver
+  más abajo por qué eso casi nunca es el nombre "bonito" del glTF). Una lista vacía (`[]`) es a
+  propósito "sin morph" (boca cerrada de verdad, más barato que escribir peso 0 cada frame) — no es
+  lo mismo que un nombre no encontrado, que queda logueado como advertencia.
+- `expresionesSuprimirHabla`: qué claves de `EXPR_PROFILES`/`_exprMap` (`happy`/`sad`/`angry`/
+  `surprised`) bindean morphs de boca en ESTE modelo y hay que apagar mientras `_audioActivo`, para
+  que no compitan con los visemes. rem.vrm solo necesita `['surprised']`; el modelo nuevo necesita
+  las 4, porque sus `Fcl_ALL_*` son shapes de "cara completa" (cejas+ojos+boca en un solo morph
+  esculpido, convención VRoid), a diferencia de rem.vrm donde solo "Surprised" tocaba la boca.
+
+**Cómo agregar un modelo nuevo**: cargarlo una vez con un perfil vacío (`lipsync: {visemas: {}}`),
+mirar el log `[Lipsync][diag] claves únicas en los N diccionarios` (te da el vocabulario real de
+claves que existen) y `[Diag] expresión "aa"/"ih"/... — N bind(s): -> malla(s)=[...] morph_index=N`
+(los binds de VRM0 apuntan a `{mesh, index}` directo, sin pasar por nombre — son la fuente más
+confiable para saber qué índice es cada vocal, igual que se hizo para los dos modelos actuales).
+Con eso arriba, completar `lipsync.visemas` con esas claves. Revisar también qué expresiones
+bindean morfos de boca (mismo log `[Diag] expresión ...`) para `expresionesSuprimirHabla`.
+
+### `morphTargetDictionary` degenera a claves numéricas — confirmado en los DOS modelos
+
+Ver "Cómo three.js construye morphTargetDictionary" más arriba: se creía un problema específico de
+cómo se exportó `rem.vrm` (targets sin nombre real). Se confirmó agregando `models/rem_naenae.vrm`
+—un archivo cuyo glTF crudo SÍ nombra sus targets (`extras.targetNames` trae literalmente
+`"Face.M_F00_000_00_Fcl_MTH_A"`, etc., confirmado con `dump_vrm.py`)— que en runtime
+`morphTargetDictionary` **igual** degenera a claves `"0".."40"` en STRING. Es decir: no es un
+problema de cómo se exportó cada archivo, es un efecto del pipeline de carga (`GLTFLoader` +
+`VRMLoaderPlugin@2` + `VRMUtils.removeUnnecessaryJoints`) en esta versión de three-vrm. La
+"resolución por nombre" en `localizarMallaFacial()`/`CONFIG.modelos[...].lipsync.visemas` sigue
+siendo válida — busca esa clave (sea "4" o "Fcl_MTH_A") en `morphTargetDictionary` real y nunca
+escribe a ciegas en un índice — pero la clave que hay que declarar casi siempre termina siendo el
+número de posición, no el nombre "bonito" del glTF.
+
+### Pendiente: resolver morphs por el nombre REAL, no por la posición degenerada
+
+Lo de arriba funciona (probado en los dos modelos) pero es frágil: si el orden de
+`geometry.morphAttributes.position` cambiara entre versiones del loader, las claves numéricas
+declaradas en `CONFIG.modelos` quedarían apuntando a otra cosa sin que nada avise (los índices
+existen igual, solo que a un morph distinto). La resolución robusta de verdad es leer
+`extras.targetNames` del **JSON crudo del glTF** (`gltf.parser.json.meshes[i].primitives[j].extras
+.targetNames`, disponible en el callback de `loader.load()` vía `gltf.parser`) al cargar el modelo,
+en vez de depender de `morphTargetDictionary` reconstruido por three.js — así `CONFIG.modelos[...]
+.lipsync.visemas` podría declarar el nombre real ("Fcl_MTH_A") siempre, y el código correlacionaría
+ese nombre con la posición real leyendo el glTF directo, sin pasar por la degeneración. No
+implementado todavía — los índices numéricos hardcodeados por modelo (confirmados en vivo, no
+adivinados) son la solución pragmática actual.
+
+## Bug de encuadre: medición por huesos contaminada por el offset provisorio
+
+`recalcularEncuadre()` se llama DOS veces al cargar un modelo: una con la medición provisoria por
+`Box3` (antes de posar nada), y otra un frame después con la medición real por huesos
+(`medirAlturaHuesos()`, ver "Encuadre del avatar" más arriba). El bug: `medirAlturaHuesos()` leía
+`head`/`leftFoot`/`rightFoot` con `getWorldPosition()` — posiciones de MUNDO — pero para ese
+momento `vrm.scene.position.y` YA tenía el offset Y de la primera pasada (Box3). `altura` (una
+RESTA, `head.y - pie.y`) cancelaba ese offset sola y salía bien, pero `centro` (un PROMEDIO,
+`(tope+pie)/2`) NO lo cancelaba — quedaba contaminado con el offset Y de la pasada anterior
+completo. `recalcularEncuadre()` trataba ese `centro` contaminado como si fuera local, así que el
+resultado final del `position.y` quedaba desplazado exactamente por ese offset previo.
+
+Con `rem.vrm` el offset de la primera pasada era chico (~0,46u, porque `Box3` mide un poco más de
+la mitad de la altura real por el problema de skinning ya documentado) y el error pasaba
+inadvertido — se veía "bien" a simple vista aunque no estuviera perfecto. Con
+`models/rem_naenae.vrm` el offset de la primera pasada resultó mucho más grande (~0,93u, porque acá
+`Box3` YA mide casi bien, así que el "salto" entre pasadas es mayor) y el error sacaba la cabeza
+completamente del cuadro — así se detectó.
+
+**Arreglo**: `medirAlturaHuesos()` pone `vrm.scene.position.y = 0` (y
+`updateMatrixWorld(true)`) antes de leer las posiciones de mundo, y restaura el valor previo
+después — mide en un sistema sin el offset contaminante, sea cual sea. Verificado en vivo con los
+dos modelos: `rem.vrm` pasó de `position.y=-0,571` a `-1,032` (mejor encuadrada, más margen arriba)
+y `models/rem_naenae.vrm` de `-0,043` (cabeza fuera de cuadro) a `-0,977` (cuerpo completo visible),
+coincidiendo ambos con el cálculo teórico hecho a mano para descartar que fuera casualidad.
+
+## Pendiente: confirmar software vs. iGPU para el renderer WebGL real
+
+CLAUDE.md viene asumiendo "WebGL por software" a partir de que `WebKitWebProcess` no aparece en
+`nvidia-smi` (confirmado de nuevo con el modelo nuevo: 0 MiB en `nvidia-smi --query-compute-apps`
+tanto con `rem.vrm` como con `models/rem_naenae.vrm`, con o sin RVC/Ollama cargados). Eso descarta
+la NVIDIA, pero esta máquina también tiene una iGPU Intel — `nvidia-smi` no puede verla, así que
+"no es la NVIDIA" no es lo mismo que "es software (llvmpipe)". `WEBGL_debug_renderer_info` tampoco
+sirve para esto: WebKit devuelve un valor fijo de fingerprinting (`"Apple GPU"` / `"Apple Inc."`),
+no el hardware real, en cualquier plataforma. La forma de confirmarlo de verdad es mirar qué
+librerías de Mesa carga el proceso `WebKitWebProcess` en runtime:
+`grep -i 'swrast\|llvmpipe\|iris\|i965' /proc/<pid_de_WebKitWebProcess>/maps` — `swrast`/`llvmpipe`
+confirma software puro, `iris`/`i965` confirmaría que sí usa la iGPU Intel por DRI. No se hizo
+todavía (hace falta encontrar el PID del proceso hijo correcto, no el de `rem_chat.py`).
+
     # IMPORTANTE: 
     AL MOMENTO DE HACER COMMIT NO PONGAS TU AUDITORIA Claude/Anthropic DETRO DEL COMMIT
