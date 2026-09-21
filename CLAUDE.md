@@ -2210,14 +2210,87 @@ directo contra Ollama (mismo payload que `OllamaProvider`, prompt real de ~1170 
   que delata un tope fijo, no ruido. La decodificación con 24 capas en GPU está limitada por ancho de
   banda de memoria. `nvidia-smi -q -d PERFORMANCE` reporta `SW Power Cap: Active` y `SW Thermal
   Slowdown: Active`, y **el portátil estaba en batería** (`ACAD online=0`, `BAT1 Discharging`, 29%).
-  Una carga CUDA concurrente (imitando a RVC) no la saca de P5. Los ~16-17 tok/s vistos en los turnos
-  2 y 3 de una corrida de `rem_chat.py` no se explican con esto (no se muestreó la GPU en esa
-  corrida): quedan como una observación sin causa confirmada. La tabla de calibración de `num_gpu`
-  (20,7 tok/s con `num_gpu=24`) es de otra sesión, y no se sabe con qué alimentación se midió.
-  **No se pudo medir con corriente conectada** (el equipo estaba en batería durante toda esta
-  sesión), así que "en batería la GPU cae a P5 y da ~6,6 tok/s" está medido, y "con corriente vuelve
-  a 15-20 tok/s" es una hipótesis razonable pero NO verificada. Antes de tocar `num_gpu`/hilos/`cpu_threads` por este
-  síntoma, volver a medir con corriente. Forzar relojes (`nvidia-smi -lmc`) requiere root y no se hizo.
+  Una carga CUDA concurrente (imitando a RVC) no la saca de P5.
+- **Verificado con corriente conectada** (el equipo se enchufó a mitad de la sesión, batería 16-19%
+  cargando): la GPU pasa a **P0, memoria a 6001 MHz, PCIe gen 4**, y Ollama da **21,7-22,2 tok/s
+  estables** (5 generaciones seguidas, banco directo) y ~20 tok/s por `rem_chat.py` — 3,3× lo de
+  batería, y coincide con la tabla de calibración de `num_gpu` (20,7). O sea: en batería ~6,6 tok/s,
+  con corriente ~20-22. Los ~16-17 tok/s de aquella corrida de `rem_chat.py` en batería siguen sin
+  causa confirmada (no se muestreó la GPU). Forzar relojes en batería (`nvidia-smi -lmc`) requiere
+  root y no se hizo.
+- **Ninguna medición de tok/s sin este dato**: el log `[Ollama]` de cada turno ahora termina con
+  `energía: AC (batería 18% cargando) | GPU P0→P0 (mem 6001 MHz)` (`llm/_energia.py`: `/sys/class/
+  power_supply` + `nvidia-smi`, de mejor esfuerzo — `n/d` si no están). La GPU se muestrea al llegar
+  el primer token y al terminar (`P3→P5`: sube a P3 un par de segundos y luego cae; mirar solo uno
+  engaña). También va en `Done.usage` (`energia`, `gpu_pstate_inicio/fin`, `gpu_mem_mhz_fin`).
+
+## Contexto dinámico condicional, historial limpio y prompt sin acciones (rem_chat: ventana Y overlay)
+
+Un "Hola, Rem." recibía respuestas como "tu disco está casi lleno" (medido: **6 de 6**) y, en otra
+prueba, leía los 11 GB de RAM como espacio en disco. Causa: el bloque volátil que se anteponía a cada
+mensaje (`[ESTADO ACTUAL DE LA PC: … Disco /: 13.8 GB libres]`) y ~665 de los ~1020 tokens del system
+prompt (catálogo de acciones JSON, reglas de seguridad, instrucción de "MEMORIA DEL SISTEMA"), que
+empujaban a un modelo de 4B a hablar de discos, archivos y comandos. Cambios, todos en el camino
+compartido `chat_sesion.procesar_turno()` (ventana y overlay lo usan igual; `Rem.py` no):
+
+1. **Contexto condicional, con palabras clave en `config.toml` -> `[contexto]`.** Cada línea tiene su
+   modo (`linea_pc`, `linea_fecha`: `"condicional"` | `"siempre"` | `"nunca"`) y su lista
+   (`palabras_pc`, `palabras_fecha`), con coincidencia por palabra completa/frase sin distinguir
+   mayúsculas ni tildes (`"ram"` no salta con "programa"; `personalidad.palabra_clave_pc()`). Sin
+   ninguna coincidencia el mensaje va tal cual, sin bloque alguno. `memoria_sistema` (archivos/carpetas
+   conocidos) ya no se inyecta en rem_chat: solo servía a las acciones de búsqueda, que rem_chat no
+   ejecuta. La línea de PC, cuando se inyecta, va sin la hora duplicada ni el `[PC]` anidado y con
+   etiqueta neutra (`obtener_info_pc(con_hora=False)`). Cada turno loguea `[Contexto] fecha|PC|nada`.
+   Como bonus, `obtener_info_pc()` (0,2 s de `cpu_percent`) ya no corre en cada turno.
+2. **La fecha también es condicional — decidido con datos.** Se probó primero una variante con SOLO
+   fecha/hora (sin la línea de PC): 0 de 6 derivaban. Pero por el pipeline real (`chat_message` por WS,
+   prompt sin acciones) la fecha se leyó en voz alta sin que nadie la pidiera en 1 de 5 y 1 de 12
+   respuestas a "Hola, Rem." (~2 de 23, ≈9%). La regla acordada era "si no desvía, la fecha va siempre": no se cumplía del todo, así que
+   `linea_fecha = "condicional"` (palabras: hora, fecha, día, hoy, mañana, ayer, semana, mes, año…).
+   Volver a "siempre" es una línea de config.
+3. **El historial guarda solo el texto del usuario.** Antes cada turno se guardaba con su bloque de
+   fecha/PC pegado y lo arrastraba para siempre (datos caducos que el modelo terminaba comentando). Ahora
+   `procesar_turno()` anexa `Message(user, texto)` al historial y arma aparte, solo para ese turno, la
+   copia del último mensaje con el contexto. Verificado con un provider falso que captura lo enviado:
+   historial limpio, cero mensajes anteriores con `[FECHA`/`[ESTADO`.
+4. **`construir_prompt_sistema(memoria_larga, con_acciones=False)` en rem_chat** quita entero el bloque
+   ACCIONES DEL SISTEMA + REGLAS DE SEGURIDAD + MEMORIA DEL SISTEMA (entre las marcas `_MARCA_ACCIONES` y
+   `_MARCA_CIERRE`, comprobadas con `assert` al importar `personalidad.py`: si alguien edita el texto y
+   rompe una marca, falla al importar, no en silencio). Prompt de un "Hola": **1166 → ~416 tokens**.
+   `Rem.py` sigue llamando con `con_acciones=True` (default), sin cambios. **Ojo, regla de siempre**: si
+   se cambian los permisos reales de `ejecutar_comando`/`_ruta_segura()`, el texto de ese bloque tiene
+   que seguir reflejándolos — sigue existiendo, solo que rem_chat ya no lo usa.
+
+**Medido (el modelo tiene temperatura 0,7; muestras chicas, es evidencia, no prueba)**, 6 × "Hola, Rem.":
+prompt completo + contexto completo: 6/6 comentan PC/disco. Sin acciones pero con contexto completo:
+5/6. Sin acciones y sin contexto: 0/6. Solo fecha/hora: 0/6 en el banco directo, pero ~2/23 leyéndola en voz alta por el pipeline real. Con
+ambas líneas condicionales (pipeline real, 12 × "Hola, Rem."): 0/12 mencionan la fecha, 0/12 datos de
+PC. Y las preguntas que sí las necesitan funcionan: "¿Qué hora es?" → "Es 16:55"; "¿Cuánta RAM estoy
+usando?" → "12.5 GB" (real: 12); "¿el disco?" → "13.8 GB libres" (real: 14 G). Lo que sigue pasando (el modelo inventa
+charla técnica: "los logs del servidor", "¿ya actualizaste el kernel?") **no viene del contexto**: es
+el propio modelo de 4B con la personalidad técnica.
+
+### Pendiente explícito: portar el ejecutor de acciones a rem_chat (con su auditoría de seguridad)
+
+**rem_chat (ventana y overlay) hoy NO ejecuta acciones del sistema.** `stream_chat()` se llama sin
+`tools=`, `procesar_turno()` no interpreta JSON, y el ejecutor (`ejecutar_accion()`, `procesar_respuesta()`,
+`confirmar_accion()`, `_ruta_segura()`, `_args_permitidos()`, la whitelist de `ejecutar_comando`,
+`_mover_a_papelera()`, la lista negra `_RUTAS_PROHIBIDAS_HOME`…) vive **solo en `Rem.py`**, que es
+Tkinter abandonado y no arranca en este venv (sin `_tkinter`). Eso no puede ser su único hogar. Con
+`con_acciones=False` el modelo ya no recibe el catálogo, así que en rem_chat no hay acciones ni
+riesgo de que el modelo las intente — pero tampoco funcionalidad: "abre Firefox", "sube el volumen",
+"captura" no hacen nada. Tareas:
+- Extraer el ejecutor de `Rem.py` a un módulo sin Tkinter (p. ej. `acciones.py`), incluyendo la
+  validación de rutas/comandos y los tests de esos huecos.
+- **Auditoría de seguridad propia del nuevo contexto**, no solo mover código: en rem_chat la entrada
+  también llega por VOZ (STT), es decir, texto que puede venir mal transcrito o de audio ajeno; la
+  confirmación (`confirmar_accion()`, hoy un diálogo Tkinter) tiene que reimplementarse para GTK/overlay
+  (¿cómo confirma una acción destructiva una superficie click-through con una caja de texto?); y la
+  regla "toda acción pasa por confirmación" no puede degradarse por comodidad.
+- Decidir el mecanismo: tool calling nativo (`stream_chat(tools=...)`, ya soportado por los providers)
+  en vez del JSON-en-texto del prompt viejo, que en modo voz se leería en voz alta.
+- Al volver a activar acciones, `con_acciones=True` (o un bloque nuevo, más corto) vuelve al prompt, y
+  hay que decidir si `memoria_sistema` vuelve al contexto (`incluir_memoria_sistema`).
 
     # IMPORTANTE: 
     AL MOMENTO DE HACER COMMIT NO PONGAS TU AUDITORIA Claude/Anthropic DETRO DEL COMMIT

@@ -104,29 +104,75 @@ def cargar_memoria_sistema() -> dict:
         return {"archivos": {}, "carpetas": []}
 
 
-def obtener_info_pc() -> str:
+def obtener_info_pc(con_hora: bool = True) -> str:
+    """Estado de la PC en una línea. `con_hora=False` omite el "[PC] HH:MM |"
+    inicial (la hora ya va en la línea de fecha del contexto dinámico)."""
     try:
         import datetime as _dt
         ram  = psutil.virtual_memory()
         cpu  = psutil.cpu_percent(interval=0.2)
         disk = psutil.disk_usage("/")
-        hora = _dt.datetime.now().strftime("%H:%M")
-        return (f"[PC] {hora} | CPU {cpu}% | "
-                f"RAM {round(ram.used/1024**3,1)}/{round(ram.total/1024**3,1)} GB | "
-                f"Disco /: {round(disk.free/1024**3,1)} GB libres")
+        datos = (f"CPU {cpu}% | "
+                 f"RAM {round(ram.used/1024**3,1)}/{round(ram.total/1024**3,1)} GB | "
+                 f"Disco /: {round(disk.free/1024**3,1)} GB libres")
+        if not con_hora:
+            return datos
+        return f"[PC] {_dt.datetime.now().strftime('%H:%M')} | {datos}"
     except Exception:
         return ""
 
 
-def construir_prompt_sistema(memoria_larga: dict, nombre_usuario: str | None = None) -> str:
+def _normalizar(texto: str) -> str:
+    """Minúsculas y sin tildes, para comparar palabras clave."""
+    import unicodedata
+    t = unicodedata.normalize("NFD", texto.lower())
+    return "".join(c for c in t if unicodedata.category(c) != "Mn")
+
+
+def palabra_clave_pc(texto_usuario: str, palabras: list[str]) -> str | None:
+    """Primera de `palabras` que aparece en `texto_usuario` como palabra (o
+    frase) completa, sin distinguir mayúsculas ni tildes — o None. Palabra
+    completa a propósito: "ram" no debe saltar con "programa"."""
+    import re
+    t = _normalizar(texto_usuario)
+    for p in palabras:
+        if re.search(r"\b" + re.escape(_normalizar(p)) + r"\b", t):
+            return p
+    return None
+
+
+# Extremos del bloque funcional de _INSTRUCCIONES_BASE (ACCIONES DEL SISTEMA +
+# REGLAS DE SEGURIDAD + MEMORIA DEL SISTEMA). construir_prompt_sistema(
+# con_acciones=False) lo recorta entero. Se comprueba al importar: si alguien
+# edita el texto y rompe una marca, que falle acá y no en silencio.
+_MARCA_ACCIONES = "ACCIONES DEL SISTEMA:"
+_MARCA_CIERRE   = "Para conversacion normal"
+assert _MARCA_ACCIONES in _INSTRUCCIONES_BASE and _MARCA_CIERRE in _INSTRUCCIONES_BASE, \
+    "personalidad._INSTRUCCIONES_BASE: falta una marca de recorte (_MARCA_ACCIONES/_MARCA_CIERRE)"
+assert _INSTRUCCIONES_BASE.index(_MARCA_ACCIONES) < _INSTRUCCIONES_BASE.index(_MARCA_CIERRE)
+
+
+def construir_prompt_sistema(memoria_larga: dict, nombre_usuario: str | None = None,
+                             con_acciones: bool = True) -> str:
     """Construye el system prompt: SOLO contenido estable (personalidad,
     reglas, catálogo de acciones) + memoria larga al final. Nada volátil
     (fecha, hora, estado de la PC, memoria del sistema) va acá — eso
     cambiaría el prompt en cada turno e impediría reusar el cache de prompt.
     Ver construir_contexto_dinamico() y la nota en CLAUDE.md sobre esta
-    restricción."""
+    restricción.
+
+    con_acciones=False quita el catálogo de acciones JSON, las reglas de
+    seguridad y la instrucción de "MEMORIA DEL SISTEMA" (~665 de ~1020
+    tokens). Lo usa rem_chat (ventana y overlay), que NO tiene ejecutor de
+    acciones: ahí ese bloque solo ocupa contexto, empuja al modelo a hablar
+    de archivos/comandos, y una respuesta JSON se leería en voz alta. El
+    ejecutor de acciones vive solo en Rem.py (Tkinter, legacy) — ver
+    CLAUDE.md, "Pendiente: portar el ejecutor de acciones a rem_chat"."""
     nombre_usuario = nombre_usuario or os.getenv("NOMBRE_USUARIO", "Esteban")
-    prompt = _INSTRUCCIONES_BASE.replace("Esteban", nombre_usuario)
+    base = _INSTRUCCIONES_BASE
+    if not con_acciones:
+        base = base[:base.index(_MARCA_ACCIONES)] + base[base.index(_MARCA_CIERRE):]
+    prompt = base.replace("Esteban", nombre_usuario)
 
     secciones = []
     etiquetas = {
@@ -150,10 +196,37 @@ def construir_prompt_sistema(memoria_larga: dict, nombre_usuario: str | None = N
     return prompt
 
 
-def construir_contexto_dinamico(memoria_sistema: dict) -> str:
+def _activa(modo: str, texto_usuario: str | None, palabras: list[str] | None) -> bool:
+    """¿Se inyecta una línea con este modo? "condicional" exige texto_usuario y
+    que contenga alguna de `palabras`."""
+    if modo == "siempre":
+        return True
+    if modo == "condicional" and texto_usuario:
+        return palabra_clave_pc(texto_usuario, palabras or []) is not None
+    return False
+
+
+def construir_contexto_dinamico(memoria_sistema: dict, texto_usuario: str | None = None, *,
+                                linea_pc: str = "siempre",
+                                palabras_pc: list[str] | None = None,
+                                linea_fecha: str = "siempre",
+                                palabras_fecha: list[str] | None = None,
+                                incluir_memoria_sistema: bool = True) -> str:
     """Bloque volátil (fecha/hora, estado de la PC, memoria del sistema) que se
     antepone al mensaje del usuario en cada turno, en vez de ir en el system
-    prompt — así el system prompt es idéntico byte a byte entre llamadas."""
+    prompt — así el system prompt es idéntico byte a byte entre llamadas.
+
+    Con los defaults es el bloque completo de siempre (lo usa Rem.py, sin
+    cambios). chat_sesion.procesar_turno() (ventana y overlay) lo pide reducido:
+    - la línea de FECHA Y HORA según `linea_fecha` y la de estado de la PC
+      según `linea_pc`: "siempre", "nunca", o "condicional" = solo si
+      `texto_usuario` contiene alguna de `palabras_fecha`/`palabras_pc` (ver
+      config.toml [contexto]) — inyectadas siempre, un modelo chico las
+      comentaba aunque nadie preguntara (medido, ver CLAUDE.md);
+    - `incluir_memoria_sistema=False` omite archivos/carpetas conocidos: solo
+      sirven para las acciones de búsqueda, que rem_chat no ejecuta.
+    Sin texto_usuario, "condicional" se comporta como "nunca". Si ninguna línea
+    aplica devuelve "" (quien llama no debe anteponer una línea vacía)."""
     import datetime
     ahora = datetime.datetime.now()
     dias   = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"]
@@ -162,22 +235,31 @@ def construir_contexto_dinamico(memoria_sistema: dict) -> str:
     fecha_str = f"{dias[ahora.weekday()]} {ahora.day} de {meses[ahora.month-1]} de {ahora.year}"
     hora_str  = ahora.strftime("%H:%M")
 
-    lineas = [f"[FECHA Y HORA ACTUAL: {fecha_str}, {hora_str}hs]"]
+    lineas = []
+    if _activa(linea_fecha, texto_usuario, palabras_fecha):
+        lineas.append(f"[FECHA Y HORA ACTUAL: {fecha_str}, {hora_str}hs]")
 
-    info_pc = obtener_info_pc()
-    if info_pc:
-        lineas.append(f"[ESTADO ACTUAL DE LA PC: {info_pc}]")
+    if linea_pc == "siempre":
+        pedir_pc, con_hora = True, True     # formato original, intacto (Rem.py)
+    else:
+        pedir_pc, con_hora = _activa(linea_pc, texto_usuario, palabras_pc), False
+    if pedir_pc:
+        info_pc = obtener_info_pc(con_hora=con_hora)
+        if info_pc:
+            etiqueta = "ESTADO ACTUAL DE LA PC" if con_hora else "ESTADO DE LA PC (dato por si te preguntan)"
+            lineas.append(f"[{etiqueta}: {info_pc}]")
 
-    archivos_conocidos = list(memoria_sistema.get("archivos", {}).items())[-20:]
-    carpetas_conocidas = memoria_sistema.get("carpetas", [])[-10:]
-    if archivos_conocidos or carpetas_conocidas:
-        bloque_mem = ["MEMORIA DEL SISTEMA:"]
-        if archivos_conocidos:
-            bloque_mem.append("Archivos que ya sé dónde están:\n" +
-                              "\n".join(f"  {n} → {r}" for n, r in archivos_conocidos))
-        if carpetas_conocidas:
-            bloque_mem.append("Carpetas conocidas:\n" +
-                              "\n".join(f"  {r}" for r in carpetas_conocidas))
-        lineas.append("\n".join(bloque_mem))
+    if incluir_memoria_sistema:
+        archivos_conocidos = list(memoria_sistema.get("archivos", {}).items())[-20:]
+        carpetas_conocidas = memoria_sistema.get("carpetas", [])[-10:]
+        if archivos_conocidos or carpetas_conocidas:
+            bloque_mem = ["MEMORIA DEL SISTEMA:"]
+            if archivos_conocidos:
+                bloque_mem.append("Archivos que ya sé dónde están:\n" +
+                                  "\n".join(f"  {n} → {r}" for n, r in archivos_conocidos))
+            if carpetas_conocidas:
+                bloque_mem.append("Carpetas conocidas:\n" +
+                                  "\n".join(f"  {r}" for r in carpetas_conocidas))
+            lineas.append("\n".join(bloque_mem))
 
     return "\n".join(lineas)

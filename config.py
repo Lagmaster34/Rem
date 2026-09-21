@@ -86,3 +86,37 @@ def leer_config_overlay() -> dict:
         "capa": capa if capa in ("top", "overlay") else "top",
         "zona_exclusiva": _int("zona_exclusiva", 0),
     }
+
+
+_PALABRAS_PC_DEFAULT = [
+    "cpu", "procesador", "ram", "memoria ram", "disco", "espacio", "almacenamiento",
+    "batería", "bateria", "temperatura", "rendimiento", "lento", "lenta", "recursos",
+    "consumo", "la pc", "mi pc", "el pc", "el equipo", "mi equipo", "la computadora",
+    "el ordenador", "estado de la pc", "cómo está la pc", "como esta la pc",
+]
+
+
+_PALABRAS_FECHA_DEFAULT = [
+    "hora", "fecha", "día", "dia", "hoy", "mañana", "ayer", "semana", "mes", "año",
+    "anoche", "madrugada", "tarde", "noche",
+]
+
+
+def leer_config_contexto() -> dict:
+    """[contexto] de config.toml: cuándo se le inyecta al LLM cada línea del
+    contexto dinámico (ver personalidad.construir_contexto_dinamico()).
+
+    linea_pc / linea_fecha: "condicional" (default; solo si el mensaje del
+              usuario contiene alguna palabra de palabras_pc / palabras_fecha),
+              "siempre" o "nunca".
+    Coincidencia por palabra completa, sin distinguir mayúsculas ni tildes."""
+    cfg = leer_config_toml().get("contexto", {})
+    def _modo(clave):
+        m = str(cfg.get(clave, "condicional")).strip().lower()
+        return m if m in ("condicional", "siempre", "nunca") else "condicional"
+    return {
+        "linea_pc": _modo("linea_pc"),
+        "palabras_pc": [str(x) for x in cfg.get("palabras_pc", _PALABRAS_PC_DEFAULT)],
+        "linea_fecha": _modo("linea_fecha"),
+        "palabras_fecha": [str(x) for x in cfg.get("palabras_fecha", _PALABRAS_FECHA_DEFAULT)],
+    }

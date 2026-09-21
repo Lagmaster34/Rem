@@ -179,3 +179,30 @@ initial_prompt = "Conversación con Rem, una asistente virtual. Vocabulario: Rem
 # Requiere GROQ_API_KEY en .env. Sin verificar en vivo en esta máquina.
 model = "whisper-large-v3-turbo"
 language = "es"
+
+
+[contexto]
+# Contexto que rem_chat (ventana y overlay) antepone al mensaje del usuario en
+# cada turno. Cada línea se inyecta según su modo:
+#   "condicional" → solo si el mensaje contiene alguna de sus palabras
+#   "siempre"     → como antes (Rem.py, el asistente Tkinter legacy, sigue así)
+#   "nunca"       → nunca
+# Medido con "Hola, Rem." (ver CLAUDE.md): con TODO el contexto siempre, 6 de 6
+# respuestas comentaban el estado de la PC ("tu disco está casi lleno"); sin la
+# línea de PC, 0 de 6. Con la FECHA siempre puesta, ~2 de 23 respuestas la
+# leyeron en voz alta sin que nadie la pidiera — por eso también es condicional.
+linea_pc = "condicional"
+linea_fecha = "condicional"
+# Coincidencia por PALABRA COMPLETA (o frase), sin distinguir mayúsculas ni
+# tildes: "ram" no salta con "programa". Incluye variantes con y sin tilde por
+# lo que pueda devolver el STT.
+palabras_pc = [
+    "cpu", "procesador", "ram", "memoria ram", "disco", "espacio", "almacenamiento",
+    "batería", "bateria", "temperatura", "rendimiento", "lento", "lenta", "recursos",
+    "consumo", "la pc", "mi pc", "el pc", "el equipo", "mi equipo", "la computadora",
+    "el ordenador", "estado de la pc", "cómo está la pc", "como esta la pc",
+]
+palabras_fecha = [
+    "hora", "fecha", "día", "dia", "hoy", "mañana", "ayer", "semana", "mes", "año",
+    "anoche", "madrugada", "tarde", "noche",
+]

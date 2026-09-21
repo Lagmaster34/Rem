@@ -21,6 +21,7 @@ from typing import AsyncIterator
 
 import httpx
 
+from . import _energia
 from ._retry import reintentar_con_backoff
 from .base import Chunk, Done, LLMProvider, Message, TextDelta, ToolCall, ToolCallChunk, ToolSpec
 
@@ -132,6 +133,7 @@ class OllamaProvider(LLMProvider):
 
         finish_reason = None
         usage: dict = {}
+        gpu_inicio_task = None  # estado de la GPU al llegar el primer token (ver _energia)
 
         try:
             async for linea in resp.aiter_lines():
@@ -142,6 +144,9 @@ class OllamaProvider(LLMProvider):
                 mensaje = data.get("message") or {}
                 contenido = mensaje.get("content")
                 if contenido:
+                    if gpu_inicio_task is None:
+                        # nvidia-smi tarda decenas de ms: en un hilo, sin frenar el stream.
+                        gpu_inicio_task = asyncio.create_task(asyncio.to_thread(_energia.estado_gpu))
                     yield TextDelta(contenido)
 
                 # A diferencia de Groq/Claude, acá los tool_calls llegan
@@ -185,10 +190,21 @@ class OllamaProvider(LLMProvider):
         # pero hay que verlo medido, no asumido).
         eval_ms = usage.get('eval_duration_ms', 0)
         tok_s = usage.get('eval_count', 0) / (eval_ms / 1000) if eval_ms else 0
+        # Alimentación y estado de la GPU van SIEMPRE junto a los tok/s: sin ese
+        # dato una medición no es comparable con otra (batería => P5 => ~6,6 tok/s).
+        gpu_inicio = await gpu_inicio_task if gpu_inicio_task else None
+        gpu_fin = await asyncio.to_thread(_energia.estado_gpu)
+        energia = _energia.estado_alimentacion()
+        if usage:
+            usage["energia"] = energia
+            usage["gpu_pstate_inicio"] = (gpu_inicio or {}).get("pstate")
+            usage["gpu_pstate_fin"] = (gpu_fin or {}).get("pstate")
+            usage["gpu_mem_mhz_fin"] = (gpu_fin or {}).get("mem_mhz")
         print(f"[Ollama] carga del modelo: {usage.get('load_duration_ms', 0):.0f}ms | "
               f"prompt: {usage.get('prompt_eval_count', 0)} tok en {usage.get('prompt_eval_duration_ms', 0):.0f}ms | "
               f"generación: {eval_ms:.0f}ms "
               f"({usage.get('eval_count', 0)} tokens, {tok_s:.1f} tok/s) | "
-              f"total: {usage.get('total_duration_ms', 0):.0f}ms")
+              f"total: {usage.get('total_duration_ms', 0):.0f}ms | "
+              f"energía: {energia} | {_energia.formatear_gpu(gpu_inicio, gpu_fin)}")
 
         yield Done(reason=finish_reason, usage=usage or None)

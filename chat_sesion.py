@@ -16,6 +16,7 @@ procesar_turno() cubre los dos casos (con y sin voz) mediante callbacks: cada
 consumidor decide qué hacer con el texto (on_delta) y si quiere que se hable
 (cola_habla) — ver su docstring.
 """
+import config
 import personalidad
 from llm import Done, Message, TextDelta, ToolCallChunk, dividir_en_oraciones, get_provider
 from llm.echo import EchoProvider
@@ -94,7 +95,9 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
       esperar el resto de la respuesta. None (default) no habla nada — la
       sesión sigue funcionando solo como texto.
 
-    `incluir_contexto=False` omite el bloque de fecha/hora/estado de la PC
+    Contexto dinámico (ver personalidad.construir_contexto_dinamico y config.toml
+    [contexto]): cada línea (fecha/hora, estado de la PC) solo si el mensaje la pide;
+    nunca en el historial. `incluir_contexto=False` omite el bloque de fecha/hora/estado de la PC
     (modo eco: no hay LLM al que informarle, y anteponerlo igual solo logra
     que se repita en voz/texto el porcentaje de CPU en vez de lo que se
     escribió).
@@ -107,13 +110,31 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
     instancia de habla.TurnoHabla (mide tiempo hasta el primer audio) si
     cola_habla no era None, o None si no se pidió voz.
     """
+    # El HISTORIAL guarda solo lo que dijo el usuario. El contexto dinámico va
+    # únicamente en la copia del último mensaje que se le manda al LLM en ESTE
+    # turno: antes se guardaba pegado a cada mensaje, y cada turno viejo
+    # arrastraba para siempre su propio bloque de fecha/PC — datos caducos que
+    # el modelo, además, terminaba comentando.
+    sesion.historial.append(Message(role="user", content=texto))
+    mensajes = sesion.historial
     if incluir_contexto:
-        contexto = personalidad.construir_contexto_dinamico(memoria_sistema)
-        sesion.historial.append(Message(role="user", content=f"{contexto}\n{texto}"))
-    else:
-        sesion.historial.append(Message(role="user", content=texto))
+        cfg = config.leer_config_contexto()
+        contexto = personalidad.construir_contexto_dinamico(
+            memoria_sistema, texto,
+            linea_pc=cfg["linea_pc"], palabras_pc=cfg["palabras_pc"],
+            linea_fecha=cfg["linea_fecha"], palabras_fecha=cfg["palabras_fecha"],
+            # rem_chat no ejecuta acciones de búsqueda: los archivos conocidos
+            # solo serían ruido (ver personalidad.construir_prompt_sistema).
+            incluir_memoria_sistema=False)
+        partes_ctx = [n for n, marca in (("fecha", "[FECHA"), ("PC", "[ESTADO")) if marca in contexto]
+        print(f"  [Contexto] {'+'.join(partes_ctx) or 'nada'} "
+              f"(pc={cfg['linea_pc']}, fecha={cfg['linea_fecha']})", flush=True)
+        if contexto:
+            mensajes = sesion.historial[:-1] + [Message(role="user", content=f"{contexto}\n{texto}")]
 
-    system = personalidad.construir_prompt_sistema(memoria_larga)
+    # Sin el catálogo de acciones/seguridad: rem_chat no tiene ejecutor de
+    # acciones (solo Rem.py, legacy). Ver personalidad.construir_prompt_sistema.
+    system = personalidad.construir_prompt_sistema(memoria_larga, con_acciones=False)
     partes = []
     done_chunk = None
 
@@ -129,7 +150,7 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
         elif isinstance(chunk, Done):
             done_chunk = chunk
 
-    stream = sesion.provider.stream_chat(system, sesion.historial)
+    stream = sesion.provider.stream_chat(system, mensajes)
 
     turno_habla = None
     if cola_habla is not None:
