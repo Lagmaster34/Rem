@@ -467,7 +467,7 @@ def _ptt_estado_ws(estado: str, **extra):
 
 async def _ptt_iniciar():
     global _ptt_estado, _ptt_grabador, _ptt_tope_handle, _ptt_stop_pedido
-    if time.monotonic() - _ptt_stop_huerfano_t < 0.5:
+    if time.monotonic() - _ptt_stop_huerfano_t < 0.3:
         # El stop de un toque corto llegó ANTES que su start (son dos procesos
         # de rem_ptt.py): grabar ahora dejaría el micrófono abierto hasta el tope.
         print("  [PTT] ptt_start ignorado: su ptt_stop ya había llegado (toque corto)", flush=True)

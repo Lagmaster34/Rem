@@ -55,6 +55,30 @@ class OllamaProvider(LLMProvider):
             self._client_loop = loop
         return self._client
 
+    def precargar(self) -> None:
+        """Carga el modelo en memoria SIN generar nada, para que el primer
+        turno real no pague la carga (medido: ~6,7s en frío). Sincrónico, pensado
+        para un hilo de fondo al arrancar (ver llm.precargar_provider()).
+
+        Es una petición a /api/chat con `messages` vacío: Ollama carga el
+        modelo y responde con done_reason="load". Las `options` (num_gpu,
+        num_ctx...) y el keep_alive tienen que ser EXACTAMENTE los de las
+        peticiones reales: Ollama recarga el modelo si cambia cualquiera de
+        las opciones de carga (num_gpu/num_ctx), y una precarga con otros
+        valores no serviría de nada — por eso reusa self._options tal cual."""
+        import time
+        t0 = time.perf_counter()
+        resp = httpx.post(
+            f"{self._base_url}/api/chat",
+            json={"model": self._model, "messages": [], "think": False,
+                  "keep_alive": self._keep_alive, "stream": False,
+                  "options": self._options},
+            timeout=120.0,
+        )
+        resp.raise_for_status()
+        print(f"[Ollama] modelo precargado en {time.perf_counter() - t0:.1f}s "
+              f"(keep_alive={self._keep_alive!r}, num_gpu={self._options.get('num_gpu')})", flush=True)
+
     async def stream_chat(
         self,
         system: str,
@@ -159,9 +183,12 @@ class OllamaProvider(LLMProvider):
         # aparte de generación es lo que permite decidir después si compensa
         # (la hipótesis es que la caché de páginas del sistema lo hace rápido,
         # pero hay que verlo medido, no asumido).
+        eval_ms = usage.get('eval_duration_ms', 0)
+        tok_s = usage.get('eval_count', 0) / (eval_ms / 1000) if eval_ms else 0
         print(f"[Ollama] carga del modelo: {usage.get('load_duration_ms', 0):.0f}ms | "
-              f"generación: {usage.get('eval_duration_ms', 0):.0f}ms "
-              f"({usage.get('eval_count', 0)} tokens) | "
+              f"prompt: {usage.get('prompt_eval_count', 0)} tok en {usage.get('prompt_eval_duration_ms', 0):.0f}ms | "
+              f"generación: {eval_ms:.0f}ms "
+              f"({usage.get('eval_count', 0)} tokens, {tok_s:.1f} tok/s) | "
               f"total: {usage.get('total_duration_ms', 0):.0f}ms")
 
         yield Done(reason=finish_reason, usage=usage or None)

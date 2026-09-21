@@ -413,8 +413,12 @@ def main():
     # voz (salida y entrada) es una capacidad de primera clase en los dos
     # modos: no hay flag para omitirlas.
     import habla
+    import llm
     threading.Thread(target=habla.precargar_rvc, daemon=True).start()
     threading.Thread(target=_precargar_stt, daemon=True).start()
+    # El LLM local también: sin esto el primer turno paga la carga del modelo
+    # (~6,7s medidos con Ollama). No hace nada con Claude/Groq.
+    threading.Thread(target=llm.precargar_provider, daemon=True).start()
 
     import rem_avatar_server
     try:

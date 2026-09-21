@@ -2127,19 +2127,97 @@ hablar de verdad frente al micrófono real, y reproducibles):
   El camino de código es el mismo (`Grabador` no distingue el origen); si el mute se destraba, no
   hace falta cambiar nada para que capture voz real.
 
-## Líneas de Hyprland para push-to-talk (SUPER+V mantenida)
+## Líneas de Hyprland para push-to-talk (SUPER+H mantenida)
 
-No se editó `hyprland.conf` — son las líneas a agregar a mano, sección `binds` o `bindr`:
+No se edita `hyprland.conf` desde el código — son las líneas a agregar a mano. **Son TRES**, y la
+tercera es `bindrt`, no `bindr`:
 
 ```
-bind = SUPER, V, exec, /mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_ptt.py start
-bindr = SUPER, V, exec, /mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_ptt.py stop
+bind   = SUPER, H,       exec, /mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_ptt.py start
+bindr  = SUPER, H,       exec, /mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_ptt.py stop
+bindrt = SUPER, Super_L, exec, /mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_ptt.py stop
 ```
 
-`bind` (sin `r`) dispara al PRESIONAR, `bindr` dispara al SOLTAR — juntas dan un push-to-talk real
-sin necesidad de un daemon aparte escuchando eventos de teclado. `rem_ptt.py` es un proceso corto
-por invocación (se conecta, manda el comando, espera confirmación, sale) — el costo de spawnear un
-proceso Python por pulsación es imperceptible frente a la latencia real del pipeline (segundos).
+`bind` (sin `r`) dispara al PRESIONAR, `bindr` al SOLTAR — juntas dan un push-to-talk real sin un
+daemon aparte escuchando teclado. **Por qué la tercera**: `bindr = SUPER, H` solo dispara si SUPER
+sigue pulsada al soltar H. Si se suelta Super ANTES que H (pasa sin darse cuenta), ese `stop` nunca
+llega y la grabación quedaba abierta (pasó en una prueba real: 18 s hasta pulsar otra vez).
+`bindrt = SUPER, Super_L` manda el `stop` también al soltar Super. Es inocuo si ya se mandó: un
+`ptt_stop` sin grabación en curso se contesta con `ptt_estado: idle` ("no estaba grabando") y no
+hace nada más. Efecto colateral aceptado: cada vez que se suelta Super (con o sin H) se lanza un
+`rem_ptt.py stop` corto. La guarda de "toque muy corto" (`_ptt_stop_huerfano_t`, que ignora un
+`start` llegado justo después de un `stop` huérfano) se bajó de 0,5 s a 0,3 s por eso: con este
+tercer bind los `stop` huérfanos son frecuentes, y 0,5 s se comía un SUPER+H pulsado justo después de
+otro atajo con Super.
+
+**Tiene que ser `bindrt`; `bindr` y `bindir` NO sirven — medido, no supuesto.** Se probaron seis
+variantes de un bind de release sobre el propio modificador (`bindr`/`bindir`/`bindrt`, con y sin
+modificador en la definición) con una tecla mantenida detrás. Con el modificador solo, disparan
+casi todas; **con otra tecla ya pulsada bajo ese modificador (el caso real: SUPER+H), solo dispara
+`bindrt`**. La `t` es "transparent, cannot be shadowed by other binds": el bind de SUPER+H ya
+consumió la tecla y "tapa" a los demás binds de release del mismo modificador. Un `bindr = SUPER,
+Super_L` normal (lo que se documentó primero, sin probar) no corta nada.
+
+**Red de seguridad independiente de las teclas**: `[stt].max_grabacion_s` (30 s por defecto, en
+`config.toml`) — `_ptt_iniciar()` agenda un `call_later()` al abrir el micrófono que cierra Y
+transcribe solo, pase lo que pase con las teclas. Un `ptt_stop` que llega después del tope es
+huérfano e inocuo.
+
+**Verificado en vivo** (Hyprland real, teclado virtual de `ydotool`, audio inyectado por un sumidero
+nulo de PipeWire para no depender del micrófono, que en esta máquina está silenciado a nivel
+sistema). Se usaron binds temporales en memoria (`hyprctl keyword`, ya retirados) sobre
+**CTRL + código 191 (F13)** en lugar de SUPER+H, porque `Super_L` tiene un bind propio de caelestia
+(`bindi = Super, Super_L, global, caelestia:launcher`) y inyectar SUPER habría abierto el lanzador en
+el escritorio en uso. El mecanismo de Hyprland es el mismo (solo cambia la máscara de modificador),
+pero **la interacción concreta con el lanzador de caelestia no se probó**. Resultados:
+- Control, solo `bind`+`bindr` de la tecla: pulsar, soltar el modificador primero y después la tecla
+  → la grabación siguió abierta (3 s después de soltar el modificador y 3 s después de soltar la
+  tecla) hasta un `stop` manual. Reproduce el fallo real.
+- Con el tercer bind como `bindr`: igual, no corta. Con `bindrt`: la grabación termina al soltar el
+  modificador aunque la tecla siga pulsada (3,86 s de audio, transcribe, responde).
+- Orden normal (tecla primero, modificador después) con los tres binds: una sola grabación, una sola
+  transcripción, sin efectos dobles (el segundo `stop` llega huérfano y se ignora).
+- Tope de duración: con `max_grabacion_s = 6` (temporal), `start` sin ningún `stop` → a los 6 s
+  exactos `tope de 6s alcanzado`, transcribe y responde; un `stop` posterior contesta "no estaba
+  grabando".
+
+## Precarga de Ollama al arrancar, y por qué el tok/s real varía tanto
+
+**Precarga**: `rem_chat.py` lanza `llm.precargar_provider()` en un hilo de fondo junto a las de RVC y
+STT. Con Ollama llama a `OllamaProvider.precargar()` — una petición a `/api/chat` con `messages`
+vacío (Ollama carga el modelo y responde `done_reason: "load"`, sin generar). Tiene que llevar las
+MISMAS `options` (`num_gpu`, `num_ctx`...) y `keep_alive` que las peticiones reales: Ollama recarga
+el modelo si cambian las opciones de carga, y una precarga con otros valores no serviría. Con
+Claude/Groq no hace nada. No bloqueante: si falla solo lo loguea (`[LLM] precarga falló`). Medido: el
+modelo carga en ~4 s en paralelo con RVC y Whisper, sin OOM de VRAM (3238 MiB usados con los tres), y
+el primer turno reporta `carga del modelo: 1ms` (antes ~6,7 s). Ojo: `keep_alive = "10m"` sigue
+descargando el modelo tras 10 min sin uso, y el primer turno de después vuelve a pagar la carga; la
+precarga solo cubre el arranque. El log por turno de `[Ollama]` ahora incluye los tokens/tiempo del
+prompt y los tok/s de generación.
+
+**El "5 tok/s del primer turno" NO era Whisper ni competencia por núcleos.** Investigado con un banco
+directo contra Ollama (mismo payload que `OllamaProvider`, prompt real de ~1170 tokens):
+- **Whisper no compite en régimen estable**: con `faster-whisper` transcribiendo en bucle continuo
+  (peor caso, `cpu_threads` 0/2/1) los tok/s de Ollama quedaron dentro del mismo rango que sin él
+  (6,0-6,3 con Whisper, 6,6 sin). En el uso real ni siquiera coinciden: la transcripción termina
+  ANTES de que empiece el turno de LLM, y un `ptt_start` mientras Rem responde se ignora. No se
+  tocó `cpu_threads` de faster-whisper (nada que limitar).
+- **Tampoco los hilos de CPU**: `num_thread` = default/4/8/12 dan 6,5-6,6 tok/s, idénticos. La
+  decodificación no está limitada por los núcleos.
+- **Causa medida: estado de energía de la GPU.** Durante la generación la GPU sube un instante a P3
+  (memoria a 5470 MHz, ~19,7 tok/s la primera generación corta) y enseguida cae a **P5 con memoria a
+  810 MHz y PCIe gen 2** (de gen 4) — y ahí se queda: ~6,6 tok/s constantes, un valor tan estable
+  que delata un tope fijo, no ruido. La decodificación con 24 capas en GPU está limitada por ancho de
+  banda de memoria. `nvidia-smi -q -d PERFORMANCE` reporta `SW Power Cap: Active` y `SW Thermal
+  Slowdown: Active`, y **el portátil estaba en batería** (`ACAD online=0`, `BAT1 Discharging`, 29%).
+  Una carga CUDA concurrente (imitando a RVC) no la saca de P5. Los ~16-17 tok/s vistos en los turnos
+  2 y 3 de una corrida de `rem_chat.py` no se explican con esto (no se muestreó la GPU en esa
+  corrida): quedan como una observación sin causa confirmada. La tabla de calibración de `num_gpu`
+  (20,7 tok/s con `num_gpu=24`) es de otra sesión, y no se sabe con qué alimentación se midió.
+  **No se pudo medir con corriente conectada** (el equipo estaba en batería durante toda esta
+  sesión), así que "en batería la GPU cae a P5 y da ~6,6 tok/s" está medido, y "con corriente vuelve
+  a 15-20 tok/s" es una hipótesis razonable pero NO verificada. Antes de tocar `num_gpu`/hilos/`cpu_threads` por este
+  síntoma, volver a medir con corriente. Forzar relojes (`nvidia-smi -lmc`) requiere root y no se hizo.
 
     # IMPORTANTE: 
     AL MOMENTO DE HACER COMMIT NO PONGAS TU AUDITORIA Claude/Anthropic DETRO DEL COMMIT
