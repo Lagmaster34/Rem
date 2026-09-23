@@ -75,7 +75,8 @@ async def _pasar_por(chunks, on_chunk):
 
 async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
                           on_delta=None, on_tool_call=None, cola_habla=None,
-                          incluir_contexto=True, t_ref=None):
+                          incluir_contexto=True, t_ref=None,
+                          tools=None, on_confirmar_accion=None):
     """Manda `texto` al provider activo de `sesion` y consume stream_chat().
     Compartido entre el REPL de bench_chat.py y el panel de chat de
     rem_chat.py (vía rem_avatar_server.py) — cada consumidor decide qué hacer
@@ -105,6 +106,15 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
     `t_ref` (time.perf_counter(), opcional): instante desde el que se mide
     "tiempo hasta el primer audio" además del propio inicio del turno — el
     push-to-talk pasa el momento en que se soltó la tecla.
+
+    `tools` (opcional): lista de llm.ToolSpec a ofrecerle al modelo (ver
+    acciones.py). Si el modelo responde con una tool call, el texto que haya
+    generado junto a ella se DESCARTA (nunca se habla ni se guarda en el
+    historial) y se reemplaza por la respuesta de acciones.ejecutar_tool_async()
+    — una sola acción por turno, la primera que llegue si hubiera más de una.
+    `on_confirmar_accion` se reenvía tal cual a ejecutar_tool_async() para las
+    tools que requieren confirmación; una ConfirmacionExpirada se deja
+    propagar sin atrapar, para que el llamador libere el turno.
 
     Devuelve (texto_completo, done_chunk, turno_habla) — turno_habla es la
     instancia de habla.TurnoHabla (mide tiempo hasta el primer audio) si
@@ -137,6 +147,7 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
     system = personalidad.construir_prompt_sistema(memoria_larga, con_acciones=False)
     partes = []
     done_chunk = None
+    tool_calls_recibidas = []
 
     def _on_chunk(chunk):
         nonlocal done_chunk
@@ -145,12 +156,13 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
             if on_delta:
                 on_delta(chunk.text)
         elif isinstance(chunk, ToolCallChunk):
+            tool_calls_recibidas.append(chunk.call)
             if on_tool_call:
                 on_tool_call(chunk.call)
         elif isinstance(chunk, Done):
             done_chunk = chunk
 
-    stream = sesion.provider.stream_chat(system, mensajes)
+    stream = sesion.provider.stream_chat(system, mensajes, tools=tools)
 
     turno_habla = None
     if cola_habla is not None:
@@ -163,5 +175,23 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
             _on_chunk(chunk)
 
     texto_completo = "".join(partes)
+
+    if tool_calls_recibidas:
+        # Se descarta cualquier texto que el modelo haya generado junto a la
+        # tool call (no se habla ni se guarda) — la respuesta real la arma
+        # acciones.ejecutar_tool_async(), nunca lo que dijo el LLM en crudo.
+        import acciones
+        call = tool_calls_recibidas[0]
+        texto_completo = await acciones.ejecutar_tool_async(
+            call.name, call.arguments,
+            memoria_sistema=memoria_sistema, on_confirmar_accion=on_confirmar_accion)
+        if on_delta:
+            on_delta(texto_completo)
+        if cola_habla is not None:
+            if turno_habla is None:
+                from habla import TurnoHabla
+                turno_habla = TurnoHabla(t_ref)
+            cola_habla.put_nowait((texto_completo, turno_habla))
+
     sesion.historial.append(Message(role="assistant", content=texto_completo))
     return texto_completo, done_chunk, turno_habla

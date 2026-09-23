@@ -3137,6 +3137,41 @@ function crearPanelChat() {
     agregarBurbuja(texto, 'sistema');
   }
 
+  // Confirmación de una acción que la requiere (ver acciones.py,
+  // TOOLS_QUE_CONFIRMAN — hoy solo apagar_pc). Burbuja de sistema con dos
+  // botones; al elegir cualquiera se deshabilitan los dos (no se puede
+  // responder dos veces al mismo pedido) y se manda accion_confirmar_resp.
+  // Si expira del lado del servidor (_CONFIRMACION_TIMEOUT_S) el turno ya se
+  // canceló solo — esta burbuja queda inerte, sin nada que limpiarla, pero
+  // tampoco hace daño: un click tardío ya no tiene a quién llegarle
+  // (_confirmacion_pendiente ya no existe del lado de Python).
+  function agregarConfirmacion(nombre, descripcion) {
+    const div = document.createElement('div');
+    div.className = 'msg sistema';
+    const p = document.createElement('div');
+    p.textContent = descripcion;
+    div.appendChild(p);
+    const btns = document.createElement('div');
+    btns.style.marginTop = '6px';
+    const responder = (ok) => {
+      btnSi.disabled = true;
+      btnNo.disabled = true;
+      _ws.send(JSON.stringify({ tipo: 'accion_confirmar_resp', ok }));
+    };
+    const btnSi = document.createElement('button');
+    btnSi.textContent = 'Sí';
+    btnSi.onclick = () => responder(true);
+    const btnNo = document.createElement('button');
+    btnNo.textContent = 'No';
+    btnNo.style.marginLeft = '8px';
+    btnNo.onclick = () => responder(false);
+    btns.appendChild(btnSi);
+    btns.appendChild(btnNo);
+    div.appendChild(btns);
+    $mensajes.appendChild(div);
+    alFondo();
+  }
+
   function setEstadoUI(texto, clase) {
     $status.textContent = texto || '';
     $status.className = clase || '';
@@ -3448,6 +3483,12 @@ function crearPanelChat() {
       actualizarInputHabilitado();
       setEstadoUI('Rem está pensando…', 'pensando');
     },
+    // Una tool que requiere confirmación (ver acciones.py) está esperando
+    // sí/no del panel antes de ejecutarse — ver _pedir_confirmacion_accion
+    // en rem_avatar_server.py.
+    onAccionConfirmar(nombre, descripcion) {
+      agregarConfirmacion(nombre, descripcion);
+    },
   };
 
   cerrarPaleta();   // arranca oculta
@@ -3624,6 +3665,8 @@ let _ws = null;
         window.__remChat?.onPttEstado?.(d.estado, d.motivo || d.nota || '');
       } else if (d.tipo === 'ptt_transcripcion') {
         window.__remChat?.onTranscripcion?.(String(d.texto ?? ''), d.ms ?? 1000);
+      } else if (d.tipo === 'accion_confirmar') {
+        window.__remChat?.onAccionConfirmar?.(String(d.nombre ?? ''), String(d.descripcion ?? ''));
       } else if (d.estado) {
         estado = d.estado;
       }

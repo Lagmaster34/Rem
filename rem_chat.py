@@ -421,6 +421,7 @@ def main():
     threading.Thread(target=llm.precargar_provider, daemon=True).start()
 
     import rem_avatar_server
+    rem_avatar_server.establecer_modo(MODO)
     try:
         if not rem_avatar_server.iniciar_servidor_avatar(permitir_reuso=False):
             _fatal("el servidor del avatar no pudo levantar (ver el log arriba).")

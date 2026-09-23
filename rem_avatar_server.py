@@ -46,6 +46,17 @@ _ws_ready   = threading.Event()   # se activa cuando el loop WS está listo
 # sin spamear una línea por cada enviar_estado() de cada turno.
 _ultimo_aviso_sin_clientes = 0.0
 
+# Modo activo (ventana|overlay) — lo fija rem_chat.py una sola vez al
+# arrancar, ANTES de iniciar_servidor_avatar(). Decide qué tools ofrece
+# _procesar_mensaje_chat() (ver acciones.tools_disponibles(): apagar_pc no
+# se ofrece en overlay, no hay forma de confirmar una acción ahí).
+_modo_actual = "ventana"
+
+
+def establecer_modo(modo: str) -> None:
+    global _modo_actual
+    _modo_actual = modo
+
 def _avisar_sin_destinatarios(que: str):
     global _ultimo_aviso_sin_clientes
     ahora = time.monotonic()
@@ -373,9 +384,13 @@ async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None):
         # chat_sesion.procesar_turno).
         incluir_contexto = sesion.modo != "eco"
         cola_habla = _obtener_cola_habla() if _chat_voz_activa else None
+        # Sin tools en modo eco: no hay LLM del otro lado que las use.
+        import acciones
+        tools = acciones.tools_disponibles(_modo_actual) if sesion.modo != "eco" else None
         await procesar_turno(sesion, texto, memoria_larga, memoria_sistema,
                               on_delta=_on_delta, cola_habla=cola_habla,
-                              incluir_contexto=incluir_contexto, t_ref=t_ref)
+                              incluir_contexto=incluir_contexto, t_ref=t_ref,
+                              tools=tools, on_confirmar_accion=_pedir_confirmacion_accion)
         _broadcast_ws({"tipo": "chat_done"})
     except Exception as e:
         logger.exception("[Chat] error procesando turno")
@@ -415,6 +430,31 @@ _ptt_stop_huerfano_t = 0.0    # ptt_stop sin start previo (toque corto: llegó a
 _ptt_medicion     = None      # {"t_suelta", "t_stt", ...} hasta el primer audio sonando
 _ws_reproduciendo = set()     # websockets cuyo frontend reporta audio sonando (voz_estado)
 _ultimo_fin_habla = 0.0       # time.monotonic() del último fin de voz/turno
+
+
+# ── Confirmación de acciones (apagar_pc, ver acciones.py) ────────────────
+# Un solo pendiente a la vez alcanza: los turnos ya están serializados por
+# _chat_turno_activo (un chat_message nuevo se rechaza si hay uno en curso),
+# así que no puede haber dos confirmaciones pedidas a la vez en este proceso.
+_CONFIRMACION_TIMEOUT_S = 30.0
+_confirmacion_pendiente = None  # asyncio.Future | None
+
+
+async def _pedir_confirmacion_accion(nombre: str, argumentos: dict, descripcion: str):
+    """Pasado como on_confirmar_accion a chat_sesion.procesar_turno(). Manda
+    accion_confirmar por WS y espera accion_confirmar_resp del mismo panel
+    (ver _ws_handler). None = expiró sin respuesta — el llamador
+    (acciones.ejecutar_tool_async) lo traduce a ConfirmacionExpirada."""
+    global _confirmacion_pendiente
+    loop = asyncio.get_running_loop()
+    _confirmacion_pendiente = loop.create_future()
+    _broadcast_ws({"tipo": "accion_confirmar", "nombre": nombre, "descripcion": descripcion})
+    try:
+        return await asyncio.wait_for(_confirmacion_pendiente, timeout=_CONFIRMACION_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        return None
+    finally:
+        _confirmacion_pendiente = None
 
 
 def _marcar_fin_habla():
@@ -601,6 +641,14 @@ async def _ws_handler(websocket):
                 # El frontend avisa cuándo su cola de audio empieza a sonar / se
                 # vacía — el push-to-talk lo necesita para no grabar a Rem.
                 _registrar_voz_estado(websocket, bool(data.get("reproduciendo")))
+
+            elif tipo == "accion_confirmar_resp":
+                # Respuesta del panel a un accion_confirmar (ver
+                # _pedir_confirmacion_accion) — si ya no hay nadie esperando
+                # (expiró, o llegó una segunda respuesta) se ignora en
+                # silencio, no es un error del cliente.
+                if _confirmacion_pendiente is not None and not _confirmacion_pendiente.done():
+                    _confirmacion_pendiente.set_result(bool(data.get("ok")))
 
             elif tipo == "ptt_start":
                 asyncio.create_task(_ptt_iniciar())
