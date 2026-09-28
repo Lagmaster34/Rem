@@ -56,38 +56,53 @@ class OllamaProvider(LLMProvider):
             self._client_loop = loop
         return self._client
 
-    def precargar(self) -> None:
-        """Carga el modelo en memoria SIN generar nada, para que el primer
-        turno real no pague la carga (medido: ~6,7s en frío). Sincrónico, pensado
-        para un hilo de fondo al arrancar (ver llm.precargar_provider()).
+    def precargar(self, system: str | None = None, messages: list[Message] | None = None,
+                  tools: list[ToolSpec] | None = None) -> None:
+        """Carga el modelo en memoria para que el primer turno real no pague la
+        carga (medido: ~6,7s en frío). Sincrónico, pensado para un hilo de fondo
+        al arrancar (ver llm.precargar_provider()).
 
-        Es una petición a /api/chat con `messages` vacío: Ollama carga el
-        modelo y responde con done_reason="load". Las `options` (num_gpu,
-        num_ctx...) y el keep_alive tienen que ser EXACTAMENTE los de las
-        peticiones reales: Ollama recarga el modelo si cambia cualquiera de
-        las opciones de carga (num_gpu/num_ctx), y una precarga con otros
-        valores no serviría de nada — por eso reusa self._options tal cual."""
+        Sin `system`: petición a /api/chat con `messages` vacío — Ollama carga el
+        modelo y responde done_reason="load", sin evaluar nada.
+
+        Con `system` (+ `messages`/`tools`): además evalúa ese prefijo, para que
+        quede en la caché KV de Ollama y el primer turno real solo pague lo que
+        viene después (ver chat_sesion.precargar_prefijo()). Arma el payload con
+        el MISMO código que stream_chat() (_payload()) y le agrega un mensaje de
+        usuario de relleno: la caché se reusa por prefijo de tokens, así que
+        todo lo anterior a ese relleno tiene que ser idéntico byte a byte a lo
+        que manda un turno real — system, tools y mensajes incluidos. Genera un
+        solo token (num_predict=1), que se descarta.
+
+        Las `options` de carga (num_gpu, num_ctx...) y el keep_alive tienen que
+        ser EXACTAMENTE los de las peticiones reales: Ollama recarga el modelo
+        si cambia cualquiera de ellas — por eso se reusa self._options tal cual
+        (num_predict no es opción de carga, no provoca recarga)."""
         import time
         t0 = time.perf_counter()
-        resp = httpx.post(
-            f"{self._base_url}/api/chat",
-            json={"model": self._model, "messages": [], "think": False,
-                  "keep_alive": self._keep_alive, "stream": False,
-                  "options": self._options},
-            timeout=120.0,
-        )
+        if system is None:
+            payload = {"model": self._model, "messages": [], "think": False,
+                       "keep_alive": self._keep_alive, "stream": False,
+                       "options": self._options}
+        else:
+            relleno = Message(role="user", content="hola")
+            payload = self._payload(system, [*(messages or []), relleno], tools, stream=False)
+            payload["options"] = {**self._options, "num_predict": 1}
+        resp = httpx.post(f"{self._base_url}/api/chat", json=payload, timeout=120.0)
         resp.raise_for_status()
+        data = resp.json()
+        prefijo = ""
+        if system is not None:
+            prefijo = (f", prefijo evaluado: {data.get('prompt_eval_count')} tok en "
+                       f"{(data.get('prompt_eval_duration') or 0) / 1e6:.0f}ms")
         print(f"[Ollama] modelo precargado en {time.perf_counter() - t0:.1f}s "
-              f"(keep_alive={self._keep_alive!r}, num_gpu={self._options.get('num_gpu')})", flush=True)
+              f"(keep_alive={self._keep_alive!r}, num_gpu={self._options.get('num_gpu')}{prefijo})",
+              flush=True)
 
-    async def stream_chat(
-        self,
-        system: str,
-        messages: list[Message],
-        tools: list[ToolSpec] | None = None,
-    ) -> AsyncIterator[Chunk]:
-        client = self._obtener_cliente()
-
+    def _payload(self, system: str, messages: list[Message],
+                 tools: list[ToolSpec] | None, stream: bool) -> dict:
+        """Cuerpo de /api/chat. Compartido por stream_chat() y precargar(): la
+        precarga del prefijo solo sirve si lo serializa idéntico."""
         # El system prompt en /api/chat va como un mensaje con rol "system"
         # dentro del array, no como parámetro de nivel superior (a diferencia
         # de Claude) — el contrato lo recibe aparte igual, la conversión pasa
@@ -104,7 +119,7 @@ class OllamaProvider(LLMProvider):
             # propósito, a diferencia de keep_alive/options más abajo.
             "think": False,
             "keep_alive": self._keep_alive,
-            "stream": True,
+            "stream": stream,
             "options": self._options,
         }
         if tools:
@@ -119,6 +134,16 @@ class OllamaProvider(LLMProvider):
                 }
                 for t in tools
             ]
+        return payload
+
+    async def stream_chat(
+        self,
+        system: str,
+        messages: list[Message],
+        tools: list[ToolSpec] | None = None,
+    ) -> AsyncIterator[Chunk]:
+        client = self._obtener_cliente()
+        payload = self._payload(system, messages, tools, stream=True)
 
         async def _conectar():
             req = client.build_request("POST", "/api/chat", json=payload)

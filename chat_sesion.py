@@ -18,10 +18,44 @@ consumidor decide qué hacer con el texto (on_delta) y si quiere que se hable
 """
 import config
 import personalidad
+from ejemplos_tono import EJEMPLOS_TONO
 from llm import Done, Message, TextDelta, ToolCallChunk, dividir_en_oraciones, get_provider
 from llm.echo import EchoProvider
 
 MODOS_VALIDOS = ("ia", "eco")
+
+# Turnos de ejemplo del tono de Rem (few-shot), convertidos una sola vez: van
+# entre el system prompt y todo lo demás, idénticos en cada turno, para que
+# system + ejemplos sea un prefijo cacheable. El último marca el fin de ese
+# prefijo (punto de caché explícito para Claude, ver llm/claude.py).
+_EJEMPLOS = tuple(
+    Message(role=e["role"], content=e["content"], fin_prefijo_cache=(i == len(EJEMPLOS_TONO) - 1))
+    for i, e in enumerate(EJEMPLOS_TONO)
+)
+
+
+def _prefijo_fijo(memoria_larga) -> list[Message]:
+    """Lo que va entre el system prompt y el historial: ejemplos de tono + la
+    memoria larga (si hay). Compartido por procesar_turno() y
+    precargar_prefijo(), para que la precarga evalúe exactamente lo mismo."""
+    prefijo = list(_EJEMPLOS)
+    memoria = personalidad.construir_bloque_memoria(memoria_larga)
+    if memoria:
+        prefijo.append(Message(role="user", content=memoria))
+    return prefijo
+
+
+def precargar_prefijo(tools=None):
+    """Precarga del LLM al arrancar rem_chat.py (hilo de fondo): además de
+    cargar el modelo, le hace evaluar system + tools + ejemplos de tono (+
+    memoria larga), el prefijo fijo de todos los turnos, para que quede en la
+    caché de Ollama y el primer turno tras una (re)carga no lo pague. `tools`
+    tienen que ser las mismas que ofrecerá el panel (acciones.tools_disponibles()
+    del modo activo): en el template del modelo van dentro del bloque system,
+    y si difieren el prefijo ya no coincide. No hace nada con Claude/Groq."""
+    import llm
+    llm.precargar_provider(personalidad.construir_prompt_sistema(),
+                           _prefijo_fijo(personalidad.cargar_memoria_larga()), tools)
 
 
 class SesionChat:
@@ -123,28 +157,31 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
     # El HISTORIAL guarda solo lo que dijo el usuario. El contexto dinámico va
     # únicamente en la copia del último mensaje que se le manda al LLM en ESTE
     # turno: antes se guardaba pegado a cada mensaje, y cada turno viejo
-    # arrastraba para siempre su propio bloque de fecha/PC — datos caducos que
+    # arrastraba para siempre su propio bloque de fecha (y antes, de estado de la PC) — datos caducos que
     # el modelo, además, terminaba comentando.
     sesion.historial.append(Message(role="user", content=texto))
     mensajes = sesion.historial
     if incluir_contexto:
         cfg = config.leer_config_contexto()
         contexto = personalidad.construir_contexto_dinamico(
-            memoria_sistema, texto,
-            linea_pc=cfg["linea_pc"], palabras_pc=cfg["palabras_pc"],
-            linea_fecha=cfg["linea_fecha"], palabras_fecha=cfg["palabras_fecha"],
-            # rem_chat no ejecuta acciones de búsqueda: los archivos conocidos
-            # solo serían ruido (ver personalidad.construir_prompt_sistema).
-            incluir_memoria_sistema=False)
-        partes_ctx = [n for n, marca in (("fecha", "[FECHA"), ("PC", "[ESTADO")) if marca in contexto]
-        print(f"  [Contexto] {'+'.join(partes_ctx) or 'nada'} "
-              f"(pc={cfg['linea_pc']}, fecha={cfg['linea_fecha']})", flush=True)
+            texto, linea_fecha=cfg["linea_fecha"], palabras_fecha=cfg["palabras_fecha"])
+        print(f"  [Contexto] {'fecha' if contexto else 'nada'} (fecha={cfg['linea_fecha']})",
+              flush=True)
         if contexto:
             mensajes = sesion.historial[:-1] + [Message(role="user", content=f"{contexto}\n{texto}")]
 
-    # Sin el catálogo de acciones/seguridad: rem_chat no tiene ejecutor de
-    # acciones (solo Rem.py, legacy). Ver personalidad.construir_prompt_sistema.
-    system = personalidad.construir_prompt_sistema(memoria_larga, con_acciones=False)
+    # Orden final: system → ejemplos de tono → memoria larga → historial, con
+    # el contexto dinámico pegado solo al último mensaje. Todo lo que cambia
+    # queda detrás de system + ejemplos, que son idénticos byte a byte en cada
+    # turno (el prefijo que reusan las cachés de Ollama/Groq/Claude). El
+    # contexto va en el último mensaje y no antes del historial: si fuera
+    # antes, cada turno que lo trae invalidaría también todo el historial.
+    # En eco no va nada de esto: no hay modelo del otro lado.
+    if not isinstance(sesion.provider, EchoProvider):
+        mensajes = _prefijo_fijo(memoria_larga) + mensajes
+
+    # Sin la memoria larga, que va como mensaje aparte (ver arriba).
+    system = personalidad.construir_prompt_sistema()
     partes = []
     done_chunk = None
     tool_calls_recibidas = []

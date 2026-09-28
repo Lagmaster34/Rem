@@ -90,16 +90,10 @@ pip install infer-rvc-python
 # Resto de dependencias
 pip install \
     edge-tts \
-    SpeechRecognition \
-    Pillow \
     psutil \
-    pyautogui \
     sounddevice \
     soundfile \
-    requests \
     groq \
-    opencv-python \
-    mss \
     websockets \
     librosa \
     scipy \
@@ -161,15 +155,13 @@ Crea un archivo `.env` en la raíz del proyecto:
 ```bash
 cat > .env << 'EOF'
 GROQ_API_KEY=tu_clave_aqui
-VOZ_REM=es-VE-PaolaNeural
-TTS_RATE=-8%
 EOF
 ```
 
 Obtén tu clave gratis en [console.groq.com](https://console.groq.com).
 
-`VOZ_REM` y `TTS_RATE` son opcionales (tienen los mismos valores por defecto en el código) — salieron
-de una comparación A/B de voces de edge-tts pasadas por RVC. RVC transfiere el timbre del modelo pero
+La voz de salida (`voz`/`rate`) se configura en `config.toml` → `[voz]`, no en `.env` — los valores
+por defecto salieron de una comparación A/B de voces de edge-tts pasadas por RVC. RVC transfiere el timbre del modelo pero
 no la prosodia, así que la voz de origen se elige por su ritmo, no por cómo suena cruda; `-8%` (más
 lenta que el default) le da a RVC más margen por fonema para trackear el pitch con `rmvpe` y mejora
 la fidelidad de la conversión. Ver `CLAUDE.md` → "Configuración de voz ganadora" para más detalle,
@@ -194,18 +186,7 @@ Proyecto Rem/
 
 ---
 
-## 8. Imagen de fondo
-
-El archivo `wallhaven-j5zopp_1920x1080.png` debe estar en la raíz del proyecto.
-Está incluido en el repo. Si quieres usar otra imagen, cambia la variable en `Rem.py`:
-
-```python
-IMAGEN_FONDO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tu_imagen.png")
-```
-
----
-
-## 9. Permisos de audio y micrófono
+## 8. Permisos de audio y micrófono
 
 En Arch con PipeWire (recomendado):
 
@@ -222,19 +203,15 @@ sudo usermod -aG audio $USER
 
 ---
 
-## 10. Ejecutar Rem
+## 9. Ejecutar Rem
 
 ```bash
 cd "/ruta/al/proyecto Rem"
-venv/bin/python Rem.py
+venv/bin/python rem_chat.py                  # ventana con panel de chat
+venv/bin/python rem_chat.py --modo overlay   # overlay sobre el escritorio + push-to-talk
 ```
 
-O activando el venv primero:
-
-```bash
-source venv/bin/activate
-python Rem.py
-```
+Usá siempre `venv/bin/python`, no el `python` del sistema.
 
 ---
 
@@ -245,7 +222,6 @@ python Rem.py
 | `.env` | Contiene la API key — nunca subir |
 | `rmvpe.pt` | 173 MB — descargar de HuggingFace |
 | `hubert_base.pt` | 181 MB — descargar de HuggingFace |
-| `memoria_rem.json` | Memoria de conversaciones (datos personales) |
 | `memoria_larga.json` | Memoria de conversaciones (datos personales) |
 | `venv/` | Entorno virtual — recrear con esta guía |
 
@@ -265,7 +241,6 @@ rem_chat.py             ← LA APLICACIÓN: levanta el servidor y abre la ventan
               └── Three.js + @pixiv/three-vrm + @pixiv/three-vrm-animation (rem.vrm + clips VRMA)
 
 bench_chat.py           ← REPL de depuración: cliente del servidor, o standalone si no hay ninguno
-Rem.py                  ← asistente Tkinter (legacy, en retirada)
 ```
 
 ---

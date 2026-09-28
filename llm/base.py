@@ -1,9 +1,7 @@
 """Contrato común para cualquier backend de LLM (Groq, Claude, un modelo local...).
 
-Diseñado async nativo a propósito: el backend de Rem hoy es síncrono (Tkinter +
-hilos), pero esta capa no debe cargar con ese detalle — el puente sync→async
-vive en Rem.py (ver `_drenar_stream_llm`), no acá. Cuando Tkinter se reemplace
-por un backend async, esta capa no cambia.
+Async nativo: los consumidores (chat_sesion.procesar_turno(), desde el loop
+del servidor WS o del REPL de bench_chat.py) ya corren dentro de un event loop.
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -16,6 +14,10 @@ class Message:
     LLMProvider.stream_chat."""
     role: Literal["user", "assistant"]
     content: str
+    # Marca el fin de un prefijo estable (p. ej. el último ejemplo de tono,
+    # ver chat_sesion.py). Solo ClaudeProvider lo usa: pone ahí un punto de
+    # caché explícito. Ollama/Groq cachean por prefijo solos y lo ignoran.
+    fin_prefijo_cache: bool = False
 
 
 @dataclass

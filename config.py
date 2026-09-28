@@ -1,12 +1,7 @@
 """config.py — configuración compartida de Rem: carga de .env y config.toml.
 
-Extraído de Rem.py (donde vivía como _cargar_dotenv(), privada del módulo) a
-un módulo compartido porque bench_chat.py no puede importar Rem.py — el
-Python 3.10.14 del venv se compiló sin _tkinter, y aunque lo tuviera, Rem.py
-ejecuta su GUI Tkinter a nivel de módulo con solo importarlo. Sin este
-módulo, ese script nunca veía las variables de .env (ni GROQ_API_KEY antes ni
-ANTHROPIC_API_KEY ahora), lo que se manifestaba como un error de conexión
-genérico en vez de un mensaje claro de "falta la API key".
+Lo usan rem_chat.py, bench_chat.py, llm/ y habla.py: un solo lugar que lee
+.env (API keys) y config.toml, en vez de una lectura por script.
 """
 import os
 
@@ -60,6 +55,16 @@ def leer_dispositivo_rvc() -> str:
     return "cpu" if valor == "cpu" else "cuda"
 
 
+def leer_config_voz() -> tuple[str, str]:
+    """(voz, rate) de edge-tts para habla.py, desde config.toml [voz]. Default
+    = la combinación ganadora del A/B (es-VE-PaolaNeural, -8%, ver CLAUDE.md)."""
+    import lipsync
+    cfg = leer_config_toml().get("voz", {})
+    voz = str(cfg.get("voz", lipsync.VOZ_DEFAULT)).strip() or lipsync.VOZ_DEFAULT
+    rate = str(cfg.get("rate", lipsync.RATE_DEFAULT)).strip() or lipsync.RATE_DEFAULT
+    return voz, rate
+
+
 def leer_modo_app() -> str:
     """Modo de presentación de rem_chat.py, desde config.toml [app].modo:
     "ventana" (default) u "overlay". Cualquier otro valor cae a "ventana".
@@ -88,14 +93,6 @@ def leer_config_overlay() -> dict:
     }
 
 
-_PALABRAS_PC_DEFAULT = [
-    "cpu", "procesador", "ram", "memoria ram", "disco", "espacio", "almacenamiento",
-    "batería", "bateria", "temperatura", "rendimiento", "lento", "lenta", "recursos",
-    "consumo", "la pc", "mi pc", "el pc", "el equipo", "mi equipo", "la computadora",
-    "el ordenador", "estado de la pc", "cómo está la pc", "como esta la pc",
-]
-
-
 _PALABRAS_FECHA_DEFAULT = [
     "hora", "fecha", "día", "dia", "hoy", "mañana", "ayer", "semana", "mes", "año",
     "anoche", "madrugada", "tarde", "noche",
@@ -103,20 +100,19 @@ _PALABRAS_FECHA_DEFAULT = [
 
 
 def leer_config_contexto() -> dict:
-    """[contexto] de config.toml: cuándo se le inyecta al LLM cada línea del
-    contexto dinámico (ver personalidad.construir_contexto_dinamico()).
+    """[contexto] de config.toml: cuándo se le inyecta al LLM la línea de
+    fecha/hora del contexto dinámico (ver personalidad.construir_contexto_dinamico()).
+    El estado de la PC ya no va en el contexto: es la herramienta estado_pc
+    (acciones.py).
 
-    linea_pc / linea_fecha: "condicional" (default; solo si el mensaje del
-              usuario contiene alguna palabra de palabras_pc / palabras_fecha),
-              "siempre" o "nunca".
+    linea_fecha: "condicional" (default; solo si el mensaje del usuario
+                 contiene alguna palabra de palabras_fecha), "siempre" o "nunca".
     Coincidencia por palabra completa, sin distinguir mayúsculas ni tildes."""
     cfg = leer_config_toml().get("contexto", {})
     def _modo(clave):
         m = str(cfg.get(clave, "condicional")).strip().lower()
         return m if m in ("condicional", "siempre", "nunca") else "condicional"
     return {
-        "linea_pc": _modo("linea_pc"),
-        "palabras_pc": [str(x) for x in cfg.get("palabras_pc", _PALABRAS_PC_DEFAULT)],
         "linea_fecha": _modo("linea_fecha"),
         "palabras_fecha": [str(x) for x in cfg.get("palabras_fecha", _PALABRAS_FECHA_DEFAULT)],
     }

@@ -101,6 +101,14 @@ model = "llama-3.3-70b-versatile"
 device = "cuda"   # "cpu" | "cuda"
 
 
+[voz]
+# Voz de salida (edge-tts) de rem_chat.py y bench_chat.py, antes de RVC.
+# Default: la ganadora del A/B (ver CLAUDE.md, "Configuración de voz ganadora").
+# Alternativa en prueba para el tono paisa: voz = "es-CO-SalomeNeural".
+voz  = "es-VE-PaolaNeural"
+rate = "-8%"
+
+
 [avatar]
 # Modelo VRM a cargar en rem_avatar.html — ruta relativa a la raíz del
 # proyecto (servida por rem_avatar_server.py, que sirve todo BASE_DIR).
@@ -182,26 +190,19 @@ language = "es"
 
 
 [contexto]
-# Contexto que rem_chat (ventana y overlay) antepone al mensaje del usuario en
-# cada turno. Cada línea se inyecta según su modo:
-#   "condicional" → solo si el mensaje contiene alguna de sus palabras
-#   "siempre"     → como antes (Rem.py, el asistente Tkinter legacy, sigue así)
+# Contexto que rem_chat (ventana y overlay) antepone al mensaje del usuario:
+# solo la línea de fecha/hora, según su modo:
+#   "condicional" → solo si el mensaje contiene alguna de palabras_fecha
+#   "siempre"     → en cada turno
 #   "nunca"       → nunca
-# Medido con "Hola, Rem." (ver CLAUDE.md): con TODO el contexto siempre, 6 de 6
-# respuestas comentaban el estado de la PC ("tu disco está casi lleno"); sin la
-# línea de PC, 0 de 6. Con la FECHA siempre puesta, ~2 de 23 respuestas la
-# leyeron en voz alta sin que nadie la pidiera — por eso también es condicional.
-linea_pc = "condicional"
+# Con la FECHA siempre puesta, ~2 de 23 respuestas a "Hola, Rem." la leyeron en
+# voz alta sin que nadie la pidiera — por eso es condicional (ver CLAUDE.md).
+# El estado de la PC ya NO va acá: con la línea de PC inyectada, 6 de 6 "Hola"
+# comentaban el disco. Ahora es la herramienta de solo lectura estado_pc
+# (acciones.py), que el modelo llama solo si le preguntan por la PC.
 linea_fecha = "condicional"
 # Coincidencia por PALABRA COMPLETA (o frase), sin distinguir mayúsculas ni
-# tildes: "ram" no salta con "programa". Incluye variantes con y sin tilde por
-# lo que pueda devolver el STT.
-palabras_pc = [
-    "cpu", "procesador", "ram", "memoria ram", "disco", "espacio", "almacenamiento",
-    "batería", "bateria", "temperatura", "rendimiento", "lento", "lenta", "recursos",
-    "consumo", "la pc", "mi pc", "el pc", "el equipo", "mi equipo", "la computadora",
-    "el ordenador", "estado de la pc", "cómo está la pc", "como esta la pc",
-]
+# tildes. Incluye variantes con y sin tilde por lo que pueda devolver el STT.
 palabras_fecha = [
     "hora", "fecha", "día", "dia", "hoy", "mañana", "ayer", "semana", "mes", "año",
     "anoche", "madrugada", "tarde", "noche",

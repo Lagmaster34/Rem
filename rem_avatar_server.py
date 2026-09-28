@@ -247,9 +247,8 @@ def _iniciar_http():
 # ── Chat de texto (panel HTML de rem_chat.py + REPL de bench_chat.py) ──
 # Ver chat_sesion.py para SesionChat/procesar_turno(). Todo perezoso: se
 # construye recién en el primer chat_message/cambiar_modo/reset real, no al
-# importar este módulo — Rem.py también importa rem_avatar_server pero tiene
-# su propio pipeline de conversación aparte, no necesita esto, y no debería
-# pagar el costo de get_provider()/leer memoria (ni arriesgarse a que
+# importar este módulo — quien importe rem_avatar_server sin usar el chat no
+# debería pagar el costo de get_provider()/leer memoria (ni arriesgarse a que
 # get_provider() lance por falta de API key) solo por importar el módulo.
 _chat_lock         = threading.Lock()  # guarda la creación perezosa y el flag de turno activo
 _chat_sesion        = None
@@ -745,7 +744,7 @@ def iniciar_servidor_avatar(permitir_reuso: bool = True) -> bool:
     """Levanta HTTP (:18765) + WS (:18766) si no están corriendo ya en otro
     proceso.
 
-    permitir_reuso=True (default; bench_chat.py, Rem.py legacy): si ya hay un
+    permitir_reuso=True (default; bench_chat.py): si ya hay un
     servidor lo detecta vía _puerto_activo() y lo reusa sin competir por el
     puerto. permitir_reuso=False (rem_chat.py, la aplicación): un servidor ya
     corriendo es un ERROR — lanza ServidorOcupadoError en vez de abrir una
@@ -782,15 +781,3 @@ def iniciar_servidor_avatar(permitir_reuso: bool = True) -> bool:
     print(f"[Avatar] Servidor propio levantado: HTTP :{HTTP_PORT}, WS :{WS_PORT}")
     return True
 
-
-# ── Compat: Rem.py (Tkinter, legacy) todavía llama a estas dos ────────
-# El overlay GTK (rem_overlay.py) se eliminó — la ventana es rem_chat.py.
-# iniciar_avatar() queda como alias de iniciar_servidor_avatar() para no
-# romper Rem.py; cerrar_avatar() ya no tiene nada que cerrar (los hilos del
-# servidor son daemon y mueren con el proceso).
-def iniciar_avatar(screen_w=1920, screen_h=1080):
-    return iniciar_servidor_avatar()
-
-
-def cerrar_avatar():
-    pass

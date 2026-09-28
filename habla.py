@@ -127,7 +127,7 @@ def precargar_rvc():
     try:
         rvc, dispositivo = _obtener_rvc()
         t0 = time.perf_counter()
-        audio_mp3, _ = asyncio.run(lipsync.sintetizar_con_timings("Hola."))
+        audio_mp3, _ = asyncio.run(lipsync.sintetizar_con_timings("Hola.", *config.leer_config_voz()))
         _preparar_wav_16k(audio_mp3, tmp_mp3, tmp_wav)
         _convertir_rvc(rvc, tmp_wav)
         log(f"calentamiento RVC listo en {time.perf_counter() - t0:.2f}s ({dispositivo}) — RVC caliente para el primer turno")
@@ -172,7 +172,7 @@ async def decir(texto, usar_rvc):
     WS o local), para que el llamador pueda medir "tiempo hasta el primer
     audio"."""
     log(f'hablando: "{texto}"')
-    audio_mp3, palabras = await lipsync.sintetizar_con_timings(texto)
+    audio_mp3, palabras = await lipsync.sintetizar_con_timings(texto, *config.leer_config_voz())
     timeline = lipsync.construir_timeline(palabras)
 
     uid = int(time.time() * 1000)

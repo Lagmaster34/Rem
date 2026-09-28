@@ -1,20 +1,23 @@
 """acciones.py — las herramientas (tool calling nativo) que Rem puede
 ejecutar desde rem_chat, más las protecciones que reutiliza de la auditoría
-de seguridad original de Rem.py.
+de seguridad del viejo Rem.py (Tkinter, eliminado — sigue en el historial de
+git, último commit que lo tiene: 58abc8e).
 
 Alcance deliberadamente chico (ver CLAUDE.md, "Pendiente: portar el
 ejecutor de acciones a rem_chat"): NO es el catálogo completo de Rem.py —
-solo 4 herramientas de bajo riesgo o con confirmación obligatoria.
+solo herramientas de bajo riesgo, de solo lectura, o con confirmación
+obligatoria.
 `ejecutar_comando` y el resto del catálogo viejo (JSON en texto) se quedan
 fuera; el hueco de `pacman` sin restricción de subcomando (ver esa sección
 de CLAUDE.md) no aplica más porque `ejecutar_comando` no se porta.
 
-Solo se extrajo de Rem.py lo que estas 4 herramientas necesitan:
+Solo se extrajo de Rem.py lo que las herramientas de búsqueda necesitan:
 `_ruta_segura`/`_filtrar_rutas_seguras` (la validación de rutas) y el
 soporte de `memoria_sistema` para `buscar_archivos` (registrar/consultar
 la caché de archivos ya encontrados). El resto del catálogo de Rem.py
 (ejecutar_comando, mover/copiar/eliminar archivo, crear_carpeta,
-optimizar, descargar, etc.) sigue viviendo solo ahí — no se tocó.
+optimizar, descargar, etc.) no se portó y ya no existe en el árbol: si hace
+falta, recuperarlo de 58abc8e junto con su validación.
 
 `memoria_sistema` se recibe como parámetro en cada función que lo necesita
 (igual que ya hace personalidad.py), nunca como global del módulo: la
@@ -32,7 +35,7 @@ import urllib.parse
 
 from llm import ToolSpec
 
-# ── Rutas seguras (idéntico a Rem.py, mismo motivo: ver CLAUDE.md
+# ── Rutas seguras (portadas tal cual de Rem.py, mismo motivo: ver CLAUDE.md
 # "Seguridad de acciones del sistema") ──────────────────────────────────
 _ZONA_SEGURA = os.path.realpath(os.path.expanduser("~"))
 _DIRS_PROHIBIDOS = ("/etc", "/boot", "/sys", "/proc", "/root", "/bin", "/sbin",
@@ -49,9 +52,9 @@ _RUTAS_PROHIBIDAS_HOME = tuple(
 
 
 def _ruta_segura(ruta, permitir_raiz=False):
-    """Copia de Rem.py — ver ese archivo para el razonamiento completo de
-    cada chequeo. Solo la usa buscar_archivos() acá, con permitir_raiz=True
-    (es de solo lectura, igual que en Rem.py)."""
+    """Portada de Rem.py — ver CLAUDE.md ("Seguridad de acciones del
+    sistema") para el razonamiento de cada chequeo. Solo la usa
+    buscar_archivos() acá, con permitir_raiz=True (es de solo lectura)."""
     ruta = os.path.realpath(os.path.expanduser(str(ruta)))
     if os.path.commonpath([ruta, _ZONA_SEGURA]) != _ZONA_SEGURA:
         return False, f"Solo puedo operar dentro de {_ZONA_SEGURA}."
@@ -67,7 +70,7 @@ def _ruta_segura(ruta, permitir_raiz=False):
 
 
 def _filtrar_rutas_seguras(rutas):
-    """Copia de Rem.py — glob.glob('**') puede encontrar coincidencias
+    """Portada de Rem.py — glob.glob('**') puede encontrar coincidencias
     dentro de ~/.ssh/~/.config/etc. igual si están debajo de la base
     validada; hay que filtrar cada resultado, no solo la carpeta de
     partida."""
@@ -99,9 +102,9 @@ def _rotar_memoria_sistema(memoria_sistema):
 
 
 def _registrar_archivo_sistema(memoria_sistema, nombre, ruta):
-    """Mismo filtro que Rem.py: memoria_sistema se reinyecta en prompts
-    futuros sin filtrar de nuevo, así que una entrada indebida acá quedaría
-    expuesta hasta que se borre a mano — ver CLAUDE.md."""
+    """Mismo filtro que tenía Rem.py: memoria_sistema persiste en disco y
+    buscar_archivos() la devuelve en respuestas futuras, así que una entrada
+    indebida acá quedaría expuesta hasta que se borre a mano — ver CLAUDE.md."""
     ok, _ = _ruta_segura(ruta, permitir_raiz=True)
     if not ok:
         return
@@ -252,6 +255,114 @@ def buscar_archivos(memoria_sistema: dict, patron: str) -> str:
     return f"Encontré {len(res)}{extra}:\n{listado}"
 
 
+# ── Herramienta 5: estado_pc (solo lectura) ──────────────────────────────
+# Antes el estado de la PC se inyectaba en el contexto de cada turno que
+# mencionara palabras como "ram" o "disco" — y aun así el modelo lo comentaba
+# sin que nadie preguntara (ver CLAUDE.md). Como herramienta, el dato solo
+# existe cuando el modelo decide pedirlo.
+def _num(x: float, decimales: int = 1) -> str:
+    """Número con coma decimal (así lo lee bien el TTS en español)."""
+    return f"{x:.{decimales}f}".replace(".", ",")
+
+
+def estado_pc() -> str:
+    import psutil
+    ram  = psutil.virtual_memory()
+    cpu  = psutil.cpu_percent(interval=0.2)
+    disk = psutil.disk_usage("/")
+    return (f"La CPU va al {_num(cpu, 0)} %, la RAM en {_num(ram.used / 1024**3)} de "
+            f"{_num(ram.total / 1024**3)} GB, y al disco le quedan "
+            f"{_num(disk.free / 1024**3)} GB libres.")
+
+
+# ── Herramienta 6: calcular (solo lectura) ───────────────────────────────
+# El modelo de 4B se equivoca en cuentas simples (12×7 → "sesenta y cuatro",
+# medido). Evalúa la expresión recorriendo el AST — nunca eval(): solo números,
+# + - * / // % ** y unos pocos nombres, con topes para que "9**9**9" o una
+# expresión enorme no cuelguen el proceso.
+import ast
+import math
+import operator
+
+_OPS_BINARIAS = {
+    ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+    ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod, ast.Pow: operator.pow,
+}
+_OPS_UNARIAS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+_FUNCIONES = {"sqrt": math.sqrt, "raiz": math.sqrt, "abs": abs}
+_CONSTANTES = {"pi": math.pi}
+_MAX_LARGO_EXPR = 200
+_MAX_EXPONENTE = 100
+_MAX_MAGNITUD = 1e15
+
+
+class ErrorCalculo(ValueError):
+    pass
+
+
+def _eval_nodo(nodo):
+    if isinstance(nodo, ast.Expression):
+        return _eval_nodo(nodo.body)
+    if isinstance(nodo, ast.Constant) and type(nodo.value) in (int, float):
+        return nodo.value
+    if isinstance(nodo, ast.Name) and nodo.id in _CONSTANTES:
+        return _CONSTANTES[nodo.id]
+    if isinstance(nodo, ast.UnaryOp) and type(nodo.op) in _OPS_UNARIAS:
+        return _OPS_UNARIAS[type(nodo.op)](_eval_nodo(nodo.operand))
+    if isinstance(nodo, ast.BinOp) and type(nodo.op) in _OPS_BINARIAS:
+        izq, der = _eval_nodo(nodo.left), _eval_nodo(nodo.right)
+        if isinstance(nodo.op, ast.Pow) and abs(der) > _MAX_EXPONENTE:
+            raise ErrorCalculo("exponente demasiado grande")
+        try:
+            res = _OPS_BINARIAS[type(nodo.op)](izq, der)
+        except ZeroDivisionError:
+            raise ErrorCalculo("división por cero")
+        if isinstance(res, complex) or abs(res) > _MAX_MAGNITUD:
+            raise ErrorCalculo("resultado fuera de rango")
+        return res
+    if (isinstance(nodo, ast.Call) and isinstance(nodo.func, ast.Name)
+            and nodo.func.id in _FUNCIONES and not nodo.keywords and len(nodo.args) == 1):
+        try:
+            return _FUNCIONES[nodo.func.id](*(_eval_nodo(a) for a in nodo.args))
+        except (ValueError, TypeError):
+            raise ErrorCalculo(f"argumento inválido para {nodo.func.id}")
+    raise ErrorCalculo("expresión no permitida")
+
+
+def evaluar_expresion(expresion: str) -> float:
+    """Evalúa una expresión aritmética de forma segura. Acepta × ÷ ^ y coma
+    decimal ("1,5") además de la sintaxis de Python. Lanza ErrorCalculo."""
+    expr = str(expresion).strip()
+    if not expr or len(expr) > _MAX_LARGO_EXPR:
+        raise ErrorCalculo("expresión vacía o demasiado larga")
+    expr = expr.replace("×", "*").replace("÷", "/").replace("^", "**")
+    expr = re.sub(r"(?<=\d),(?=\d)", ".", expr)
+    try:
+        arbol = ast.parse(expr, mode="eval")
+    except SyntaxError:
+        raise ErrorCalculo("no entendí la expresión")
+    res = _eval_nodo(arbol)
+    if abs(res) > _MAX_MAGNITUD:
+        raise ErrorCalculo("resultado fuera de rango")
+    return res
+
+
+def _formatear_resultado(x) -> str:
+    if isinstance(x, float) and x.is_integer():
+        x = int(x)
+    if isinstance(x, int):
+        return str(x)
+    return f"{round(x, 6):.6f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def calcular(expresion: str) -> str:
+    try:
+        return f"Da {_formatear_resultado(evaluar_expresion(expresion))}."
+    except ErrorCalculo as e:
+        return f"No pude hacer esa cuenta ({e})."
+
+
 # ── Catálogo de tools + confirmación ─────────────────────────────────────
 _SPEC_ABRIR_PROGRAMA = ToolSpec(
     name="abrir_programa",
@@ -298,6 +409,30 @@ _SPEC_BUSCAR_ARCHIVOS = ToolSpec(
     },
 )
 
+_SPEC_ESTADO_PC = ToolSpec(
+    name="estado_pc",
+    description=("Consulta el uso actual de CPU, RAM y disco de la PC de Esteban. Úsala "
+                  "SOLO cuando pregunte por el estado, el rendimiento o los recursos de "
+                  "su PC — nunca en un saludo ni en charla casual. NO da la hora ni la "
+                  "fecha: si te preguntan eso, respondé con la [FECHA Y HORA ACTUAL] que "
+                  "viene en el mensaje, o decí que no lo sabés."),
+    parameters={"type": "object", "properties": {}, "required": []},
+)
+
+_SPEC_CALCULAR = ToolSpec(
+    name="calcular",
+    description=("Evalúa una expresión aritmética y devuelve el resultado exacto. Úsala "
+                  "para CUALQUIER cuenta (sumas, multiplicaciones, porcentajes, "
+                  "conversiones de unidades), nunca calcules de cabeza."),
+    parameters={
+        "type": "object",
+        "properties": {"expresion": {"type": "string",
+                                      "description": ("Expresión con números y + - * / ** ( ), "
+                                                      "ej. '12*7', '240*15/100', '3*1024'")}},
+        "required": ["expresion"],
+    },
+)
+
 TOOLS_QUE_CONFIRMAN = {"apagar_pc"}
 TOOLS_EXCLUIDAS_OVERLAY = {"apagar_pc"}
 
@@ -310,6 +445,8 @@ _DISPATCH = {
     "apagar_pc": lambda args, memoria_sistema: apagar_pc(),
     "buscar_en_navegador": lambda args, memoria_sistema: buscar_en_navegador(args.get("consulta", "")),
     "buscar_archivos": lambda args, memoria_sistema: buscar_archivos(memoria_sistema, args.get("patron", "")),
+    "estado_pc": lambda args, memoria_sistema: estado_pc(),
+    "calcular": lambda args, memoria_sistema: calcular(args.get("expresion", "")),
 }
 
 
@@ -323,7 +460,8 @@ class ConfirmacionExpirada(Exception):
 def tools_disponibles(modo: str) -> list[ToolSpec]:
     """`modo`: 'ventana' u 'overlay' — apagar_pc no se ofrece en overlay
     (no hay forma de confirmar una acción destructiva ahí, ver CLAUDE.md)."""
-    specs = [_SPEC_ABRIR_PROGRAMA, _SPEC_APAGAR_PC, _SPEC_BUSCAR_EN_NAVEGADOR, _SPEC_BUSCAR_ARCHIVOS]
+    specs = [_SPEC_ABRIR_PROGRAMA, _SPEC_APAGAR_PC, _SPEC_BUSCAR_EN_NAVEGADOR, _SPEC_BUSCAR_ARCHIVOS,
+             _SPEC_ESTADO_PC, _SPEC_CALCULAR]
     if modo == "overlay":
         specs = [s for s in specs if s.name not in TOOLS_EXCLUIDAS_OVERLAY]
     return specs

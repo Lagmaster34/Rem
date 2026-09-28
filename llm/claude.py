@@ -31,7 +31,7 @@ class ClaudeProvider(LLMProvider):
     nota ahí): AsyncAnthropic envuelve un cliente HTTP async también, y uno
     que llega a abrir una conexión real queda atado al loop en el que corrió
     esa primera vez. Si este provider se usa como singleton y se lo llama
-    desde un loop nuevo (el patrón de _drenar_stream_llm() en Rem.py),
+    desde un loop nuevo (p. ej. un asyncio.run() por llamada),
     reusar el cliente viejo revienta con "Event loop is closed"."""
 
     def __init__(self, api_key: str, model: str = _MODELO_DEFAULT,
@@ -76,7 +76,15 @@ class ClaudeProvider(LLMProvider):
             "cache_control": {"type": "ephemeral"},
         }]
 
-        payload_messages = [{"role": m.role, "content": m.content} for m in messages]
+        # Segundo punto de caché al final del prefijo estable (los ejemplos de
+        # tono): el del system solo cubre tools + system, y así los ejemplos
+        # tampoco se vuelven a cobrar enteros en cada turno.
+        payload_messages = [
+            {"role": m.role, "content": [{"type": "text", "text": m.content,
+                                          "cache_control": {"type": "ephemeral"}}]}
+            if m.fin_prefijo_cache else {"role": m.role, "content": m.content}
+            for m in messages
+        ]
 
         kwargs = dict(
             model=self._model,

@@ -91,16 +91,19 @@ def get_provider() -> LLMProvider:
     )
 
 
-def precargar_provider() -> None:
+def precargar_provider(system: str | None = None, messages: list | None = None,
+                       tools: list | None = None) -> None:
     """Deja el provider activo "caliente" si su backend lo permite (hoy solo
-    Ollama: cargar el modelo en memoria) — lanzada en un hilo de fondo al
-    arrancar por rem_chat.py, igual que habla.precargar_rvc() y
-    stt.precargar_stt(). Los providers remotos (Claude/Groq) no tienen nada
-    que precargar. No bloqueante: un fallo (Ollama apagado, falta la API key)
-    solo se loguea; el error real volverá a aparecer, visible, en el primer turno."""
+    Ollama: cargar el modelo en memoria y, si se pasa `system`, evaluar el
+    prefijo system + `messages` + `tools` para que quede en su caché — ver
+    chat_sesion.precargar_prefijo(), que es quien lo llama al arrancar
+    rem_chat.py, igual que habla.precargar_rvc() y stt.precargar_stt()). Los
+    providers remotos (Claude/Groq) no tienen nada que precargar. No
+    bloqueante: un fallo (Ollama apagado, falta la API key) solo se loguea; el
+    error real volverá a aparecer, visible, en el primer turno."""
     try:
         provider = get_provider()
         if hasattr(provider, "precargar"):
-            provider.precargar()
+            provider.precargar(system, messages, tools)
     except Exception as e:
         print(f"[LLM] precarga falló, no bloqueante ({e})", flush=True)
