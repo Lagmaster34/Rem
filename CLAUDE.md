@@ -2307,6 +2307,25 @@ neutros. 12×7 bien 3/3 (sin la tool). Nuevo defecto: monotonía, 5 de 6 buenas 
 ejemplo nuevo ("¿Tenías … en git? Mirá…"). "Hola"/"quiubo" a veces responde con "qué gonorrea",
 como si fuera mala noticia. Salida en `bench_emocional_2026-09-27_v3.txt`.
 
+**Cuarta pasada, por la ruta CON tools** (`procesar_turno(tools=tools_disponibles("ventana"))` con
+precarga del prefijo, como la ventana; tools con efectos en stub). La línea de jerga ya no lista
+palabras, solo el criterio (alegría ante buenas, fastidio ante malas, nunca al revés; variar cómo se
+empieza), y volvieron "nunca tú ni usted" y "en lo técnico hablás normal" (system 794 → 829 tok).
+Ejemplos: 19 pares (+2 buenas noticias con otras aperturas, +1 mala noticia no técnica, +2 de charla
+sin tecnología —un plan y el frío de Yarumal, no comida, para no pisar "recomendame algo para
+almorzar"—; se quitó "probé el modelo nuevo y va volando"). Prefijo completo 2406 → 2558 tok.
+Resultados (24 respuestas): aperturas de buenas noticias 4 fórmulas distintas en 6 (v3: 5 de 6 eran
+"¡Uy, qué chimba, parce!"), "ya era hora" 1/6 (v3: 3/6), pero "¡Hágale, por fin!" salió copiado del
+ejemplo nuevo. El ejemplo de mala noticia se parafrasea 3/3 ("¡Qué gonorrea! ¿Tenías … en git?"); "chimba"
+ante malas 0/3. PC en el saludo 2/3 ("la RAM te dio un infarto", "¿te pegó el sistema?"). El único
+"gonorrea" del saludo (1/3) es **vocativo** ("¡Quiubo, gonorrea!"), casi copia del ejemplo, no queja.
+**Regresión: mezclas tú/vos 6/24** ("pásalo", "mira", "tienes", "puedes", "si te equivocas"), frente a
+0/24 en v3 sin tools; las dos rutas no son del todo comparables (el bloque de tools cambia el
+prompt). 12×7: `calcular` 1/3, las otras 2 contestó "84." de cabeza (bien); el ejemplo "cuánto es 15%
+de 80000" → "Doce mil." enseña justo lo contrario de la regla de `calcular`. Contagio del ejemplo del
+clima: "Pues claro/Pues sí" abre las 3 respuestas al bug, y un almuerzo terminó hablando de Yarumal.
+Ninguna tool se disparó por error. Salida en `bench_emocional_2026-09-27_v4_tools.txt`.
+
 El viejo par `abrime el firefox` → "De una, ya te lo abro." se quitó: **sin** tools (p. ej.
 `bench_chat.py`, que llama a `procesar_turno()` sin `tools=`) el modelo contestaba "De una, ya te la
 abrí." sin abrir nada. Lo reemplaza un par donde Rem se niega a algo que no puede hacer
