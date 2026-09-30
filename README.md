@@ -226,6 +226,37 @@ venv/bin/python bench_chat.py   # REPL de depuración — se conecta a rem_chat.
                                 # o levanta el servidor él mismo. 'modo eco' = voz sin LLM
 ```
 
+### Lanzadores (sin escribir comandos)
+
+La carpeta `lanzadores/` abre cada modo con doble clic o desde el lanzador de apps:
+
+| Script | Entrada en el lanzador | Qué abre |
+|---|---|---|
+| `lanzadores/rem-ventana.sh` | **Rem Ventana** | `rem_chat.py --modo ventana` |
+| `lanzadores/rem-debug.sh` | **Rem Debug** | `bench_chat.py` en una terminal (`$TERMINAL`, o foot/kitty/alacritty) |
+
+Para que aparezcan en el lanzador de apps (Hyprland, rofi, wofi, etc.):
+
+```bash
+lanzadores/instalar.sh    # escribe los .desktop en ~/.local/share/applications/
+```
+
+- **Dos instancias nunca compiten por el puerto.** `rem-ventana.sh` cierra cualquier `rem_chat.py`
+  que ya esté corriendo antes de abrir el nuevo: primero pide un cierre limpio (SIGTERM) y solo
+  fuerza (SIGKILL) si no se cerró en 5 s. `rem-debug.sh` **no** lo cierra, porque `bench_chat.py`
+  no ocupa el puerto: si hay una ventana abierta se conecta a ella como cliente, y si no, levanta
+  su propio servidor.
+- **Logs** en `lanzadores/logs/<script>.log`: cada arranque se agrega con fecha y hora, sin borrar
+  los anteriores. La consola de WebKit sigue yendo a `rem_chat.log`, en la raíz. El log de debug
+  guarda la sesión completa del REPL.
+- **Si movés el proyecto**, los `.sh` siguen funcionando porque calculan la raíz desde su propia
+  ubicación. Hay que volver a correr `instalar.sh`: un `.desktop` necesita la ruta absoluta en
+  `Exec=`, así que se instala como copia con la ruta real y no como symlink.
+- **Ícono**: el proyecto no trae uno propio, así que se usa `avatar-default` del tema. Si dejás un
+  `lanzadores/rem.png` o `rem.svg` y volvés a correr `instalar.sh`, se usa ese.
+- El lanzador del **modo overlay** todavía no existe: se agrega cuando `feat/modo-overlay-stt`
+  llegue a `main`.
+
 ---
 
 ## ⚡ Rendimiento y presupuesto de VRAM

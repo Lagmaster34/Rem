@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Rem Ventana
+Comment=Rem con avatar y panel de chat
+Exec=@LANZADORES@/rem-ventana.sh
+Icon=@ICONO@
+Terminal=false
+Categories=Utility;
+StartupNotify=false

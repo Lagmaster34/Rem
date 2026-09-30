@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Rem Debug
+Comment=REPL de depuración de Rem (bench_chat.py) en una terminal
+Exec=@LANZADORES@/rem-debug.sh
+Icon=@ICONO@
+Terminal=false
+Categories=Utility;
+StartupNotify=false
