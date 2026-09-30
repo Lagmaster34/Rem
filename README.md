@@ -236,6 +236,7 @@ La carpeta `lanzadores/` abre cada modo con doble clic o desde el lanzador de ap
 | `lanzadores/rem-ventana.sh` | **Rem Ventana** | `rem_chat.py --modo ventana` |
 | `lanzadores/rem-overlay.sh` | **Rem Overlay** | `rem_chat.py --modo overlay` (avatar sobre el escritorio + caja de texto) |
 | `lanzadores/rem-debug.sh` | **Rem Debug** | `bench_chat.py` en una terminal (`$TERMINAL`, o foot/kitty/alacritty) |
+| `lanzadores/rem-cerrar.sh` | **Rem Cerrar** | Cierra cualquier `rem_chat.py` abierto, ventana u overlay (SIGTERM, y SIGKILL a los 5 s) |
 
 Para que aparezcan en el lanzador de apps (Hyprland, rofi, wofi, etc.):
 
@@ -257,6 +258,11 @@ lanzadores/instalar.sh    # escribe los .desktop en ~/.local/share/applications/
   `Exec=`, así que se instala como copia con la ruta real y no como symlink.
 - **Ícono**: el proyecto no trae uno propio, así que se usa `avatar-default` del tema. Si dejás un
   `lanzadores/rem.png` o `rem.svg` y volvés a correr `instalar.sh`, se usa ese.
+- **Cerrar con una tecla** (útil en el overlay, que no tiene botón de cerrar): agregar a
+  `hyprland.conf`
+  ```
+  bind = SUPER SHIFT, H, exec, /mnt/extra/rem/Rem/lanzadores/rem-cerrar.sh
+  ```
 - Para el push-to-talk del overlay hacen falta además los binds de Hyprland (ver CLAUDE.md,
   "Líneas de Hyprland para push-to-talk").
 

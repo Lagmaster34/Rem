@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Rem Cerrar
+Comment=Cierra Rem (ventana u overlay)
+Exec=@LANZADORES@/rem-cerrar.sh
+Icon=@ICONO@
+Terminal=false
+Categories=Utility;
+StartupNotify=false
