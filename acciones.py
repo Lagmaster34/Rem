@@ -366,7 +366,7 @@ def calcular(expresion: str) -> str:
 # ── Catálogo de tools + confirmación ─────────────────────────────────────
 _SPEC_ABRIR_PROGRAMA = ToolSpec(
     name="abrir_programa",
-    description=("Abre un programa instalado en el sistema por su nombre. Úsala SOLO "
+    description=("Abre un programa instalado en el sistema por su nombre. Usar SOLO "
                   "cuando Esteban pida explícitamente abrir, lanzar o iniciar una "
                   "aplicación concreta."),
     parameters={
@@ -379,7 +379,7 @@ _SPEC_ABRIR_PROGRAMA = ToolSpec(
 
 _SPEC_APAGAR_PC = ToolSpec(
     name="apagar_pc",
-    description=("Apaga la PC. Úsala SOLO cuando Esteban pida explícita y literalmente "
+    description=("Apaga la PC. Usar SOLO cuando Esteban pida explícita y literalmente "
                   "apagar/shutdown SU PC — nunca en preguntas hipotéticas, sobre otra "
                   "máquina, o como figura del lenguaje."),
     parameters={"type": "object", "properties": {}, "required": []},
@@ -387,7 +387,7 @@ _SPEC_APAGAR_PC = ToolSpec(
 
 _SPEC_BUSCAR_EN_NAVEGADOR = ToolSpec(
     name="buscar_en_navegador",
-    description=("Abre el navegador con una búsqueda web. Úsala cuando Esteban pida "
+    description=("Abre el navegador con una búsqueda web. Usar cuando Esteban pida "
                   "buscar algo en internet, en Google o en la web."),
     parameters={
         "type": "object",
@@ -399,7 +399,7 @@ _SPEC_BUSCAR_EN_NAVEGADOR = ToolSpec(
 _SPEC_BUSCAR_ARCHIVOS = ToolSpec(
     name="buscar_archivos",
     description=("Busca archivos por nombre dentro de la carpeta personal de Esteban en "
-                  "su PC. Úsala cuando pida encontrar o buscar un archivo específico en "
+                  "su PC. Usar cuando pida encontrar o buscar un archivo específico en "
                   "su sistema — NO para búsquedas en internet."),
     parameters={
         "type": "object",
@@ -411,19 +411,19 @@ _SPEC_BUSCAR_ARCHIVOS = ToolSpec(
 
 _SPEC_ESTADO_PC = ToolSpec(
     name="estado_pc",
-    description=("Consulta el uso actual de CPU, RAM y disco de la PC de Esteban. Úsala "
+    description=("Devuelve el uso actual de CPU, RAM y disco de la PC de Esteban. Usar "
                   "SOLO cuando pregunte por el estado, el rendimiento o los recursos de "
-                  "su PC — nunca en un saludo ni en charla casual. NO da la hora ni la "
-                  "fecha: si te preguntan eso, respondé con la [FECHA Y HORA ACTUAL] que "
-                  "viene en el mensaje, o decí que no lo sabés."),
+                  "su PC — nunca en un saludo ni en charla casual. No usar para la hora "
+                  "ni la fecha: esas se responden con la [FECHA Y HORA ACTUAL] que viene "
+                  "en el mensaje, y si no viene, se contesta que no se sabe."),
     parameters={"type": "object", "properties": {}, "required": []},
 )
 
 _SPEC_CALCULAR = ToolSpec(
     name="calcular",
-    description=("Evalúa una expresión aritmética y devuelve el resultado exacto. Úsala "
+    description=("Evalúa una expresión aritmética y devuelve el resultado exacto. Usar "
                   "para CUALQUIER cuenta (sumas, multiplicaciones, porcentajes, "
-                  "conversiones de unidades), nunca calcules de cabeza."),
+                  "conversiones de unidades); nunca calcular de cabeza."),
     parameters={
         "type": "object",
         "properties": {"expresion": {"type": "string",

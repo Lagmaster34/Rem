@@ -2326,6 +2326,16 @@ de 80000" → "Doce mil." enseña justo lo contrario de la regla de `calcular`. 
 clima: "Pues claro/Pues sí" abre las 3 respuestas al bug, y un almuerzo terminó hablando de Yarumal.
 Ninguna tool se disparó por error. Salida en `bench_emocional_2026-09-27_v4_tools.txt`.
 
+**Quinta pasada, solo tú/vos (2026-09-29, misma ruta con tools)**. Descripciones de las tools
+reescritas en infinitivo/impersonal (antes decían "Úsala", "nunca calcules": formas de tú dentro del
+bloque de tools); fuera el par "15% de 80000" → "Doce mil." (contradecía `calcular`); el ejemplo del
+frío arranca "Es que estamos en Yarumal" en vez de "Pues claro". Tú en 3/24 (v4: 6/24), ninguna
+mezclada con vos en la misma frase: "¿Quieres algo más?", "Oye, no te preocupes", "No te asustes…
+mira los backups". Lo que queda en el prompt con forma de tú: la palabra "tú" en "nunca tú ni
+usted" y "no los has encontrado" en un ejemplo (válido también con vos); el bloque de tools que
+arma el template de Qwen está en inglés. `calcular` 3/3 en 12×7. Salida en
+`bench_emocional_2026-09-29_v5_tuvos.txt`.
+
 El viejo par `abrime el firefox` → "De una, ya te lo abro." se quitó: **sin** tools (p. ej.
 `bench_chat.py`, que llama a `procesar_turno()` sin `tools=`) el modelo contestaba "De una, ya te la
 abrí." sin abrir nada. Lo reemplaza un par donde Rem se niega a algo que no puede hacer
