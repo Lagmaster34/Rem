@@ -2,10 +2,62 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<!-- Marca <html> como overlay ANTES de que pinte nada: el fondo transparente y
+     el ocultar el panel de chat no pueden esperar al script principal
+     (un frame de fondo oscuro sobre el escritorio sería un parpadeo visible). -->
+<script>if (new URLSearchParams(location.search).get('modo') === 'overlay') document.documentElement.classList.add('overlay');</script>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:#05000f; overflow:hidden; width:100vw; height:100vh; }
   canvas { display:block; }
+
+  /* ── Modo overlay (?modo=overlay, rem_chat.py --modo overlay) ── superficie
+     transparente y click-through: SOLO la caja de texto recibe el ratón (la
+     región de entrada real la fija GTK, ver rem_chat.py; el pointer-events de
+     acá es el cinturón de seguridad del lado web). Sin panel de chat. */
+  html.overlay, html.overlay body { background: transparent; pointer-events: none; }
+  html.overlay #chat-panel { display: none; }
+  #ov-root {
+    position: fixed; left: 10px; right: 10px; bottom: 10px;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #ov-status {
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 10px; border-radius: 999px;
+    background: rgba(6,12,18,0.58);
+    border: 1px solid rgba(43,232,255,0.20);
+    color: #bfe9f3; font-size: 11px; letter-spacing: 0.02em;
+    opacity: 0; transition: opacity .18s ease;
+    pointer-events: none;
+  }
+  #ov-status.visible { opacity: 1; }
+  #ov-status::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto;
+    background: #2be8ff;
+  }
+  #ov-status.pensando::before, #ov-status.hablando::before { animation: chat-pulse 1s ease-in-out infinite; }
+  #ov-status.escuchando { border-color: rgba(255,90,110,0.55); color: #ffd6dc; }
+  #ov-status.escuchando::before { background: #ff5a6e; animation: chat-pulse 0.8s ease-in-out infinite; }
+  #ov-box {
+    width: 100%;
+    background: rgba(6,12,18,0.55);
+    border: 1px solid rgba(43,232,255,0.26);
+    border-radius: 12px;
+    padding: 3px;
+    pointer-events: auto;
+  }
+  #ov-input {
+    width: 100%;
+    background: transparent; border: none; outline: none;
+    color: #eaf6ff; font: inherit; font-size: 13px;
+    padding: 7px 10px;
+  }
+  #ov-input::placeholder { color: rgba(190,225,235,0.45); }
+  #ov-input.transcrito { color: #7ff0ff; font-style: italic; }
+  #ov-box:focus-within { border-color: rgba(43,232,255,0.6); background: rgba(6,12,18,0.72); }
 
   /* ── Panel de chat (ver crearPanelChat() en el script) ── mitad derecha
      de la ventana, opaca, con foco de teclado. Paleta a tono con el suelo
@@ -262,12 +314,21 @@ import { VRMLoaderPlugin, VRMUtils } from 'https://esm.sh/@pixiv/three-vrm@2';
 // empareja con @pixiv/three-vrm@2 (mismo three-vrm-core, mismo módulo three vía esm.sh).
 import { VRMAnimationLoaderPlugin } from 'https://esm.sh/@pixiv/three-vrm-animation@2.1.3';
 
-// Un único frontend: la ventana de escritorio (rem_chat.py — GTK3 + WebKit2,
-// decorada y opaca, con foco). El overlay transparente de escritorio
-// (rem_overlay.py, layer surface click-through) se eliminó; rem_chat.py lo
-// sustituye por completo. rem_chat.py carga esta página con ?modo=ventana,
-// que ya no cambia nada — se mantiene solo por si algún día vuelve a haber
-// más de un modo.
+// Dos modos, elegidos por ?modo= (lo arma rem_avatar_server.url_avatar() según
+// rem_chat.py --modo), nunca los dos a la vez:
+//   ventana (default): ventana GTK decorada y opaca, avatar de cuerpo entero
+//     sobre el suelo synthwave + panel de chat a la derecha + clips VRMA.
+//   overlay: layer surface transparente y click-through (rem_chat.py --modo
+//     overlay), avatar de medio cuerpo, SIN clips VRMA/gestos de reposo/suelo/
+//     panel — solo lipsync, parpadeo, mirada a cámara con saccades, micro-
+//     movimiento de cabeza/cuello y respiración, con los brazos en una pose de
+//     reposo fija (CONFIG.brazos). Una caja de texto abajo es lo único que
+//     recibe el ratón. Ver CONFIG.overlay y crearOverlayUI().
+// (El viejo rem_overlay.py — otro proceso aparte — se eliminó; esto es el
+// mismo servidor, la misma página y el mismo pipeline de voz/LLM.)
+const MODO = new URLSearchParams(location.search).get('modo') === 'overlay' ? 'overlay' : 'ventana';
+const ES_OVERLAY = MODO === 'overlay';
+console.log(`[Modo] ${MODO}`);
 
 // ═══════════════════════════════════════════════════
 // CONFIGURACIÓN CENTRALIZADA
@@ -477,6 +538,28 @@ const CONFIG = {
       velCambioS: 9,
     },
   },
+  // Solo modo overlay (?modo=overlay). La geometría de la SUPERFICIE (ancho,
+  // alto, márgenes, capa) no va acá: es de la ventana GTK y vive en config.toml
+  // [overlay]. Acá, el encuadre del avatar dentro de ella.
+  overlay: {
+    encuadre: {
+      // Medio cuerpo, medido por huesos (hips y head), en fracciones de la
+      // distancia hips->head ("tramo del torso", ~0,6 u en este modelo).
+      bajoCaderaFrac:  0.10,  // cuánto por DEBAJO de la cadera llega el borde inferior
+      sobreCabezaFrac: 0.30,  // cuánto por ENCIMA del hueso head (pelo/adornos)
+      ocupaAltoFrac:   0.93,  // fracción del alto de la superficie que ocupa ese tramo
+      // El encuadre se ajusta por alto Y por ancho y manda el más restrictivo:
+      // con brazos en reposo el cuerpo es más ancho que alto en una superficie
+      // vertical, y ajustar solo por alto los cortaba por los costados.
+      ocupaAnchoFrac:  0.96,  // fracción del ancho de la superficie que puede ocupar el cuerpo con brazos
+      anchoExtraFrac:  0.34,  // margen sobre el ancho medido en huesos (mangas sueltas/volados: sin hueso propio, sobresalen de las manos)
+      // El borde inferior (el corte de cadera) se apoya en el borde de abajo de
+      // la superficie: el sobrante vertical queda ARRIBA (transparente), no
+      // como un hueco entre Rem y la caja de texto.
+      baseSobreBordeFrac: 0.0, // fracción del alto visible entre el corte y el borde inferior
+      anchorX: 0.5,           // centrada horizontalmente
+    },
+  },
   // Presupuesto de render — la ventana comparte los 4 GB de VRAM con Ollama +
   // RVC (ver config.toml [llm.ollama].num_gpu). Bajar estos valores libera
   // VRAM para el LLM a costa de nitidez.
@@ -628,8 +711,11 @@ console.log(`[Modelo] activo: "${MODELO_ACTIVO}"`);
 // ═══════════════════════════════════════════════════
 // Opaco: la ventana de rem_chat.py no es transparente (a diferencia del
 // overlay eliminado). El color de fondo real lo fija crearSueloSynthwave().
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// En overlay el canvas es transparente (alpha) para que se vea el escritorio
+// detrás; sin suelo ni fondo de escena (ver crearSueloSynthwave, no se llama).
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: ES_OVERLAY });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+if (ES_OVERLAY) renderer.setClearColor(0x000000, 0);
 document.body.appendChild(renderer.domElement);
 
 // Renderer WebGL real (Fase 0 del comparativo de modelos) — WEBGL_debug_renderer_info
@@ -709,6 +795,7 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // coordenadas de mundo en el momento de escribir vrm.scene.position.
 let _anchoVisible = 0, _alturaVisible = 0;
 let _modeloAlturaLocal = 1.5, _modeloCentroLocal = 0.75; // fallback razonable antes de medir
+let _modeloAnchoLocal = 0;        // solo overlay: ancho del cuerpo con brazos (medirMedioCuerpo); 0 = sin medir
 let _modeloAlturaBox3 = 0;        // guardada solo para el log comparativo
 let _medirHuesosPendiente = false; // se remide con huesos en el frame siguiente a la carga
 let _modeloPositionY = 0;
@@ -725,7 +812,16 @@ const worldX = n => (n - 0.5) * _anchoVisible;
 // donde empieza el panel) a la fracción real del canvas completo que
 // worldX() espera.
 function fraccionAreaVisible3D() {
+  if (ES_OVERLAY) return 1;  // sin panel: toda la superficie es área 3D
   return 1 - CONFIG.chat.anchoFrac;
+}
+
+// Anclas de encuadre del modo activo: en ventana CONFIG.pet; en overlay las de
+// CONFIG.overlay.encuadre (mismos nombres, así recalcularEncuadre() no ramifica).
+function _anclasEncuadre() {
+  if (!ES_OVERLAY) return CONFIG.pet;
+  const E = CONFIG.overlay.encuadre;
+  return { alturaPantalla: E.ocupaAltoFrac, anchorX: E.anchorX, anchorY: 0.5 };
 }
 
 // Box3.setFromObject() sobre un VRM con SkinnedMesh da la caja de la geometría
@@ -773,12 +869,60 @@ function medirAlturaHuesos() {
   return { altura, centro };
 }
 
+// Overlay: encuadre de medio cuerpo. Mismo método que medirAlturaHuesos()
+// (huesos reales, con vrm.scene.position.y en 0 para no contaminar "centro"
+// con el offset de una pasada anterior) pero el tramo va de la CADERA (hueso
+// hips, más un margen) a la cabeza (hueso head, más margen para pelo/adornos)
+// en vez de cabeza-pies. Devuelve {altura, centro} igual que la de cuerpo entero.
+function medirMedioCuerpo() {
+  const headB = vrm?.humanoid?.getRawBoneNode('head');
+  const hipsB = vrm?.humanoid?.getRawBoneNode('hips');
+  if (!headB || !hipsB) {
+    console.warn('[Encuadre] faltan huesos head/hips — overlay sin medio cuerpo medido');
+    return null;
+  }
+  const yPrevio = vrm.scene.position.y;
+  vrm.scene.position.y = 0;
+  vrm.scene.updateMatrixWorld(true);
+  const headPos = new THREE.Vector3(), hipsPos = new THREE.Vector3();
+  headB.getWorldPosition(headPos);
+  hipsB.getWorldPosition(hipsPos);
+  // Ancho con los brazos ya en su pose de reposo: la mayor distancia lateral
+  // al eje de la cadera entre hombros/brazos/manos, a ambos lados.
+  let semiancho = 0;
+  const _p = new THREE.Vector3();
+  for (const n of ['leftShoulder', 'rightShoulder', 'leftUpperArm', 'rightUpperArm',
+                   'leftLowerArm', 'rightLowerArm', 'leftHand', 'rightHand']) {
+    const b = vrm.humanoid.getRawBoneNode(n);
+    if (b) { b.getWorldPosition(_p); semiancho = Math.max(semiancho, Math.abs(_p.x - hipsPos.x)); }
+  }
+  vrm.scene.position.y = yPrevio;
+  vrm.scene.updateMatrixWorld(true);
+
+  const E = CONFIG.overlay.encuadre;
+  const tramo = headPos.y - hipsPos.y;
+  const base  = hipsPos.y - tramo * E.bajoCaderaFrac;
+  const tope  = headPos.y + tramo * E.sobreCabezaFrac;
+  const ancho = 2 * semiancho * (1 + E.anchoExtraFrac);
+  console.log(`[Encuadre] overlay medio cuerpo: hips.y=${hipsPos.y.toFixed(3)} head.y=${headPos.y.toFixed(3)} `
+            + `tramo=${tramo.toFixed(3)}u -> base=${base.toFixed(3)} tope=${tope.toFixed(3)} | `
+            + `semiancho huesos=${semiancho.toFixed(3)}u -> ancho con margen=${ancho.toFixed(3)}u`);
+  return { altura: tope - base, centro: (tope + base) / 2, ancho };
+}
+
 function recalcularEncuadre() {
   const fovRad = camera.fov * Math.PI / 180;
+  const ANCLAS = _anclasEncuadre();
 
   // 1) Distancia de cámara tal que el modelo (altura real medida) ocupe
   //    CONFIG.pet.alturaPantalla del alto visible de pantalla.
-  const alturaVisibleObjetivo = _modeloAlturaLocal / CONFIG.pet.alturaPantalla;
+  let alturaVisibleObjetivo = _modeloAlturaLocal / ANCLAS.alturaPantalla;
+  if (ES_OVERLAY && _modeloAnchoLocal > 0) {
+    // Ajuste por ancho: el alto visible mínimo para que el cuerpo con brazos
+    // quepa en ocupaAnchoFrac del ancho. Gana el más restrictivo (el mayor).
+    const porAncho = _modeloAnchoLocal / (CONFIG.overlay.encuadre.ocupaAnchoFrac * camera.aspect);
+    alturaVisibleObjetivo = Math.max(alturaVisibleObjetivo, porAncho);
+  }
   camera.position.set(0, 0, alturaVisibleObjetivo / (2 * Math.tan(fovRad / 2)));
   camera.lookAt(0, 0, 0);
   camera.updateProjectionMatrix();
@@ -789,13 +933,17 @@ function recalcularEncuadre() {
 
   // 3) Y del modelo: el centro de su caja (medida) debe caer en anchorY de
   //    pantalla, con la cámara siempre mirando al origen (paso 1).
-  const centroObjetivoMundo = _alturaVisible * (0.5 - CONFIG.pet.anchorY);
+  // Ventana: el centro del cuerpo entero cae en anchorY. Overlay: el corte de
+  // cadera se apoya sobre el borde inferior (más baseSobreBordeFrac).
+  const centroObjetivoMundo = ES_OVERLAY
+    ? -_alturaVisible / 2 + _modeloAlturaLocal / 2 + CONFIG.overlay.encuadre.baseSobreBordeFrac * _alturaVisible
+    : _alturaVisible * (0.5 - ANCLAS.anchorY);
   _modeloPositionY = centroObjetivoMundo - _modeloCentroLocal;
 
   // La X es fija (sin caminata): CONFIG.pet.anchorX, una fracción del ÁREA 3D
   // VISIBLE (no del canvas completo) — fraccionAreaVisible3D() la convierte a
   // fracción de canvas completo antes de pasarla a worldX() (ver esa función).
-  const fracXCanvas = CONFIG.pet.anchorX * fraccionAreaVisible3D();
+  const fracXCanvas = ANCLAS.anchorX * fraccionAreaVisible3D();
   const posX = worldX(fracXCanvas);
   if (vrm) {
     vrm.scene.position.y = _modeloPositionY;
@@ -832,7 +980,7 @@ function recalcularEncuadre() {
 
   console.log(`[Encuadre] z=${camera.position.z.toFixed(3)} anchoVisible=${_anchoVisible.toFixed(3)} `
             + `alturaVisible=${_alturaVisible.toFixed(3)} position.y=${_modeloPositionY.toFixed(3)} `
-            + `position.x=${posX.toFixed(3)} (anchorX=${CONFIG.pet.anchorX}) viewOffsetX=${offsetX.toFixed(1)}px`);
+            + `position.x=${posX.toFixed(3)} (anchorX=${ANCLAS.anchorX}) viewOffsetX=${offsetX.toFixed(1)}px`);
 }
 
 // ═══════════════════════════════════════════════════
@@ -889,7 +1037,8 @@ function posicionarSuelo(posX = 0) {
   if (_horizonte) _horizonte.position.set(posX, pieY, 0);
 }
 
-crearSueloSynthwave();
+// El overlay es transparente y sin suelo: nada de cuadrícula, niebla ni fondo.
+if (!ES_OVERLAY) crearSueloSynthwave();
 
 // ═══════════════════════════════════════════════════
 // CARGA VRM
@@ -926,8 +1075,15 @@ function _cargarVRM(intento = 1) {
       // a mitad de animación (está en el ejemplo oficial de three-vrm-animation).
       vrm.scene.traverse(o => { o.frustumCulled = false; });
       scene.add(vrm.scene);
-      inicializarAnimacionClips(); // mixer + lista de huesos normalizados para la mezcla
-      precargarClips();        // .vrma del catálogo en paralelo, sin bloquear el render
+      if (ES_OVERLAY) {
+        // Oculto hasta el primer frame ya posado y medido (ver animate()): el
+        // VRM nace en T-pose y sobre un fondo transparente ese frame se vería
+        // (y con el encuadre provisorio de cuerpo entero, mal recortado).
+        vrm.scene.visible = false;
+      } else {
+        inicializarAnimacionClips(); // mixer + lista de huesos normalizados para la mezcla
+        precargarClips();        // .vrma del catálogo en paralelo, sin bloquear el render
+      }
 
       // Medición inicial por Box3 — placeholder para el primer frame o dos, hasta
       // que la remedición por huesos (más abajo, en animate()) la corrija. Se
@@ -1156,6 +1312,20 @@ function updateBlink(dt) {
 const _audioEl = new Audio();
 let _audioActivo = false; // true entre 'playing' y 'ended'/'error'
 
+// Le avisa al backend cuándo la cola de audio pasa a tener algo (true, al
+// RECIBIR el audio: cierra el hueco entre que el servidor lo despacha y que
+// suena) o se vacía (false). El push-to-talk lo usa para no abrir el micrófono
+// mientras Rem habla (ver rem_avatar_server, "Push-to-talk"). Solo manda
+// cuando cambia el valor.
+let _vozReportada = false;
+function _reportarVoz(reproduciendo) {
+  if (reproduciendo === _vozReportada) return;
+  _vozReportada = reproduciendo;
+  if (_ws && _ws.readyState === WebSocket.OPEN) {
+    _ws.send(JSON.stringify({ tipo: 'voz_estado', reproduciendo }));
+  }
+}
+
 function _avanzarCola() {
   _audioActivo = false;
   _timeline = [];
@@ -1163,6 +1333,7 @@ function _avanzarCola() {
     _reproducirSiguienteDeCola();
   } else {
     _audioPlaying = false;
+    _reportarVoz(false);
     if (estado === 'talking') estado = 'idle';
     // Cola de voz vacía: es el momento de soltar un clip que gira el cuerpo y
     // quedó esperando a que Rem terminara de hablar (ver _clipEnEspera).
@@ -1402,6 +1573,7 @@ function _escribirVisemes(activos) {
 
 // Encola audio+timeline recibidos por WS; reproduce en orden, nunca solapa frases.
 function encolarAudio(url, timeline) {
+  _reportarVoz(true);
   _audioPlayQueue.push({ url, timeline });
   if (!_audioPlaying) _reproducirSiguienteDeCola();
 }
@@ -1507,14 +1679,15 @@ let lookChangeTimer = 2 + Math.random() * 3;
 
 function updateLook(dt, t) {
   lookChangeTimer -= dt;
-  if (lookChangeTimer <= 0 && (estado === 'idle' || estado === 'happy' || estado === 'sad')) {
+  const est = estadoCorporal();
+  if (lookChangeTimer <= 0 && (est === 'idle' || est === 'happy' || est === 'sad')) {
     lookDrift.x = (Math.random() - 0.5) * 0.22;
     lookDrift.y = (Math.random() - 0.5) * 0.10;
     lookChangeTimer = 2.5 + Math.random() * 3.5;
   }
 
   let tgtX, tgtY, lerpSpd;
-  switch (estado) {
+  switch (est) {
     case 'thinking':
       tgtX = -0.18; tgtY = 0.12; lerpSpd = 1.2; // arriba-izquierda
       break;
@@ -1579,6 +1752,12 @@ function applySpringConfig() {
 // ═══════════════════════════════════════════════════
 let surprisedSnap = 0;
 
+// Estado que gobierna el CUERPO y la mirada. En overlay es siempre 'idle': los
+// brazos quedan en la pose de reposo fija (CONFIG.brazos), sin gesticular al
+// hablar ni la pose de 'thinking', y la mirada siempre va a cámara. El resto
+// del avatar (cara, parpadeo, lipsync) sí sigue leyendo `estado`.
+const estadoCorporal = () => ES_OVERLAY ? 'idle' : estado;
+
 // Canales hX/hY/hZ/bZ/ruZ/luZ/ruX/luX: ruido Perlin, no senos (ver más abajo,
 // "RUIDO PERLIN 1D" — un producto de senos sigue siendo periódico, aunque no
 // lo parezca a simple vista; el ruido no lo es). bX (respiración) sigue con
@@ -1587,13 +1766,14 @@ let surprisedSnap = 0;
 function getStatePose(t) {
   // Velocidades de animación por estado
   const SPEEDS = { idle:1.0, talking:1.8, thinking:0.5, happy:1.5, sad:0.4, angry:1.3, surprised:2.0 };
-  const sp = SPEEDS[estado] ?? 1.0;
+  const est = estadoCorporal();
+  const sp = SPEEDS[est] ?? 1.0;
   const ts = t * sp; // tiempo escalado por emoción
 
   // Respiración siempre presente
   const breath = Math.sin(ts * 0.8 / sp) * 0.018;
 
-  switch (estado) {
+  switch (est) {
 
     case 'idle': {
       const S = CONFIG.brazos;
@@ -1845,7 +2025,7 @@ function _envolventeApartar(p) {
 function _miradaBase(dt) {
   const M = CONFIG.mirada;
 
-  if (estado === 'thinking') return { yaw: -10, pitch: 8 };
+  if (estadoCorporal() === 'thinking') return { yaw: -10, pitch: 8 };
 
   let yaw = 0, pitch = 0;
   if (vrm?.lookAt) {
@@ -1999,7 +2179,7 @@ function aplicarCuerpoProcedural(t, dt) {
   // al mismo punto que usa _miradaBase() para los ojos — sumar los dos
   // duplicaría el giro.
   const S_MIRADA = CONFIG.mirada;
-  const cabezaSigueMirada = estado !== 'thinking';
+  const cabezaSigueMirada = estadoCorporal() !== 'thinking';
   const miradaYawRad   = cabezaSigueMirada ? (_cabezaMiradaYaw   * Math.PI / 180) * S_MIRADA.cabezaFraccion : 0;
   const miradaPitchRad = cabezaSigueMirada ? (_cabezaMiradaPitch * Math.PI / 180) * S_MIRADA.cabezaFraccion : 0;
 
@@ -2471,6 +2651,7 @@ function _alTerminarClip(e) {
 // -> procedural. Con guarda de carrera: si el estado cambia mientras el clip
 // carga (async), el token no coincide y se descarta.
 function sincronizarClipConEstado() {
+  if (ES_OVERLAY) return; // overlay: sin clips VRMA (no hay mixer)
   const m = CONFIG.animaciones.porEstado[estado];
   const tok = ++_tokenClip;
   _gestoActivo = false; // un cambio de estado siempre gana sobre un gesto de reposo
@@ -2586,6 +2767,7 @@ function updateGestos(dt) {
 // Se comporta como cualquier gesto: si entra audio o cambia el estado, se
 // interrumpe con crossfade (la voz manda).
 window.dispararClipDebug = function (nombre) {
+  if (ES_OVERLAY) { console.log(`[Anim] debug_clip "${nombre}" ignorado: el modo overlay no usa clips VRMA`); return; }
   const archivo = /\.vrma$/i.test(nombre) ? nombre : `${nombre}.vrma`;
   const tok = ++_tokenClip;
   _gestoActivo = true;   // ya acá, para que updateGestos() no sortee otro mientras carga
@@ -2842,14 +3024,18 @@ function animate() {
   if (_medirHuesosPendiente) {
     _medirHuesosPendiente = false;
     vrm.scene.updateMatrixWorld(true); // asegurar matrices de mundo frescas para getWorldPosition
-    const medida = medirAlturaHuesos();
+    const medida = ES_OVERLAY ? medirMedioCuerpo() : medirAlturaHuesos();
     if (medida) {
       console.log(`[Encuadre] altura Box3=${_modeloAlturaBox3.toFixed(3)}u  `
-                + `altura huesos=${medida.altura.toFixed(3)}u`);
+                + `altura ${ES_OVERLAY ? 'medio cuerpo' : 'huesos'}=${medida.altura.toFixed(3)}u`);
       _modeloAlturaLocal = medida.altura;
       _modeloCentroLocal = medida.centro;
+      _modeloAnchoLocal = medida.ancho ?? 0;
       recalcularEncuadre(); // vuelve a fijar z/position.y — su propio log muestra el z resultante
     }
+    // Overlay: recién ahora, con la pose de reposo aplicada y el encuadre
+    // definitivo, se muestra el modelo (nace oculto, ver la carga del VRM).
+    if (ES_OVERLAY) vrm.scene.visible = true;
   }
 
   // Visemes (vía vrc.*) + jaw: DESPUÉS de vrm.update(), porque expressionManager
@@ -2949,6 +3135,41 @@ function crearPanelChat() {
 
   function agregarSistema(texto) {
     agregarBurbuja(texto, 'sistema');
+  }
+
+  // Confirmación de una acción que la requiere (ver acciones.py,
+  // TOOLS_QUE_CONFIRMAN — hoy solo apagar_pc). Burbuja de sistema con dos
+  // botones; al elegir cualquiera se deshabilitan los dos (no se puede
+  // responder dos veces al mismo pedido) y se manda accion_confirmar_resp.
+  // Si expira del lado del servidor (_CONFIRMACION_TIMEOUT_S) el turno ya se
+  // canceló solo — esta burbuja queda inerte, sin nada que limpiarla, pero
+  // tampoco hace daño: un click tardío ya no tiene a quién llegarle
+  // (_confirmacion_pendiente ya no existe del lado de Python).
+  function agregarConfirmacion(nombre, descripcion) {
+    const div = document.createElement('div');
+    div.className = 'msg sistema';
+    const p = document.createElement('div');
+    p.textContent = descripcion;
+    div.appendChild(p);
+    const btns = document.createElement('div');
+    btns.style.marginTop = '6px';
+    const responder = (ok) => {
+      btnSi.disabled = true;
+      btnNo.disabled = true;
+      _ws.send(JSON.stringify({ tipo: 'accion_confirmar_resp', ok }));
+    };
+    const btnSi = document.createElement('button');
+    btnSi.textContent = 'Sí';
+    btnSi.onclick = () => responder(true);
+    const btnNo = document.createElement('button');
+    btnNo.textContent = 'No';
+    btnNo.style.marginLeft = '8px';
+    btnNo.onclick = () => responder(false);
+    btns.appendChild(btnSi);
+    btns.appendChild(btnNo);
+    div.appendChild(btns);
+    $mensajes.appendChild(div);
+    alFondo();
   }
 
   function setEstadoUI(texto, clase) {
@@ -3244,12 +3465,169 @@ function crearPanelChat() {
     onClipLanzado(archivo) {
       agregarSistema(`▶ ${etiquetaClip(archivo)}`);
     },
+    // Push-to-talk (ver rem_avatar_server, "Push-to-talk"). La transcripción
+    // entra como un mensaje del usuario y el turno arranca solo ~1s después.
+    onPttEstado(est, detalle) {
+      if (est === 'escuchando')          setEstadoUI('🎙 Escuchando…', 'pensando');
+      else if (est === 'transcribiendo') setEstadoUI('Transcribiendo…', 'pensando');
+      else if (est === 'ignorado')       { setEstadoUI('', ''); agregarSistema(`🎙 Ignorado: ${detalle}`); }
+      else {
+        if (!esperandoRespuesta) setEstadoUI('', '');
+        if (detalle) agregarSistema(`🎙 ${detalle}`);
+      }
+    },
+    onTranscripcion(texto) {
+      agregarBurbuja(texto, 'user');
+      esperandoRespuesta = true;
+      burbujaRemActual = null;
+      actualizarInputHabilitado();
+      setEstadoUI('Rem está pensando…', 'pensando');
+    },
+    // Una tool que requiere confirmación (ver acciones.py) está esperando
+    // sí/no del panel antes de ejecutarse — ver _pedir_confirmacion_accion
+    // en rem_avatar_server.py.
+    onAccionConfirmar(nombre, descripcion) {
+      agregarConfirmacion(nombre, descripcion);
+    },
   };
 
   cerrarPaleta();   // arranca oculta
   $input.focus();
 }
-crearPanelChat();
+
+// ═══════════════════════════════════════════════════
+// UI DEL MODO OVERLAY — solo una caja de texto abajo + indicador de estado
+// ═══════════════════════════════════════════════════
+// Mismo protocolo WS que el panel (chat_message -> chat_delta/chat_done), y la
+// misma interfaz window.__remChat que lee _ws.onmessage. La respuesta se
+// escucha (y se ve a Rem hablar): acá no hay burbujas ni historial visible.
+//
+// La caja es LO ÚNICO que recibe el ratón. El compositor decide con la input
+// region de la layer surface (la fija rem_chat.py con input_shape_combine_region),
+// no con CSS — así que la página le manda a GTK el rectángulo real de la caja
+// (mensaje "rem" del WebKit script message handler) al cargar y en cada cambio
+// de tamaño, en vez de que Python adivine su posición.
+function crearOverlayUI() {
+  const raiz = document.createElement('div');
+  raiz.id = 'ov-root';
+  raiz.innerHTML = `
+    <div id="ov-status"><span id="ov-status-txt"></span></div>
+    <div id="ov-box"><input id="ov-input" type="text" placeholder="Escríbele a Rem…" autocomplete="off"></div>
+  `;
+  document.body.appendChild(raiz);
+
+  const $status = raiz.querySelector('#ov-status');
+  const $txt    = raiz.querySelector('#ov-status-txt');
+  const $box    = raiz.querySelector('#ov-box');
+  const $input  = raiz.querySelector('#ov-input');
+
+  let esperandoRespuesta = false;   // hay un turno en curso (escrito o por voz)
+  let mostrandoTranscripcion = false; // la caja enseña lo que entendió el STT antes de enviarlo
+  let pttEstado = 'idle';           // 'escuchando' | 'transcribiendo' | 'idle'
+  let avisoTemporal = null;         // {texto, hasta} — errores/notas breves
+
+  // ── región interactiva → GTK ──
+  function reportarRegion() {
+    const r = $box.getBoundingClientRect();
+    const msg = { tipo: 'region', x: Math.floor(r.left), y: Math.floor(r.top),
+                  w: Math.ceil(r.width), h: Math.ceil(r.height) };
+    console.log(`[Overlay] región interactiva: ${JSON.stringify(msg)}`);
+    try { window.webkit.messageHandlers.rem.postMessage(JSON.stringify(msg)); }
+    catch (e) { console.warn('[Overlay] no hay message handler "rem" (¿abierto fuera de rem_chat.py?):', e.message); }
+  }
+  // Diagnóstico permanente (barato: solo transiciones): confirma en rem_chat.log
+  // que el compositor entrega el puntero y el foco de teclado SOLO a la caja.
+  // El body es pointer-events:none, así que solo la caja puede disparar esto.
+  $box.addEventListener('mouseenter', () => console.log('[Overlay] ratón ENTRA en la caja'));
+  $box.addEventListener('mouseleave', () => console.log('[Overlay] ratón SALE de la caja'));
+  $box.addEventListener('mousedown', () => console.log('[Overlay] clic en la caja'));
+  window.addEventListener('focus', () => console.log('[Overlay] foco de teclado: la superficie lo RECIBE'));
+  window.addEventListener('blur',  () => console.log('[Overlay] foco de teclado: la superficie lo PIERDE'));
+  // El foco de la caja de texto se le avisa a GTK: mientras se escribe la
+  // superficie conserva el teclado aunque el puntero se aleje; al soltarlo
+  // (Enter/Escape/clic fuera) GTK lo devuelve al escritorio (ver
+  // _EntradaOverlay en rem_chat.py).
+  const avisarFoco = caja => {
+    try { window.webkit.messageHandlers.rem.postMessage(JSON.stringify({ tipo: 'foco', caja })); } catch (e) {}
+  };
+  $input.addEventListener('focus', () => { console.log('[Overlay] la caja de texto tiene el foco'); avisarFoco(true); });
+  $input.addEventListener('blur',  () => { console.log('[Overlay] la caja de texto pierde el foco'); avisarFoco(false); });
+  new ResizeObserver(reportarRegion).observe($box);
+  window.addEventListener('resize', reportarRegion);
+  reportarRegion();
+
+  // ── indicador de estado: prioridad ptt > aviso > hablando > pensando ──
+  function refrescarEstado() {
+    let texto = '', clase = '';
+    if (pttEstado === 'escuchando')            { texto = 'Escuchando…';    clase = 'escuchando'; }
+    else if (pttEstado === 'transcribiendo')   { texto = 'Transcribiendo…'; clase = 'pensando'; }
+    else if (avisoTemporal && performance.now() < avisoTemporal.hasta) { texto = avisoTemporal.texto; clase = ''; }
+    else if (_audioActivo || _audioPlaying || estado === 'talking') { texto = 'Hablando…'; clase = 'hablando'; }
+    else if (esperandoRespuesta || estado === 'thinking')            { texto = 'Pensando…'; clase = 'pensando'; }
+    if ($txt.textContent !== texto) { $txt.textContent = texto; console.log(`[Overlay] indicador: ${texto || '(vacío)'}`); }
+    $status.className = (texto ? 'visible ' : '') + clase;
+  }
+  setInterval(refrescarEstado, 150);
+
+  function avisar(texto, ms = 3500) {
+    avisoTemporal = { texto, hasta: performance.now() + ms };
+    refrescarEstado();
+  }
+
+  function actualizarCaja() {
+    $input.readOnly = mostrandoTranscripcion;
+    $input.placeholder = esperandoRespuesta ? 'Rem está respondiendo…' : 'Escríbele a Rem…';
+  }
+
+  function enviar() {
+    const texto = $input.value.trim();
+    if (!texto || esperandoRespuesta || mostrandoTranscripcion) return;
+    if (!_ws || _ws.readyState !== WebSocket.OPEN) { avisar('Sin conexión con Rem — reintentando…'); return; }
+    _ws.send(JSON.stringify({ tipo: 'chat_message', texto }));
+    $input.value = '';
+    esperandoRespuesta = true;
+    actualizarCaja();
+    refrescarEstado();
+  }
+
+  $input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const habia = $input.value.trim(); enviar(); if (habia) $input.blur(); }
+    else if (e.key === 'Escape') { $input.value = ''; $input.blur(); }
+  });
+
+  window.__remChat = {
+    onDelta() {},   // sin burbujas: el avatar habla (y `estado` ya pasa a 'talking')
+    onDone() { esperandoRespuesta = false; actualizarCaja(); refrescarEstado(); },
+    onError(mensaje) { esperandoRespuesta = false; actualizarCaja(); avisar(`⚠ ${mensaje}`, 5000); },
+    onModoActual() {},          // el selector IA/Eco es del panel de la ventana
+    onClipLanzado() {},
+    onPttEstado(est, detalle) {
+      pttEstado = (est === 'escuchando' || est === 'transcribiendo') ? est : 'idle';
+      if (est === 'ignorado') avisar(`🎙 ${detalle}`);
+      else if (est === 'idle' && detalle) avisar(`🎙 ${detalle}`);
+      refrescarEstado();
+    },
+    // Lo entendido se enseña en la caja (`ms` = cuánto tarda el servidor en
+    // mandárselo al LLM); mientras, la caja no acepta Enter (duplicaría el envío).
+    onTranscripcion(texto, ms) {
+      console.log(`[Overlay] transcripción en la caja: "${texto}" (${ms}ms antes de enviarla)`);
+      $input.value = texto;
+      $input.classList.add('transcrito');
+      mostrandoTranscripcion = true;
+      esperandoRespuesta = true;
+      pttEstado = 'idle';   // ya transcribió: el indicador pasa a "Pensando…" mientras se enseña el texto
+      actualizarCaja();
+      setTimeout(() => {
+        $input.value = '';
+        $input.classList.remove('transcrito');
+        mostrandoTranscripcion = false;
+        actualizarCaja();
+      }, ms);
+    },
+  };
+  console.log('[Overlay] UI lista');
+}
+if (ES_OVERLAY) crearOverlayUI(); else crearPanelChat();
 
 // ═══════════════════════════════════════════════════
 // WEBSOCKET — con límite de reintentos
@@ -3283,6 +3661,12 @@ let _ws = null;
         window.__remChat?.onError(d.mensaje ?? 'error desconocido');
       } else if (d.tipo === 'debug_clip') {
         window.dispararClipDebug?.(String(d.nombre ?? ''));
+      } else if (d.tipo === 'ptt_estado') {
+        window.__remChat?.onPttEstado?.(d.estado, d.motivo || d.nota || '');
+      } else if (d.tipo === 'ptt_transcripcion') {
+        window.__remChat?.onTranscripcion?.(String(d.texto ?? ''), d.ms ?? 1000);
+      } else if (d.tipo === 'accion_confirmar') {
+        window.__remChat?.onAccionConfirmar?.(String(d.nombre ?? ''), String(d.descripcion ?? ''));
       } else if (d.estado) {
         estado = d.estado;
       }

@@ -21,6 +21,7 @@ from typing import AsyncIterator
 
 import httpx
 
+from . import _energia
 from ._retry import reintentar_con_backoff
 from .base import Chunk, Done, LLMProvider, Message, TextDelta, ToolCall, ToolCallChunk, ToolSpec
 
@@ -55,14 +56,53 @@ class OllamaProvider(LLMProvider):
             self._client_loop = loop
         return self._client
 
-    async def stream_chat(
-        self,
-        system: str,
-        messages: list[Message],
-        tools: list[ToolSpec] | None = None,
-    ) -> AsyncIterator[Chunk]:
-        client = self._obtener_cliente()
+    def precargar(self, system: str | None = None, messages: list[Message] | None = None,
+                  tools: list[ToolSpec] | None = None) -> None:
+        """Carga el modelo en memoria para que el primer turno real no pague la
+        carga (medido: ~6,7s en frío). Sincrónico, pensado para un hilo de fondo
+        al arrancar (ver llm.precargar_provider()).
 
+        Sin `system`: petición a /api/chat con `messages` vacío — Ollama carga el
+        modelo y responde done_reason="load", sin evaluar nada.
+
+        Con `system` (+ `messages`/`tools`): además evalúa ese prefijo, para que
+        quede en la caché KV de Ollama y el primer turno real solo pague lo que
+        viene después (ver chat_sesion.precargar_prefijo()). Arma el payload con
+        el MISMO código que stream_chat() (_payload()) y le agrega un mensaje de
+        usuario de relleno: la caché se reusa por prefijo de tokens, así que
+        todo lo anterior a ese relleno tiene que ser idéntico byte a byte a lo
+        que manda un turno real — system, tools y mensajes incluidos. Genera un
+        solo token (num_predict=1), que se descarta.
+
+        Las `options` de carga (num_gpu, num_ctx...) y el keep_alive tienen que
+        ser EXACTAMENTE los de las peticiones reales: Ollama recarga el modelo
+        si cambia cualquiera de ellas — por eso se reusa self._options tal cual
+        (num_predict no es opción de carga, no provoca recarga)."""
+        import time
+        t0 = time.perf_counter()
+        if system is None:
+            payload = {"model": self._model, "messages": [], "think": False,
+                       "keep_alive": self._keep_alive, "stream": False,
+                       "options": self._options}
+        else:
+            relleno = Message(role="user", content="hola")
+            payload = self._payload(system, [*(messages or []), relleno], tools, stream=False)
+            payload["options"] = {**self._options, "num_predict": 1}
+        resp = httpx.post(f"{self._base_url}/api/chat", json=payload, timeout=120.0)
+        resp.raise_for_status()
+        data = resp.json()
+        prefijo = ""
+        if system is not None:
+            prefijo = (f", prefijo evaluado: {data.get('prompt_eval_count')} tok en "
+                       f"{(data.get('prompt_eval_duration') or 0) / 1e6:.0f}ms")
+        print(f"[Ollama] modelo precargado en {time.perf_counter() - t0:.1f}s "
+              f"(keep_alive={self._keep_alive!r}, num_gpu={self._options.get('num_gpu')}{prefijo})",
+              flush=True)
+
+    def _payload(self, system: str, messages: list[Message],
+                 tools: list[ToolSpec] | None, stream: bool) -> dict:
+        """Cuerpo de /api/chat. Compartido por stream_chat() y precargar(): la
+        precarga del prefijo solo sirve si lo serializa idéntico."""
         # El system prompt en /api/chat va como un mensaje con rol "system"
         # dentro del array, no como parámetro de nivel superior (a diferencia
         # de Claude) — el contrato lo recibe aparte igual, la conversión pasa
@@ -79,7 +119,7 @@ class OllamaProvider(LLMProvider):
             # propósito, a diferencia de keep_alive/options más abajo.
             "think": False,
             "keep_alive": self._keep_alive,
-            "stream": True,
+            "stream": stream,
             "options": self._options,
         }
         if tools:
@@ -94,6 +134,16 @@ class OllamaProvider(LLMProvider):
                 }
                 for t in tools
             ]
+        return payload
+
+    async def stream_chat(
+        self,
+        system: str,
+        messages: list[Message],
+        tools: list[ToolSpec] | None = None,
+    ) -> AsyncIterator[Chunk]:
+        client = self._obtener_cliente()
+        payload = self._payload(system, messages, tools, stream=True)
 
         async def _conectar():
             req = client.build_request("POST", "/api/chat", json=payload)
@@ -108,6 +158,7 @@ class OllamaProvider(LLMProvider):
 
         finish_reason = None
         usage: dict = {}
+        gpu_inicio_task = None  # estado de la GPU al llegar el primer token (ver _energia)
 
         try:
             async for linea in resp.aiter_lines():
@@ -118,6 +169,9 @@ class OllamaProvider(LLMProvider):
                 mensaje = data.get("message") or {}
                 contenido = mensaje.get("content")
                 if contenido:
+                    if gpu_inicio_task is None:
+                        # nvidia-smi tarda decenas de ms: en un hilo, sin frenar el stream.
+                        gpu_inicio_task = asyncio.create_task(asyncio.to_thread(_energia.estado_gpu))
                     yield TextDelta(contenido)
 
                 # A diferencia de Groq/Claude, acá los tool_calls llegan
@@ -159,9 +213,23 @@ class OllamaProvider(LLMProvider):
         # aparte de generación es lo que permite decidir después si compensa
         # (la hipótesis es que la caché de páginas del sistema lo hace rápido,
         # pero hay que verlo medido, no asumido).
+        eval_ms = usage.get('eval_duration_ms', 0)
+        tok_s = usage.get('eval_count', 0) / (eval_ms / 1000) if eval_ms else 0
+        # Alimentación y estado de la GPU van SIEMPRE junto a los tok/s: sin ese
+        # dato una medición no es comparable con otra (batería => P5 => ~6,6 tok/s).
+        gpu_inicio = await gpu_inicio_task if gpu_inicio_task else None
+        gpu_fin = await asyncio.to_thread(_energia.estado_gpu)
+        energia = _energia.estado_alimentacion()
+        if usage:
+            usage["energia"] = energia
+            usage["gpu_pstate_inicio"] = (gpu_inicio or {}).get("pstate")
+            usage["gpu_pstate_fin"] = (gpu_fin or {}).get("pstate")
+            usage["gpu_mem_mhz_fin"] = (gpu_fin or {}).get("mem_mhz")
         print(f"[Ollama] carga del modelo: {usage.get('load_duration_ms', 0):.0f}ms | "
-              f"generación: {usage.get('eval_duration_ms', 0):.0f}ms "
-              f"({usage.get('eval_count', 0)} tokens) | "
-              f"total: {usage.get('total_duration_ms', 0):.0f}ms")
+              f"prompt: {usage.get('prompt_eval_count', 0)} tok en {usage.get('prompt_eval_duration_ms', 0):.0f}ms | "
+              f"generación: {eval_ms:.0f}ms "
+              f"({usage.get('eval_count', 0)} tokens, {tok_s:.1f} tok/s) | "
+              f"total: {usage.get('total_duration_ms', 0):.0f}ms | "
+              f"energía: {energia} | {_energia.formatear_gpu(gpu_inicio, gpu_fin)}")
 
         yield Done(reason=finish_reason, usage=usage or None)

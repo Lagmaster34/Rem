@@ -4,7 +4,7 @@ Asistente de escritorio con la personalidad de **Rem (Re:Zero)**: avatar 3D VRM 
 
 Corre **100% local y sin coste** con un modelo Qwen3.5-4B en Ollama, o contra la API de Claude / Groq si se prefiere.
 
-> **Estado:** funcional de punta a punta desde el 25 ago 2026 (LLM → personalidad → TTS → RVC → lipsync → avatar). El frontend web de chat está en construcción; el chat viejo de Tkinter está en vías de eliminación.
+> **Estado:** funcional de punta a punta desde el 25 ago 2026 (LLM → personalidad → TTS → RVC → lipsync → avatar). La aplicación es `rem_chat.py` (ventana con panel de chat, u overlay con push-to-talk); el viejo asistente Tkinter (`Rem.py`) se eliminó.
 
 ---
 
@@ -59,11 +59,9 @@ Versiones que funcionan (fijadas por RVC, son sensibles):
 | fairseq | 0.12.2 |
 | infer-rvc-python | — |
 | edge-tts | 7.2.8 |
-| PyAudio, httpx, sounddevice, soundfile | — |
+| httpx, sounddevice, soundfile | — |
 
 > ⚠️ Si mueves el proyecto de carpeta, `venv/bin/pip` se rompe (ruta absoluta en el shebang). `venv/bin/python` sigue funcionando; recrea el venv o arregla el shebang.
-
-> ⚠️ **Limitación conocida:** el intérprete `/usr/local/bin/python3.10` se compiló **sin `_tkinter`**, así que `import tkinter` falla. No afecta al avatar, la voz ni los benchmarks — solo al chat viejo de Tkinter, que va a desaparecer de todos modos.
 
 ---
 
@@ -198,7 +196,6 @@ rem_chat.py               # LA APLICACIÓN: levanta el servidor y abre la ventan
 rem_avatar_server.py      # HTTP (sirve HTML/VRM/clips/WAV) + WebSocket bidireccional (estado/audio/chat)
 rem_avatar.html           # Three.js, carga del VRM, clips VRMA, lipsync, panel de chat, cola de audio
 Animaciones/              # clips .vrma del avatar (no van al repo — ver Animaciones/README.md)
-Rem.py                    # asistente Tkinter (legacy, en retirada)
 lipsync.py                # timings de edge-tts → grafema-fonema → timeline
 personalidad.py           # system prompt y contexto dinámico
 config.py                 # dotenv + config.toml (compartido)
@@ -227,8 +224,38 @@ tmp_audio/
 venv/bin/python rem_chat.py     # LA APLICACIÓN — abre la ventana del avatar con panel de chat
 venv/bin/python bench_chat.py   # REPL de depuración — se conecta a rem_chat.py si está corriendo,
                                 # o levanta el servidor él mismo. 'modo eco' = voz sin LLM
-venv/bin/python Rem.py          # asistente Tkinter legacy (bloqueado por _tkinter en este venv)
 ```
+
+### Lanzadores (sin escribir comandos)
+
+La carpeta `lanzadores/` abre cada modo con doble clic o desde el lanzador de apps:
+
+| Script | Entrada en el lanzador | Qué abre |
+|---|---|---|
+| `lanzadores/rem-ventana.sh` | **Rem Ventana** | `rem_chat.py --modo ventana` |
+| `lanzadores/rem-debug.sh` | **Rem Debug** | `bench_chat.py` en una terminal (`$TERMINAL`, o foot/kitty/alacritty) |
+
+Para que aparezcan en el lanzador de apps (Hyprland, rofi, wofi, etc.):
+
+```bash
+lanzadores/instalar.sh    # escribe los .desktop en ~/.local/share/applications/
+```
+
+- **Dos instancias nunca compiten por el puerto.** `rem-ventana.sh` cierra cualquier `rem_chat.py`
+  que ya esté corriendo antes de abrir el nuevo: primero pide un cierre limpio (SIGTERM) y solo
+  fuerza (SIGKILL) si no se cerró en 5 s. `rem-debug.sh` **no** lo cierra, porque `bench_chat.py`
+  no ocupa el puerto: si hay una ventana abierta se conecta a ella como cliente, y si no, levanta
+  su propio servidor.
+- **Logs** en `lanzadores/logs/<script>.log`: cada arranque se agrega con fecha y hora, sin borrar
+  los anteriores. La consola de WebKit sigue yendo a `rem_chat.log`, en la raíz. El log de debug
+  guarda la sesión completa del REPL.
+- **Si movés el proyecto**, los `.sh` siguen funcionando porque calculan la raíz desde su propia
+  ubicación. Hay que volver a correr `instalar.sh`: un `.desktop` necesita la ruta absoluta en
+  `Exec=`, así que se instala como copia con la ruta real y no como symlink.
+- **Ícono**: el proyecto no trae uno propio, así que se usa `avatar-default` del tema. Si dejás un
+  `lanzadores/rem.png` o `rem.svg` y volvés a correr `instalar.sh`, se usa ese.
+- El lanzador del **modo overlay** todavía no existe: se agrega cuando `feat/modo-overlay-stt`
+  llegue a `main`.
 
 ---
 
@@ -288,7 +315,6 @@ El asistente puede ejecutar comandos, así que hubo una auditoría con hallazgos
 - **Autoplay en WebKitGTK 2.52**: `set_media_playback_requires_user_gesture(False)` **no basta**. Hay que pasar `WebsitePolicies(autoplay=ALLOW)` al constructor del WebView. Verificado en vivo: sin eso, `play()` se rechaza con `NotAllowedError`.
 - **Crash del proceso de red de WebKit 2.52.5** al cargar el WebSocket y el VRM ("this is a WebKit bug"). El WS reconecta solo; `_cargarVRM()` reintenta hasta 5 veces con espera exponencial.
 - **Caché de WebKit** en `~/.cache/rem_chat.py/WebKitCache` enmascara ediciones del frontend entre lanzamientos. Límpiala al depurar.
-- **`_tkinter` ausente** en el intérprete → `Rem.py` (legacy) no arranca. `rem_chat.py` sí.
 - **Hyprland tiling ignora `set_default_size()`** en `rem_chat.py`: sin una `windowrulev2 = float, class:^(rem_chat.py)$` en tu config, la ventana se tiling-ea igual que cualquier otra en vez de abrir en 1100×620. La escena se adapta sola (escucha `resize`), pero el tamaño pedido no se respeta sin esa regla.
 
 ### Depuración de la ventana
@@ -303,9 +329,8 @@ venv/bin/python rem_chat.py   # consola del frontend volcada a rem_chat.log; ins
 ## 🗺️ Pendiente
 
 1. **Ventana GTK (`rem_chat.py`) con panel de chat — hecha.** El overlay transparente (`rem_overlay.py`) se eliminó: `rem_chat.py` lo sustituye por completo.
-2. Eliminar `Rem.py` / Tkinter del todo (el chat ya vive en la ventana).
-3. Conectar el `SentenceSplitter` al pipeline de `rem_chat.py` de forma que hable oración por oración (hoy `procesar_turno()` ya lo usa).
-4. Migrar `extraer_memoria_importante()` — ya pasa por el provider, verificar que no queden restos del cliente Groq síncrono.
+2. **`Rem.py` / Tkinter — eliminado.** Lo que no se portó (extracción automática de memoria larga, el resto del catálogo de acciones) queda en el historial de git (`58abc8e`).
+3. Extracción de memoria larga en `rem_chat.py`: hoy la memoria larga se lee pero nada la actualiza (antes lo hacía `extraer_memoria_importante()` en `Rem.py`).
 
 ### Dirección de la personalidad
 

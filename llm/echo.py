@@ -6,7 +6,7 @@ sin gastar tokens de un LLM real ni depender de que haya red o API key.
 Ignora `system` y `tools` a propósito — no hay ningún modelo del otro lado
 que los necesite. Sigue el contrato de LLMProvider igual (async generator,
 mismos tipos de Chunk) para que el resto del pipeline (SentenceSplitter,
-_drenar_stream_llm, etc.) no note la diferencia con un provider real.
+procesar_turno(), etc.) no note la diferencia con un provider real.
 """
 from typing import AsyncIterator
 

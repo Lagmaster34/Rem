@@ -16,11 +16,46 @@ procesar_turno() cubre los dos casos (con y sin voz) mediante callbacks: cada
 consumidor decide qué hacer con el texto (on_delta) y si quiere que se hable
 (cola_habla) — ver su docstring.
 """
+import config
 import personalidad
+from ejemplos_tono import EJEMPLOS_TONO
 from llm import Done, Message, TextDelta, ToolCallChunk, dividir_en_oraciones, get_provider
 from llm.echo import EchoProvider
 
 MODOS_VALIDOS = ("ia", "eco")
+
+# Turnos de ejemplo del tono de Rem (few-shot), convertidos una sola vez: van
+# entre el system prompt y todo lo demás, idénticos en cada turno, para que
+# system + ejemplos sea un prefijo cacheable. El último marca el fin de ese
+# prefijo (punto de caché explícito para Claude, ver llm/claude.py).
+_EJEMPLOS = tuple(
+    Message(role=e["role"], content=e["content"], fin_prefijo_cache=(i == len(EJEMPLOS_TONO) - 1))
+    for i, e in enumerate(EJEMPLOS_TONO)
+)
+
+
+def _prefijo_fijo(memoria_larga) -> list[Message]:
+    """Lo que va entre el system prompt y el historial: ejemplos de tono + la
+    memoria larga (si hay). Compartido por procesar_turno() y
+    precargar_prefijo(), para que la precarga evalúe exactamente lo mismo."""
+    prefijo = list(_EJEMPLOS)
+    memoria = personalidad.construir_bloque_memoria(memoria_larga)
+    if memoria:
+        prefijo.append(Message(role="user", content=memoria))
+    return prefijo
+
+
+def precargar_prefijo(tools=None):
+    """Precarga del LLM al arrancar rem_chat.py (hilo de fondo): además de
+    cargar el modelo, le hace evaluar system + tools + ejemplos de tono (+
+    memoria larga), el prefijo fijo de todos los turnos, para que quede en la
+    caché de Ollama y el primer turno tras una (re)carga no lo pague. `tools`
+    tienen que ser las mismas que ofrecerá el panel (acciones.tools_disponibles()
+    del modo activo): en el template del modelo van dentro del bloque system,
+    y si difieren el prefijo ya no coincide. No hace nada con Claude/Groq."""
+    import llm
+    llm.precargar_provider(personalidad.construir_prompt_sistema(),
+                           _prefijo_fijo(personalidad.cargar_memoria_larga()), tools)
 
 
 class SesionChat:
@@ -74,7 +109,8 @@ async def _pasar_por(chunks, on_chunk):
 
 async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
                           on_delta=None, on_tool_call=None, cola_habla=None,
-                          incluir_contexto=True):
+                          incluir_contexto=True, t_ref=None,
+                          tools=None, on_confirmar_accion=None):
     """Manda `texto` al provider activo de `sesion` y consume stream_chat().
     Compartido entre el REPL de bench_chat.py y el panel de chat de
     rem_chat.py (vía rem_avatar_server.py) — cada consumidor decide qué hacer
@@ -94,24 +130,61 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
       esperar el resto de la respuesta. None (default) no habla nada — la
       sesión sigue funcionando solo como texto.
 
-    `incluir_contexto=False` omite el bloque de fecha/hora/estado de la PC
+    Contexto dinámico (ver personalidad.construir_contexto_dinamico y config.toml
+    [contexto]): cada línea (fecha/hora, estado de la PC) solo si el mensaje la pide;
+    nunca en el historial. `incluir_contexto=False` omite el bloque de fecha/hora/estado de la PC
     (modo eco: no hay LLM al que informarle, y anteponerlo igual solo logra
     que se repita en voz/texto el porcentaje de CPU en vez de lo que se
     escribió).
+
+    `t_ref` (time.perf_counter(), opcional): instante desde el que se mide
+    "tiempo hasta el primer audio" además del propio inicio del turno — el
+    push-to-talk pasa el momento en que se soltó la tecla.
+
+    `tools` (opcional): lista de llm.ToolSpec a ofrecerle al modelo (ver
+    acciones.py). Si el modelo responde con una tool call, el texto que haya
+    generado junto a ella se DESCARTA (nunca se habla ni se guarda en el
+    historial) y se reemplaza por la respuesta de acciones.ejecutar_tool_async()
+    — una sola acción por turno, la primera que llegue si hubiera más de una.
+    `on_confirmar_accion` se reenvía tal cual a ejecutar_tool_async() para las
+    tools que requieren confirmación; una ConfirmacionExpirada se deja
+    propagar sin atrapar, para que el llamador libere el turno.
 
     Devuelve (texto_completo, done_chunk, turno_habla) — turno_habla es la
     instancia de habla.TurnoHabla (mide tiempo hasta el primer audio) si
     cola_habla no era None, o None si no se pidió voz.
     """
+    # El HISTORIAL guarda solo lo que dijo el usuario. El contexto dinámico va
+    # únicamente en la copia del último mensaje que se le manda al LLM en ESTE
+    # turno: antes se guardaba pegado a cada mensaje, y cada turno viejo
+    # arrastraba para siempre su propio bloque de fecha (y antes, de estado de la PC) — datos caducos que
+    # el modelo, además, terminaba comentando.
+    sesion.historial.append(Message(role="user", content=texto))
+    mensajes = sesion.historial
     if incluir_contexto:
-        contexto = personalidad.construir_contexto_dinamico(memoria_sistema)
-        sesion.historial.append(Message(role="user", content=f"{contexto}\n{texto}"))
-    else:
-        sesion.historial.append(Message(role="user", content=texto))
+        cfg = config.leer_config_contexto()
+        contexto = personalidad.construir_contexto_dinamico(
+            texto, linea_fecha=cfg["linea_fecha"], palabras_fecha=cfg["palabras_fecha"])
+        print(f"  [Contexto] {'fecha' if contexto else 'nada'} (fecha={cfg['linea_fecha']})",
+              flush=True)
+        if contexto:
+            mensajes = sesion.historial[:-1] + [Message(role="user", content=f"{contexto}\n{texto}")]
 
-    system = personalidad.construir_prompt_sistema(memoria_larga)
+    # Orden final: system → ejemplos de tono → memoria larga → historial, con
+    # el contexto dinámico pegado solo al último mensaje. Todo lo que cambia
+    # queda detrás de system + ejemplos, que son idénticos byte a byte en cada
+    # turno (el prefijo que reusan las cachés de Ollama/Groq/Claude). El
+    # contexto va en el último mensaje y no antes del historial: si fuera
+    # antes, cada turno que lo trae invalidaría también todo el historial.
+    # En eco no va nada de esto: no hay modelo del otro lado.
+    if not isinstance(sesion.provider, EchoProvider):
+        mensajes = _prefijo_fijo(memoria_larga) + mensajes
+
+    # Sin la memoria larga, que va como mensaje aparte (ver arriba).
+    system = personalidad.construir_prompt_sistema()
     partes = []
     done_chunk = None
+    tool_calls_recibidas = []
 
     def _on_chunk(chunk):
         nonlocal done_chunk
@@ -120,17 +193,18 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
             if on_delta:
                 on_delta(chunk.text)
         elif isinstance(chunk, ToolCallChunk):
+            tool_calls_recibidas.append(chunk.call)
             if on_tool_call:
                 on_tool_call(chunk.call)
         elif isinstance(chunk, Done):
             done_chunk = chunk
 
-    stream = sesion.provider.stream_chat(system, sesion.historial)
+    stream = sesion.provider.stream_chat(system, mensajes, tools=tools)
 
     turno_habla = None
     if cola_habla is not None:
         from habla import TurnoHabla
-        turno_habla = TurnoHabla()
+        turno_habla = TurnoHabla(t_ref)
         async for oracion in dividir_en_oraciones(_pasar_por(stream, _on_chunk)):
             cola_habla.put_nowait((oracion, turno_habla))
     else:
@@ -138,5 +212,23 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
             _on_chunk(chunk)
 
     texto_completo = "".join(partes)
+
+    if tool_calls_recibidas:
+        # Se descarta cualquier texto que el modelo haya generado junto a la
+        # tool call (no se habla ni se guarda) — la respuesta real la arma
+        # acciones.ejecutar_tool_async(), nunca lo que dijo el LLM en crudo.
+        import acciones
+        call = tool_calls_recibidas[0]
+        texto_completo = await acciones.ejecutar_tool_async(
+            call.name, call.arguments,
+            memoria_sistema=memoria_sistema, on_confirmar_accion=on_confirmar_accion)
+        if on_delta:
+            on_delta(texto_completo)
+        if cola_habla is not None:
+            if turno_habla is None:
+                from habla import TurnoHabla
+                turno_habla = TurnoHabla(t_ref)
+            cola_habla.put_nowait((texto_completo, turno_habla))
+
     sesion.historial.append(Message(role="assistant", content=texto_completo))
     return texto_completo, done_chunk, turno_habla

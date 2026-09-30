@@ -19,8 +19,8 @@ class GroqProvider(LLMProvider):
     httpx.AsyncClient que llega a abrir una conexión real queda con su pool
     interno atado al event loop que estaba corriendo en ese momento. Si este
     GroqProvider se usa como singleton (p.ej. get_provider() cacheado a
-    futuro) y alguien lo llama desde un loop nuevo — el patrón exacto de
-    _drenar_stream_llm() en Rem.py, un loop descartable por turno — reusar
+    futuro) y alguien lo llama desde un loop nuevo — p. ej. un asyncio.run()
+    descartable por turno — reusar
     ese cliente revienta con "RuntimeError: Event loop is closed" en cuanto
     intenta reusar la conexión pooleada del loop viejo (reproducido con
     httpx.AsyncClient puro, sin mocks: falla en el segundo request, no en el

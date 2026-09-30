@@ -11,7 +11,7 @@ from .sentence_splitter import dividir_en_oraciones
 __all__ = [
     "Chunk", "Done", "LLMProvider", "Message", "TextDelta",
     "ToolCall", "ToolCallChunk", "ToolSpec", "get_provider",
-    "dividir_en_oraciones",
+    "dividir_en_oraciones", "precargar_provider",
 ]
 
 
@@ -89,3 +89,21 @@ def get_provider() -> LLMProvider:
         f"Proveedor de LLM desconocido: '{proveedor}'. "
         "Implementados: 'groq', 'claude', 'ollama', 'echo'."
     )
+
+
+def precargar_provider(system: str | None = None, messages: list | None = None,
+                       tools: list | None = None) -> None:
+    """Deja el provider activo "caliente" si su backend lo permite (hoy solo
+    Ollama: cargar el modelo en memoria y, si se pasa `system`, evaluar el
+    prefijo system + `messages` + `tools` para que quede en su caché — ver
+    chat_sesion.precargar_prefijo(), que es quien lo llama al arrancar
+    rem_chat.py, igual que habla.precargar_rvc() y stt.precargar_stt()). Los
+    providers remotos (Claude/Groq) no tienen nada que precargar. No
+    bloqueante: un fallo (Ollama apagado, falta la API key) solo se loguea; el
+    error real volverá a aparecer, visible, en el primer turno."""
+    try:
+        provider = get_provider()
+        if hasattr(provider, "precargar"):
+            provider.precargar(system, messages, tools)
+    except Exception as e:
+        print(f"[LLM] precarga falló, no bloqueante ({e})", flush=True)

@@ -5,8 +5,10 @@ Servidor para el avatar 3D de Rem.
                        y browser -> Python (chat_message/cambiar_modo/reset/voz/
                        estado, ver _ws_handler/chat_sesion.py)
 
-La ventana que muestra el avatar es rem_chat.py (GTK3 + WebKit2, decorada). Este
-módulo solo levanta el servidor — no lanza ninguna ventana. rem_chat.py llama a
+La ventana que muestra el avatar es rem_chat.py (GTK3 + WebKit2): normal y decorada
+(--modo ventana) o layer surface transparente (--modo overlay). Este módulo solo
+levanta el servidor — no lanza ninguna ventana. También orquesta el push-to-talk
+(ptt_start/ptt_stop -> micrófono -> STT -> turno de chat), ver "Push-to-talk" abajo. rem_chat.py llama a
 iniciar_servidor_avatar(); bench_chat.py se conecta al servidor ya levantado como
 cliente WS, o lo levanta él mismo si no hay ninguno.
 """
@@ -43,6 +45,17 @@ _ws_ready   = threading.Event()   # se activa cuando el loop WS está listo
 # turno de chat entero puede irse al vacío en silencio — hay que decirlo, pero
 # sin spamear una línea por cada enviar_estado() de cada turno.
 _ultimo_aviso_sin_clientes = 0.0
+
+# Modo activo (ventana|overlay) — lo fija rem_chat.py una sola vez al
+# arrancar, ANTES de iniciar_servidor_avatar(). Decide qué tools ofrece
+# _procesar_mensaje_chat() (ver acciones.tools_disponibles(): apagar_pc no
+# se ofrece en overlay, no hay forma de confirmar una acción ahí).
+_modo_actual = "ventana"
+
+
+def establecer_modo(modo: str) -> None:
+    global _modo_actual
+    _modo_actual = modo
 
 def _avisar_sin_destinatarios(que: str):
     global _ultimo_aviso_sin_clientes
@@ -214,17 +227,28 @@ class _LocalHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
 
+_http_ready      = threading.Event()
+_http_bind_error = None  # excepción del bind HTTP, si falló — mismo criterio que _ws_bind_error
+
 def _iniciar_http():
-    srv = ThreadingHTTPServer(("127.0.0.1", HTTP_PORT), _LocalHandler)
+    """Como _iniciar_ws(): si el bind falla (otra instancia ganó la carrera
+    por el puerto), el hilo daemon moría en silencio y el llamador creía que
+    el servidor había levantado. Ahora el fallo queda en _http_bind_error."""
+    global _http_bind_error
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", HTTP_PORT), _LocalHandler)
+    except OSError as e:
+        _http_bind_error = e
+        return
+    _http_ready.set()
     srv.serve_forever()
 
 
 # ── Chat de texto (panel HTML de rem_chat.py + REPL de bench_chat.py) ──
 # Ver chat_sesion.py para SesionChat/procesar_turno(). Todo perezoso: se
 # construye recién en el primer chat_message/cambiar_modo/reset real, no al
-# importar este módulo — Rem.py también importa rem_avatar_server pero tiene
-# su propio pipeline de conversación aparte, no necesita esto, y no debería
-# pagar el costo de get_provider()/leer memoria (ni arriesgarse a que
+# importar este módulo — quien importe rem_avatar_server sin usar el chat no
+# debería pagar el costo de get_provider()/leer memoria (ni arriesgarse a que
 # get_provider() lance por falta de API key) solo por importar el módulo.
 _chat_lock         = threading.Lock()  # guarda la creación perezosa y el flag de turno activo
 _chat_sesion        = None
@@ -308,7 +332,7 @@ def cambiar_modo_chat(modo: str) -> bool:
     return cambio
 
 
-async def _procesar_mensaje_chat(texto: str):
+async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None):
     """Maneja un chat_message del panel: corre el turno completo contra el
     LLM (chat_sesion.procesar_turno()) emitiendo chat_delta por cada
     fragmento tal como llega, y si la voz del panel está activa (ver
@@ -321,8 +345,17 @@ async def _procesar_mensaje_chat(texto: str):
     en sintonía incluso en modo eco (sin audio real). Serializado con un
     flag simple (no una cola): un chat_message mientras ya hay un turno en
     curso se rechaza con error, en vez de interlear dos streams en el mismo
-    panel."""
+    panel.
+
+    `t_ref` (time.perf_counter(), opcional): instante de referencia para medir
+    "tiempo hasta el primer audio" — el push-to-talk pasa el momento en que se
+    soltó la tecla (ver _ptt_detener())."""
     global _chat_turno_activo
+    if _ptt_estado in ("iniciando", "grabando"):
+        # Hablarle a Rem por texto mientras se graba haría sonar su voz
+        # encima del micrófono abierto — justo lo que el push-to-talk evita.
+        _broadcast_ws({"tipo": "error", "mensaje": "Estás grabando con la tecla de voz — suéltala antes de escribir."})
+        return
     with _chat_lock:
         if _chat_turno_activo:
             _broadcast_ws({"tipo": "error", "mensaje": "Rem ya está respondiendo — esperá a que termine."})
@@ -350,9 +383,13 @@ async def _procesar_mensaje_chat(texto: str):
         # chat_sesion.procesar_turno).
         incluir_contexto = sesion.modo != "eco"
         cola_habla = _obtener_cola_habla() if _chat_voz_activa else None
+        # Sin tools en modo eco: no hay LLM del otro lado que las use.
+        import acciones
+        tools = acciones.tools_disponibles(_modo_actual) if sesion.modo != "eco" else None
         await procesar_turno(sesion, texto, memoria_larga, memoria_sistema,
                               on_delta=_on_delta, cola_habla=cola_habla,
-                              incluir_contexto=incluir_contexto)
+                              incluir_contexto=incluir_contexto, t_ref=t_ref,
+                              tools=tools, on_confirmar_accion=_pedir_confirmacion_accion)
         _broadcast_ws({"tipo": "chat_done"})
     except Exception as e:
         logger.exception("[Chat] error procesando turno")
@@ -361,6 +398,208 @@ async def _procesar_mensaje_chat(texto: str):
         enviar_estado("idle")
         with _chat_lock:
             _chat_turno_activo = False
+        _marcar_fin_habla()
+
+
+# ── Push-to-talk (voz de entrada) ────────────────────────────────────
+# Flujo: `rem_ptt.py start` (bindr/bind de Hyprland) -> ptt_start por WS ->
+# se abre el micrófono; `rem_ptt.py stop` -> ptt_stop -> se cierra, se
+# transcribe (stt/, en un hilo: es CPU y bloquearía el loop) -> la
+# transcripción se muestra un instante (ptt_transcripcion) y recién después
+# entra como un chat_message normal — mismo turno de LLM/voz que si se
+# hubiera escrito.
+#
+# DECISIÓN — ¿qué pasa con ptt_start mientras Rem habla? SE IGNORA (no la
+# interrumpe). Interrumpir exigiría cancelar el turno de LLM en curso, vaciar
+# la cola de síntesis (TTS/RVC corre en un hilo que no se puede cancelar a
+# mitad) y cortar el <audio> del frontend, todo coordinado entre procesos —
+# mucha superficie para un beneficio dudoso. Ignorar garantiza además lo que
+# importa: el micrófono NUNCA está abierto mientras suena la voz de Rem, así
+# que no puede grabarse a sí misma. El pedido ignorado no es silencioso: se
+# difunde un ptt_estado "ignorado" con el motivo (lo ve rem_ptt.py y la UI).
+# "Rem habla" = turno de LLM en curso, o frases aún en la cola de síntesis, o
+# algún frontend reportando audio sonando (voz_estado), o menos de
+# [stt].espera_tras_habla_s desde el último audio.
+# Todo lo de esta sección corre en _ws_loop (un solo hilo): sin locks.
+_ptt_estado       = "idle"    # idle | iniciando | grabando | transcribiendo
+_ptt_grabador     = None
+_ptt_tope_handle  = None      # call_later del tope de grabación
+_ptt_stop_pedido  = False     # ptt_stop llegado mientras aún se abría el micrófono
+_ptt_stop_huerfano_t = 0.0    # ptt_stop sin start previo (toque corto: llegó antes que su start)
+_ptt_medicion     = None      # {"t_suelta", "t_stt", ...} hasta el primer audio sonando
+_ws_reproduciendo = set()     # websockets cuyo frontend reporta audio sonando (voz_estado)
+_ultimo_fin_habla = 0.0       # time.monotonic() del último fin de voz/turno
+
+
+# ── Confirmación de acciones (apagar_pc, ver acciones.py) ────────────────
+# Un solo pendiente a la vez alcanza: los turnos ya están serializados por
+# _chat_turno_activo (un chat_message nuevo se rechaza si hay uno en curso),
+# así que no puede haber dos confirmaciones pedidas a la vez en este proceso.
+_CONFIRMACION_TIMEOUT_S = 30.0
+_confirmacion_pendiente = None  # asyncio.Future | None
+
+
+async def _pedir_confirmacion_accion(nombre: str, argumentos: dict, descripcion: str):
+    """Pasado como on_confirmar_accion a chat_sesion.procesar_turno(). Manda
+    accion_confirmar por WS y espera accion_confirmar_resp del mismo panel
+    (ver _ws_handler). None = expiró sin respuesta — el llamador
+    (acciones.ejecutar_tool_async) lo traduce a ConfirmacionExpirada."""
+    global _confirmacion_pendiente
+    loop = asyncio.get_running_loop()
+    _confirmacion_pendiente = loop.create_future()
+    _broadcast_ws({"tipo": "accion_confirmar", "nombre": nombre, "descripcion": descripcion})
+    try:
+        return await asyncio.wait_for(_confirmacion_pendiente, timeout=_CONFIRMACION_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        return None
+    finally:
+        _confirmacion_pendiente = None
+
+
+def _marcar_fin_habla():
+    global _ultimo_fin_habla
+    _ultimo_fin_habla = time.monotonic()
+
+
+def _registrar_voz_estado(websocket, reproduciendo: bool):
+    """voz_estado del frontend: su cola de audio empezó a sonar (True) o se
+    vació (False). Es la única forma de saber que Rem sigue hablando cuando el
+    turno de LLM y la síntesis ya terminaron pero el <audio> todavía suena."""
+    global _ptt_medicion
+    if reproduciendo:
+        _ws_reproduciendo.add(websocket)
+        m = _ptt_medicion
+        if m is not None:
+            _ptt_medicion = None
+            total = time.perf_counter() - m["t_suelta"]
+            print(f"  [PTT] medición: suelto la tecla -> primer audio SONANDO: {total:.2f}s "
+                  f"(STT {m['t_stt']:.2f}s de {m['dur']:.1f}s de audio)", flush=True)
+    else:
+        _ws_reproduciendo.discard(websocket)
+        _marcar_fin_habla()
+
+
+def _ptt_motivo_ocupada():
+    """Por qué NO se puede empezar a grabar ahora, o None si se puede."""
+    if _ptt_estado != "idle":
+        return {"iniciando": "ya se está abriendo el micrófono",
+                "grabando": "ya se está grabando",
+                "transcribiendo": "todavía transcribiendo lo anterior"}[_ptt_estado]
+    if _chat_turno_activo:
+        return "Rem está respondiendo"
+    cola = _chat_cola_habla
+    # _unfinished_tasks: lo que Queue.join() espera — frases encoladas O en
+    # síntesis que el worker aún no marcó con task_done().
+    if cola is not None and getattr(cola, "_unfinished_tasks", 0) > 0:
+        return "Rem está preparando su voz"
+    if _ws_reproduciendo:
+        return "Rem está hablando"
+    import stt
+    if time.monotonic() - _ultimo_fin_habla < stt.leer_config_stt()["espera_tras_habla_s"]:
+        return "Rem acaba de terminar de hablar"
+    return None
+
+
+def _ptt_estado_ws(estado: str, **extra):
+    _broadcast_ws({"tipo": "ptt_estado", "estado": estado, **extra})
+
+
+async def _ptt_iniciar():
+    global _ptt_estado, _ptt_grabador, _ptt_tope_handle, _ptt_stop_pedido
+    if time.monotonic() - _ptt_stop_huerfano_t < 0.3:
+        # El stop de un toque corto llegó ANTES que su start (son dos procesos
+        # de rem_ptt.py): grabar ahora dejaría el micrófono abierto hasta el tope.
+        print("  [PTT] ptt_start ignorado: su ptt_stop ya había llegado (toque corto)", flush=True)
+        _ptt_estado_ws("idle", nota="toque muy corto")
+        return
+    motivo = _ptt_motivo_ocupada()
+    if motivo:
+        print(f"  [PTT] ptt_start ignorado: {motivo}", flush=True)
+        if _ptt_estado == "idle":  # un start repetido durante una grabación no debe pisar la UI
+            _ptt_estado_ws("ignorado", motivo=motivo)
+        return
+
+    import stt
+    from stt.microfono import Grabador
+    cfg = stt.leer_config_stt()
+    _ptt_estado, _ptt_stop_pedido = "iniciando", False
+    grabador = Grabador(max_s=cfg["max_grabacion_s"], dispositivo=cfg["dispositivo_entrada"])
+    try:
+        await asyncio.to_thread(grabador.iniciar)
+    except Exception as e:
+        _ptt_estado = "idle"
+        logger.exception("[PTT] no se pudo abrir el micrófono")
+        _broadcast_ws({"tipo": "error", "mensaje": f"No se pudo abrir el micrófono: {e}"})
+        _ptt_estado_ws("idle")
+        return
+    _ptt_grabador, _ptt_estado = grabador, "grabando"
+    _ptt_tope_handle = asyncio.get_running_loop().call_later(
+        cfg["max_grabacion_s"], lambda: asyncio.create_task(_ptt_detener(por_tope=True)))
+    print("  [PTT] grabando...", flush=True)
+    _ptt_estado_ws("escuchando")
+    if _ptt_stop_pedido:  # el stop llegó mientras se abría el micrófono
+        await _ptt_detener()
+
+
+async def _ptt_detener(por_tope: bool = False):
+    global _ptt_estado, _ptt_grabador, _ptt_tope_handle, _ptt_stop_pedido, _ptt_stop_huerfano_t, _ptt_medicion
+    if _ptt_estado == "iniciando":
+        _ptt_stop_pedido = True
+        return
+    if _ptt_estado != "grabando":
+        _ptt_stop_huerfano_t = time.monotonic()
+        # Siempre se contesta (rem_ptt.py espera una confirmación): con el
+        # estado actual, para no pisar una UI que está transcribiendo.
+        _ptt_estado_ws(_ptt_estado, nota="no estaba grabando")
+        return
+    t_suelta = time.perf_counter()
+    if _ptt_tope_handle is not None:
+        _ptt_tope_handle.cancel()
+        _ptt_tope_handle = None
+    grabador, _ptt_grabador = _ptt_grabador, None
+    audio = await asyncio.to_thread(grabador.detener)
+
+    import stt
+    from stt import SAMPLE_RATE
+    cfg = stt.leer_config_stt()
+    dur = len(audio) / SAMPLE_RATE
+    if por_tope:
+        print(f"  [PTT] tope de {cfg['max_grabacion_s']:.0f}s alcanzado — se corta la grabación", flush=True)
+    if dur < cfg["min_grabacion_s"]:
+        print(f"  [PTT] grabación de {dur:.2f}s descartada (< {cfg['min_grabacion_s']}s)", flush=True)
+        _ptt_estado = "idle"
+        _ptt_estado_ws("idle", nota="grabación muy corta")
+        return
+
+    _ptt_estado = "transcribiendo"
+    _ptt_estado_ws("transcribiendo")
+    try:
+        t0 = time.perf_counter()
+        texto = await asyncio.to_thread(stt.obtener_stt().transcribir, audio)
+        t_stt = time.perf_counter() - t0
+    except Exception as e:
+        logger.exception("[PTT] falló la transcripción")
+        _ptt_estado = "idle"
+        _broadcast_ws({"tipo": "error", "mensaje": f"Falló la transcripción: {e}"})
+        _ptt_estado_ws("idle")
+        return
+    print(f"  [PTT] STT: {dur:.2f}s de audio -> {t_stt:.2f}s ({t_stt / dur:.2f}x tiempo real) | {texto!r}", flush=True)
+
+    if not texto:
+        _ptt_estado = "idle"
+        _ptt_estado_ws("idle", nota="no se entendió nada")
+        return
+
+    # Se muestra lo entendido antes de que Rem responda (la UI lo pone en la
+    # caja de texto). El estado sigue en "transcribiendo" durante esa pausa:
+    # un ptt_start nuevo se ignora hasta que arranque el turno.
+    _broadcast_ws({"tipo": "ptt_transcripcion", "texto": texto,
+                   "ms": int(cfg["mostrar_transcripcion_s"] * 1000)})
+    await asyncio.sleep(cfg["mostrar_transcripcion_s"])
+    _ptt_estado = "idle"
+    _ptt_estado_ws("idle")
+    _ptt_medicion = {"t_suelta": t_suelta, "t_stt": t_stt, "dur": dur}
+    await _procesar_mensaje_chat(texto, t_ref=t_suelta)
 
 
 # ── Servidor WebSocket ────────────────────────────────────────────────
@@ -397,6 +636,25 @@ async def _ws_handler(websocket):
             elif tipo == "voz":
                 set_voz_chat_activa(data.get("activa"))
 
+            elif tipo == "voz_estado":
+                # El frontend avisa cuándo su cola de audio empieza a sonar / se
+                # vacía — el push-to-talk lo necesita para no grabar a Rem.
+                _registrar_voz_estado(websocket, bool(data.get("reproduciendo")))
+
+            elif tipo == "accion_confirmar_resp":
+                # Respuesta del panel a un accion_confirmar (ver
+                # _pedir_confirmacion_accion) — si ya no hay nadie esperando
+                # (expiró, o llegó una segunda respuesta) se ignora en
+                # silencio, no es un error del cliente.
+                if _confirmacion_pendiente is not None and not _confirmacion_pendiente.done():
+                    _confirmacion_pendiente.set_result(bool(data.get("ok")))
+
+            elif tipo == "ptt_start":
+                asyncio.create_task(_ptt_iniciar())
+
+            elif tipo == "ptt_stop":
+                asyncio.create_task(_ptt_detener())
+
             elif tipo == "estado":
                 # Un cliente (p.ej. bench_chat.py conectado como cliente WS,
                 # ver su comando 'state') pide poner el avatar en un estado.
@@ -431,6 +689,7 @@ async def _ws_handler(websocket):
     finally:
         with _ws_lock:
             _ws_clients.discard(websocket)
+        _ws_reproduciendo.discard(websocket)
 
 
 _ws_bind_error = None  # excepción del bind, si falló — para que iniciar_servidor_avatar() la reporte
@@ -476,20 +735,39 @@ def _puerto_activo(host: str, port: int, timeout: float = 0.3) -> bool:
         return False
 
 
-def iniciar_servidor_avatar() -> bool:
-    """Levanta HTTP (:18765) + WS (:18766) si no están corriendo ya en otro
-    proceso. Lo llama rem_chat.py (la aplicación) al arrancar. Si ya hay un
-    servidor (p.ej. otra instancia de rem_chat.py, o bench_chat.py en modo
-    standalone), lo detecta vía _puerto_activo() y no intenta levantar uno
-    nuevo — así no se compite por el puerto.
+class ServidorOcupadoError(RuntimeError):
+    """Ya hay un servidor de avatar (otra instancia) en :HTTP_PORT/:WS_PORT y
+    quien llamó pidió no reusarlo (permitir_reuso=False)."""
 
-    Devuelve True si el servidor (este proceso u otro) queda disponible."""
-    if _puerto_activo("127.0.0.1", HTTP_PORT):
+
+def iniciar_servidor_avatar(permitir_reuso: bool = True) -> bool:
+    """Levanta HTTP (:18765) + WS (:18766) si no están corriendo ya en otro
+    proceso.
+
+    permitir_reuso=True (default; bench_chat.py): si ya hay un
+    servidor lo detecta vía _puerto_activo() y lo reusa sin competir por el
+    puerto. permitir_reuso=False (rem_chat.py, la aplicación): un servidor ya
+    corriendo es un ERROR — lanza ServidorOcupadoError en vez de abrir una
+    segunda ventana pegada a un servidor ajeno.
+
+    Devuelve True si el servidor (este proceso u otro) queda disponible; False
+    si no pudo levantar (el motivo queda impreso)."""
+    ocupados = [p for p in (HTTP_PORT, WS_PORT) if _puerto_activo("127.0.0.1", p)]
+    if ocupados:
+        if not permitir_reuso:
+            raise ServidorOcupadoError(
+                "ya hay un servidor de Rem escuchando en " + ", ".join(f":{p}" for p in ocupados))
         print(f"[Avatar] Servidor ya corriendo en :{HTTP_PORT} — reusando, no se levanta uno nuevo.")
         return True
 
     th_http = threading.Thread(target=_iniciar_http, daemon=True, name="AvatarHTTP")
     th_http.start()
+    # Sin esperar el bind, un fallo (otra instancia ganó la carrera por el
+    # puerto entre el chequeo de arriba y este bind) pasaba inadvertido.
+    if not _http_ready.wait(timeout=5.0):
+        print(f"[Avatar] el servidor HTTP no pudo levantar en :{HTTP_PORT} "
+              f"({_http_bind_error or 'timeout esperando el bind'}).")
+        return False
 
     th_ws = threading.Thread(target=_thread_ws, daemon=True, name="AvatarWS")
     th_ws.start()
@@ -503,15 +781,3 @@ def iniciar_servidor_avatar() -> bool:
     print(f"[Avatar] Servidor propio levantado: HTTP :{HTTP_PORT}, WS :{WS_PORT}")
     return True
 
-
-# ── Compat: Rem.py (Tkinter, legacy) todavía llama a estas dos ────────
-# El overlay GTK (rem_overlay.py) se eliminó — la ventana es rem_chat.py.
-# iniciar_avatar() queda como alias de iniciar_servidor_avatar() para no
-# romper Rem.py; cerrar_avatar() ya no tiene nada que cerrar (los hilos del
-# servidor son daemon y mueren con el proceso).
-def iniciar_avatar(screen_w=1920, screen_h=1080):
-    return iniciar_servidor_avatar()
-
-
-def cerrar_avatar():
-    pass

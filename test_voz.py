@@ -166,18 +166,18 @@ def reproducir(ruta, etiqueta):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--pitch", type=int, default=4,
-                   help="semitonos de transposicion (Rem.py usa 4)")
+                   help="semitonos de transposicion (habla.py usa 4)")
     p.add_argument("--index", type=float, default=0.75,
-                   help="index_influence, 0.0-1.0 (Rem.py usa 0.75)")
+                   help="index_influence, 0.0-1.0 (habla.py usa 0.75)")
     p.add_argument("--texto", type=str, default=TEXTO_DEFAULT)
     p.add_argument("--voz", type=str, default=VOZ,
                    help="voz de edge-tts (default: es-MX-DaliaNeural)")
     p.add_argument("--rate", type=str, default="+0%",
                    help="ajuste de velocidad de edge-tts, ej. +15%%, -10%%")
     p.add_argument("--envelope", type=float, default=0.25,
-                   help="envelope_ratio de RVC, 0.0-1.0 (Rem.py usa 0.25)")
+                   help="envelope_ratio de RVC, 0.0-1.0 (habla.py usa 0.25)")
     p.add_argument("--protect", type=float, default=0.33,
-                   help="consonant_breath_protection de RVC, 0.0-1.0 (Rem.py usa 0.33)")
+                   help="consonant_breath_protection de RVC, 0.0-1.0 (habla.py usa 0.33)")
     p.add_argument("--no-play", action="store_true")
     args = p.parse_args()
 

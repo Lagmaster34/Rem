@@ -18,8 +18,8 @@ no basta con copiar la carpeta.
 | LLM | Claude (Anthropic) — `claude-sonnet-5` por defecto. Groq queda como fallback (`llm/groq.py`) |
 | TTS | `edge-tts` (Microsoft Neural, voz `es-VE-PaolaNeural`, rate `-8%`) |
 | Voice conversion | `infer-rvc-python` + modelo `Rem_600e_6600s` |
-| STT | `speech_recognition` + Google |
-| GUI | GTK3 + WebKit2 (`rem_chat.py`) — la ventana del avatar con panel de chat. Tkinter (`Rem.py`) es legacy |
+| STT | `faster-whisper` local (`stt/`), push-to-talk. Groq Whisper como alternativa |
+| GUI | GTK3 + WebKit2 (`rem_chat.py`) — la ventana del avatar con panel de chat, u overlay |
 | Avatar 3D | Three.js + `@pixiv/three-vrm` + `@pixiv/three-vrm-animation` en WebGL |
 | Ventana | GTK3 + WebKit2, `venv/bin/python` (PyGObject/pycairo instalados ahí, ver "El venv sí puede tener GTK" más abajo) |
 | fairseq | v0.12.2 con shim de compatibilidad (`fairseq_shim/`) |
@@ -27,24 +27,27 @@ no basta con copiar la carpeta.
 ## Archivos principales
 | Archivo | Qué hace |
 |---------|----------|
-| `rem_chat.py` | **La aplicación**: levanta el servidor HTTP/WS y abre la ventana GTK + WebView. Ver "Ventana de escritorio" más abajo |
-| `rem_avatar_server.py` | Servidor HTTP `:18765` + WebSocket `:18766` para el avatar |
-| `rem_avatar.html` | Frontend Three.js/VRM del avatar — animación (clips VRMA para el cuerpo + procedural para respiración/mirada/gestos) + panel de chat HTML/CSS/JS |
+| `rem_chat.py` | **La aplicación**: levanta el servidor HTTP/WS y abre UNA presentación, `--modo ventana` (default) o `--modo overlay`. Ver "Modo overlay" más abajo |
+| `rem_avatar_server.py` | Servidor HTTP `:18765` + WebSocket `:18766` para el avatar, más la orquestación de push-to-talk (`ptt_start`/`ptt_stop`). Ver "Modo overlay: push-to-talk" más abajo |
+| `rem_avatar.html` | Frontend Three.js/VRM del avatar — animación (clips VRMA para el cuerpo + procedural para respiración/mirada/gestos) + panel de chat HTML/CSS/JS en modo ventana, caja de texto mínima en modo overlay |
 | `bench_chat.py` | REPL de depuración: si hay servidor lo usa como cliente WS, si no lo levanta él (standalone). Ver "Puntos de entrada" más abajo |
-| `Rem.py` | Asistente Tkinter (legacy, en retirada — no arranca en el venv actual: sin `_tkinter`) |
+| `acciones.py` | Herramientas del modelo (tool calling nativo) + validación de rutas portada del viejo `Rem.py`. Ver "Acciones del sistema en rem_chat" más abajo |
+| `personalidad.py` / `ejemplos_tono.py` | System prompt + contexto dinámico / turnos few-shot del tono. Ver "Ejemplos de tono (few-shot)" |
 | `Animaciones/` | Clips `.vrma` del avatar — no van al repo, se descargan a mano. Ver `Animaciones/README.md` y "Animación de cuerpo con clips VRMA" más abajo |
-| `chat_sesion.py` | `SesionChat` + `procesar_turno()` — estado de una conversación y el turno "en crudo" contra el LLM, compartido entre `bench_chat.py` y el panel de chat de `rem_chat.py`. Ver "Panel de chat" más abajo |
-| `habla.py` | Pipeline de voz de un turno (TTS -> RVC -> `enviar_audio()`), compartido entre `bench_chat.py` y el panel de chat. Ver "Voz en la ventana de chat" más abajo |
+| `chat_sesion.py` | `SesionChat` + `procesar_turno()` — estado de una conversación y el turno "en crudo" contra el LLM, compartido entre `bench_chat.py` y el panel/caja de chat de `rem_chat.py`. Ver "Panel de chat" más abajo |
+| `habla.py` | Pipeline de voz de salida de un turno (TTS -> RVC -> `enviar_audio()`), compartido entre `bench_chat.py` y `rem_chat.py`. Ver "Voz en la ventana de chat" más abajo |
+| `stt/` | Capa de abstracción de voz de ENTRADA (STT): contrato + providers (`local.py` = faster-whisper, `groq.py`). Ver "Modo overlay: push-to-talk" más abajo |
+| `rem_ptt.py` | CLI del push-to-talk: `rem_ptt.py start\|stop` manda `ptt_start`/`ptt_stop` al servidor por WS — pensado para atarlo a una tecla mantenida en Hyprland |
 | `fairseq_shim/__init__.py` | Shim que reemplaza el `__init__.py` de fairseq para compatibilidad PyTorch |
 | `fairseq_shim/checkpoint_utils.py` | Fork de fairseq con `torch.load(weights_only=False)` |
 | `apply_shim.py` | Copia `fairseq_shim/` sobre el fairseq instalado en `venv/`. Ejecutar tras cualquier reinstalación de fairseq |
 | `llm/` | Capa de abstracción de LLM (contrato + providers). Ver "Capa de abstracción de LLM" más abajo |
-| `config.py` | Módulo compartido: carga `.env` y lee `config.toml`. Lo usan `rem_chat.py`/`bench_chat.py`/`Rem.py` |
-| `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — hoy solo `[llm]` / `[llm.claude]` |
+| `config.py` | Módulo compartido: carga `.env` y lee `config.toml`. Lo usan `rem_chat.py`/`bench_chat.py`/`llm/`/`habla.py` |
+| `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — `[llm]`/`[llm.claude]`/`[app]`/`[overlay]`/`[stt]` |
 
 ## Capa de abstracción de LLM (`llm/`)
-Contrato común para poder cambiar de backend (Claude, Groq, un modelo local a futuro) sin tocar
-`Rem.py` más allá del punto de llamada. Proveedor activo: **Claude** (`llm/claude.py`), con **Groq
+Contrato común para poder cambiar de backend (Claude, Groq, Ollama local) sin tocar a los
+consumidores (`chat_sesion.procesar_turno()`). Proveedor activo: **Claude** (`llm/claude.py`), con **Groq
 como fallback** (`llm/groq.py`) — ver `get_provider()` más abajo.
 
 - `llm/base.py`: tipos normalizados (`Message`, `ToolSpec`, `ToolCall`, `Chunk` = `TextDelta` |
@@ -93,8 +96,8 @@ como fallback** (`llm/groq.py`) — ver `get_provider()` más abajo.
     de dejarla agotarse sola (el servidor cierra el body ahí mismo de todos modos). Un generador
     async abandonado a mitad de iteración (en vez de agotado) necesita un `athrow(GeneratorExit)`
     de limpieza que asyncio programa como Task aparte — si el loop del turno ya cerró para cuando el
-    GC lo recolecta (el patrón exacto de `_drenar_stream_llm()`: loop nuevo y descartable por
-    turno), esa Task se destruye a mitad de camino (`Task was destroyed but it is pending!`).
+    GC lo recolecta (p. ej. un loop nuevo y descartable por turno, como el `_drenar_stream_llm()`
+    del viejo `Rem.py`), esa Task se destruye a mitad de camino (`Task was destroyed but it is pending!`).
     Reproducido, diagnosticado y arreglado sacando el `break`.
 - `llm/claude.py`: `ClaudeProvider`, streaming real vía `AsyncAnthropic`. Modelo por defecto
   `claude-sonnet-5` (familia intermedia, no el tope Opus 5/Fable 5 — para un asistente conversacional
@@ -123,50 +126,30 @@ como fallback** (`llm/groq.py`) — ver `get_provider()` más abajo.
   `__init__` (`OllamaProvider` no tiene ese chequeo, no necesita key). Falla con `ValueError` claro
   si se pide un provider que no existe.
 - `llm/sentence_splitter.py`: `dividir_en_oraciones()` consume un `AsyncIterator[Chunk]` y emite
-  oraciones completas apenas se detecta su final (reutiliza la regla de corte de
-  `_partir_oraciones()` en Rem.py: `. ! ?` seguido de espacio, descarta fragmentos < 3 chars).
-  Maneja el caso de que una oración llegue partida entre dos chunks de red. **Construido pero
-  todavía no conectado a `Rem.py`** — conectarlo requeriría tocar `responder()`/`hablar()`, más
-  allá del único punto de llamada (`preguntar_groq()`) que se tocó en esta migración. Queda listo
-  para cuando el backend deje de ser Tkinter y `hablar()` pueda ir hablando oración por oración a
-  medida que llegan, en vez de esperar la respuesta completa.
+  oraciones completas apenas se detecta su final (`. ! ?` seguido de espacio, descarta fragmentos
+  < 3 chars). Maneja el caso de que una oración llegue partida entre dos chunks de red. Lo usa
+  `chat_sesion.procesar_turno()` para encolar cada oración hacia la voz apenas está lista (ver
+  "SentenceSplitter conectado" más abajo).
 
 **Cliente perezoso por event loop (Groq y Claude)**: ni `GroqProvider` ni `ClaudeProvider` crean su
 cliente HTTP (`AsyncGroq`/`AsyncAnthropic`, ambos httpx por debajo) en `__init__` — lo arman recién
 en el primer uso real, y lo recrean si el event loop actual cambió respecto al de la última llamada
 (`_obtener_cliente()`). Motivo: un cliente httpx async que llega a abrir una conexión real queda con
 su pool interno atado al loop que estaba corriendo en ese momento; si el provider se usara como
-singleton y se lo llamara desde un loop nuevo — el patrón exacto de `_drenar_stream_llm()` más abajo,
-un loop descartable por turno — reusar ese cliente revienta con `RuntimeError: Event loop is closed`.
+singleton y se lo llamara desde un loop nuevo — p. ej. un loop descartable por turno, el patrón del
+`_drenar_stream_llm()` del viejo `Rem.py` — reusar ese cliente revienta con `RuntimeError: Event loop is closed`.
 Reproducido con `httpx.AsyncClient` puro (sin mocks): un request exitoso en un loop + el mismo
 cliente reusado en otro loop distinto falla así — pero **solo si el primer request llegó a completarse
 con éxito** (una conexión que nunca se estableció, p.ej. por un 401, no deja pool que reusar, así que
 un test con una API key inválida no alcanza para reproducirlo).
 
-**Integración en `Rem.py`**: `preguntar_groq()` llama a `_drenar_stream_llm()`, que hace de puente
-sync→async: crea un event loop de asyncio nuevo y descartable (uno por turno, ya que `responder()`
-corre en un hilo nuevo por cada mensaje del usuario), junta todos los `TextDelta` del stream en un
-solo string, y lo devuelve — mismo contrato de entrada/salida que antes,
-`responder()`/`procesar_respuesta()`/`hablar()` no se tocaron. Ese loop **no puede ser el del
-`AudioWorker`** (`_worker_audio`): ese vive fijo en su propio hilo consumiendo su cola de audio, y un
-loop de asyncio no es seguro de usar desde otro hilo sin `run_coroutine_threadsafe`. Es un puente
-temporal: cuando Tkinter deje de ser el backend, este adaptador desaparece y se llama a
-`stream_chat()`/`dividir_en_oraciones()` directo desde el loop async nativo del backend nuevo.
-`extraer_memoria_importante()` (cada 8 mensajes) también pasa por `_drenar_stream_llm()` — usa el
-mismo provider principal que la conversación, en vez de un cliente Groq síncrono aparte; si ese
-provider no tiene su API key configurada, el `RuntimeError` explícito de `get_provider()` llega tal
-cual al `except` de `extraer_memoria_importante()` y se loguea, sin tumbar el hilo.
-
 **`config.py`** (módulo compartido, en la raíz, no en `llm/`): `cargar_dotenv()` (carga `.env` al
 entorno vía `os.environ.setdefault`, tolera valores con `=` dentro gracias a `split("=", 1)` — las
-API keys pueden llevarlo) y `leer_config_toml()` (parsea `config.toml` con `tomlkit`). Existe porque
-`bench_chat.py` no puede importar `Rem.py` (ver "Banco de pruebas" más abajo) y antes no veía
-ninguna variable de `.env` — `llm/__init__.py` también lo usa para leer `config.toml`, en vez de
-tener su propia lectura duplicada.
+API keys pueden llevarlo) y `leer_config_toml()` (parsea `config.toml` con `tomlkit`), más un
+`leer_*()` por sección. Un solo lugar que lee `.env`/`config.toml` — `llm/__init__.py` también lo usa,
+en vez de tener su propia lectura duplicada.
 
-**Banco de pruebas sin Tkinter (`bench_chat.py`)**: el Python 3.10.14 del venv se compiló sin
-`_tkinter`, así que `Rem.py` no arranca ni se puede importar en este entorno. `bench_chat.py` es un
-REPL de depuración con dos modos alternables en caliente (`SesionChat.cambiar_modo()`, ver "bench.py
+**Banco de pruebas (`bench_chat.py`)**: un REPL de depuración con dos modos alternables en caliente (`SesionChat.cambiar_modo()`, ver "bench.py
 eliminado" más abajo): `chat <texto>` corre un turno de LLM (streaming), `voz on|off` encadena la
 respuesta al pipeline de voz (`habla.py`), `state <estado>` / `open` controlan el avatar, `modo
 ia|eco`, `reset`, `quit`. Cómo llega esos comandos al avatar depende de si detectó un servidor ya
@@ -216,36 +199,26 @@ importa para probar la síntesis de una frase larga sin cortes.
 al principio del prompt) en vez de enterrar "respondé corto" como el punto 7 de 8 entre rasgos de
 personalidad — con un modelo chico (Ollama, 4B, ver "Capa de abstracción de LLM" más arriba) esa
 regla se perdía entre el resto y las respuestas salían de 100-180 tokens en vez de 1-3 frases. El
-personaje ya no tiene cariño/afecto ni rasgos de pareja — es una colega de trabajo con foco en lo
-técnico (programación, Linux, hardware, redes, IA), que contradice a Esteban cuando hace falta en
-vez de darle la razón primero y matizar después. Los bloques ACCIONES DEL SISTEMA/REGLAS DE
-SEGURIDAD/MEMORIA DEL SISTEMA se mantienen intactos entre reescrituras de personalidad — son
-funcionales, no de tono, y cualquier cambio a los permisos reales (ver "Seguridad de acciones del
-sistema" más abajo) tiene que reflejarse ahí también, o el modelo va a intentar acciones que el
-código ya rechaza sin saber por qué.
+personaje es una amiga paisa de confianza (sin romance, sin halagos) con foco en lo técnico, que
+contradice a Esteban cuando hace falta. **El tono ya no se describe en el prompt: sale de los
+ejemplos few-shot** (ver "Ejemplos de tono (few-shot)" más abajo) — el prompt solo guarda las reglas
+duras (longitud, honestidad, no inventar, herramientas, cuándo hablar de tecnología, sin romance).
+El viejo catálogo de acciones en JSON (ACCIONES DEL SISTEMA/REGLAS DE SEGURIDAD/MEMORIA DEL SISTEMA)
+ya no existe: se fue con `Rem.py`. Las acciones van por tool calling nativo (`acciones.py`), y la
+regla "HERRAMIENTAS" del prompt tiene que seguir listando lo que las tools realmente hacen — si se
+agrega o quita una tool, actualizar esa regla, o el modelo va a prometer acciones que no existen.
 
 ## Configuración (.env en la raíz del proyecto)
 ```
 ANTHROPIC_API_KEY=tu_api_key_de_anthropic
 GROQ_API_KEY=tu_api_key_de_groq
 NOMBRE_USUARIO=Esteban
-CIUDAD=Yarumal
-VOZ_REM=es-VE-PaolaNeural
-TTS_RATE=-8%
-RECORDATORIOS_ACTIVOS=false
-MEMORIA_EXTRACCION_ACTIVA=true
 ```
 `ANTHROPIC_API_KEY` es la que usa el provider activo (`claude`, ver `config.toml`); `GROQ_API_KEY`
 solo hace falta si `[llm].provider`/`REM_LLM_PROVIDER` se cambia a `"groq"`. `get_provider()` falla
 al arrancar con un mensaje explícito si falta la key del provider elegido — ver "Capa de
 abstracción de LLM" más arriba.
-`RECORDATORIOS_ACTIVOS` (default `false`): dispara 5 llamadas al LLM al día (08:00, 14:00, 18:00,
-22:00, 00:30) sin que el usuario haga nada — apagado por defecto porque la regla del proyecto es
-que la API solo se usa cuando el usuario escribe o habla (ver "Nada volátil en el system prompt /
-sin llamadas al LLM sin intervención del usuario" más abajo).
-`MEMORIA_EXTRACCION_ACTIVA` (default `true`): `extraer_memoria_importante()` es una tarea de
-extracción (no de conversación) que corre cada 8 mensajes, a través del mismo provider principal
-que la conversación (ver "Capa de abstracción de LLM") — `false` la desactiva del todo.
+La voz de salida no va en `.env`: está en `config.toml` → `[voz]`.
 Todas las variables tienen valores por defecto en el código. Solo la API key del provider activo
 (`ANTHROPIC_API_KEY` por defecto) es obligatoria.
 
@@ -255,31 +228,29 @@ idéntico byte a byte entre llamadas para reusar el cache — cualquier cambio e
 (fecha, hora, estado de la PC, etc.) rompe el cache en cada turno y obliga a pagar el prompt
 completo siempre. Por eso:
 - `construir_prompt_sistema()` (usado como mensaje `system`) contiene **solo** contenido estable:
-  personalidad, reglas y catálogo de acciones, con la memoria larga (`memoria_larga`) al final del
-  bloque — así un cambio en la memoria no invalida la parte de arriba, que es la que más vale la
-  pena mantener idéntica entre llamadas.
-- Todo lo volátil (fecha/hora, estado de la PC vía `obtener_info_pc()`, memoria del sistema de
-  archivos/carpetas conocidas) va en `construir_contexto_dinamico()`, que se antepone al **mensaje
-  del usuario** en cada turno (dentro de `preguntar_groq()`), nunca al system prompt.
+  personalidad y reglas. La memoria larga va aparte, como mensaje después de los ejemplos de tono
+  (ver "Ejemplos de tono (few-shot)").
+- Todo lo volátil (fecha/hora) va en
+  `construir_contexto_dinamico()`, que se antepone al **último mensaje del usuario** en cada turno
+  (dentro de `chat_sesion.procesar_turno()`), nunca al system prompt. El estado de la PC ya no va en
+  el contexto: es la herramienta de solo lectura `estado_pc` (ver "Acciones del sistema en rem_chat").
 - Regla para futuros cambios: si algo cambia en cada turno (timestamps, métricas en vivo, conteos),
   no va en `construir_prompt_sistema()`.
 
 ## Ninguna llamada al LLM sin intervención del usuario
 Requisito firme del proyecto: la API (Claude, o el provider que esté activo) solo se usa cuando el
 usuario escribe o habla.
-- `bienvenida()` (saludo al arrancar la app) usa una frase estática elegida al azar de
-  `_SALUDOS_BIENVENIDA`, no llama al LLM.
-- `RECORDATORIOS` (recordatorios automáticos por hora) está detrás de `RECORDATORIOS_ACTIVOS`,
-  desactivado por defecto — ver más arriba.
-- `extraer_memoria_importante()` sí llama al LLM sin intervención directa en ese instante, pero solo
-  se dispara como consecuencia de turnos de conversación ya iniciados por el usuario (cada 8
-  mensajes), nunca por un timer independiente — y es configurable vía `MEMORIA_EXTRACCION_ACTIVA`.
+- No hay saludo generado al arrancar, ni recordatorios por timer. (El viejo `Rem.py` tenía los dos
+  —`bienvenida()` con frases estáticas y `RECORDATORIOS` apagados por defecto— más
+  `extraer_memoria_importante()` cada 8 mensajes; se fueron con él. Si se porta la extracción de
+  memoria, que siga siendo consecuencia de turnos del usuario, nunca de un timer.)
+- La precarga de Ollama al arrancar (ver "Precarga de Ollama") no es una llamada a una API de pago:
+  es el modelo local evaluando el prefijo fijo, sin generar respuesta para nadie.
 
 ## Archivos de datos (creados en runtime, ignorados por git)
 | Archivo | Contenido |
 |---------|-----------|
-| `memoria_rem.json` | Historial de chat (últimos 60 mensajes) |
-| `memoria_larga.json` | Recuerdos a largo plazo (hechos, emociones, eventos, preferencias) |
+| `memoria_larga.json` | Recuerdos a largo plazo (hechos, emociones, eventos, preferencias). Hoy solo se lee: nada la actualiza desde que se fue `Rem.py` |
 | `memoria_sistema.json` | Archivos y carpetas conocidas del sistema |
 
 ## Archivos pesados (ignorados por git, descargar manualmente)
@@ -303,75 +274,35 @@ rem_chat.py — hilo principal (Gtk.main())
       └── AvatarWS   (daemon thread)     — asyncio loop, WebSocket bidireccional en :18766
             ├── _procesar_mensaje_chat() — turno de LLM (create_task), emite chat_delta/done
             └── _chat_worker_habla_task  — cola de voz del panel (TTS→RVC→enviar_audio)
-
-Rem.py (legacy, Tkinter) — hilo principal (Tkinter mainloop)
-├── AudioWorker / escuchar() / responder() / _drenar_stream_llm() / ... (daemon threads)
-└── rem_avatar_server.iniciar_avatar()  — alias de iniciar_servidor_avatar()
 ```
 
-## Locks de threading (en Rem.py, legacy)
-| Lock | Protege |
-|------|---------|
-| `_lock_historial` | `historial` (lista de mensajes del chat) |
-| `_lock_mem_larga` | `memoria_larga` y sus escrituras a disco |
-| `_lock_mem_sis` | `memoria_sistema` y sus escrituras a disco |
-
 ## Seguridad de acciones del sistema
-- `ejecutar_comando`: whitelist de binarios, bloquea metacaracteres de shell, usa `shlex.split()` sin `shell=True`.
-  `git` y `systemctl`, aunque están en la whitelist, se restringen además a un conjunto cerrado de
-  subcomandos de solo lectura (`_git_permitido()`/`_systemctl_permitido()`) — `git -c
-  core.pager=...`/`--exec-path` pueden ejecutar programas arbitrarios dentro del mismo
-  `subprocess.run`, y `systemctl --user start/stop/enable/...` aplica sin pedir ningún privilegio
-  (a diferencia de sin `--user`, que suele fallar por polkit — esa falla actuaba como red de
-  seguridad implícita que `--user` esquiva).
-- `_ruta_segura(ruta, permitir_raiz=False)`: valida que la ruta esté dentro de `/home/$NOMBRE_USUARIO`,
-  que no sea `/home/$NOMBRE_USUARIO` completo (por defecto — sin este chequeo, "eliminar ~" hacía
-  `shutil.rmtree()` sobre todo el home), que no caiga en dirs del sistema (`/etc`, `/root`, ...) ni en
-  la lista negra de subrutas sensibles dentro de `$HOME` (`_RUTAS_PROHIBIDAS_HOME`: `~/.ssh`,
-  `~/.gnupg`, `~/.config`, `~/.local/share/keyrings`, `~/.mozilla`, y el `.env`/`.git` del propio
-  proyecto, calculados desde su ubicación real — protegen igual si el proyecto vuelve a vivir dentro
-  de `$HOME`). La usan `mover_archivo`/`copiar_archivo`/`eliminar_archivo`/`crear_carpeta`, y `buscar`
-  con `permitir_raiz=True` (es de solo lectura — `glob.glob`, nunca escribe — y por defecto ya busca
-  en todo el home; bloquear la raíz ahí rompería el caso más común).
-- **`ejecutar_comando` valida también sus argumentos, no solo el binario** (`_args_permitidos()`):
-  antes, `_cmd_permitido()` solo miraba el primer token — `cat /ruta/al/proyecto/.env` vía
-  `ejecutar_comando` ignoraba por completo `_ruta_segura()` y la lista negra. Cada token que "parece
-  una ruta" (prefijo `/`, `~`, `./`, `../`, o que exista de verdad relativo al cwd real de
-  `ejecutar_comando`, lo que atrapa traversal escondido tipo `carpeta_real/../../etc/passwd`) pasa por
-  `_ruta_segura()` con `permitir_raiz=False` — mismo límite que mover/copiar/eliminar. Efecto
-  secundario a tener en cuenta: `ls ~`/`find .` (apuntando literalmente a la raíz del home) también
-  quedan bloqueados por esto, no solo los casos destructivos.
-- **`buscar` filtra también los resultados del `glob.glob()`, no solo la carpeta base**
-  (`_filtrar_rutas_seguras()`): validar la carpeta de partida con `_ruta_segura()` no alcanza, porque
-  `"**"` recursivo encuentra coincidencias dentro de `~/.ssh`/`~/.config`/etc. igual si están debajo
-  de esa base — antes, buscar `"id_rsa"` o `".env"` devolvía la ruta real dentro de la lista negra tal
-  cual, tanto en la respuesta como cacheada en `memoria_sistema.json`. Como defensa en profundidad,
-  `registrar_archivo_sistema()`/`registrar_carpeta_sistema()` (los únicos dos lugares que escriben en
-  `memoria_sistema`) también rechazan una ruta que no pase `_ruta_segura()`, y
-  `buscar_en_memoria_sistema()` filtra (y borra) cualquier entrada que ya esté adentro y no pase el
-  chequeo — importante porque `construir_contexto_dinamico()` en `personalidad.py` reinyecta
-  `memoria_sistema` completo en el prompt de cada turno futuro sin filtrar nada: una entrada indebida
-  ahí no es una fuga de una sola vez, queda expuesta en todas las respuestas siguientes hasta que se
-  borre a mano.
-- `descargar_archivo()`: sanea `nombre` con `os.path.basename()` — sin esto, un `nombre` con `../../`
-  escribía el contenido descargado fuera de `~/Descargas`.
-- `eliminar_archivo` mueve a la papelera de XDG (`~/.local/share/Trash`, con su `.trashinfo`) en vez de
-  borrar (`_mover_a_papelera()`) — recuperable con las herramientas normales del escritorio (Thunar).
-- Diálogo de confirmación (`DESCRIPCIONES`): para rutas, muestra el `realpath` ya validado por
-  `_ruta_segura()` (o el motivo del rechazo, si ya se sabe que va a fallar) en vez del string crudo
-  que mandó el LLM; para `ejecutar_comando`, muestra el comando tokenizado con `shlex` y el binario
-  real que resuelve el `PATH` (`shutil.which`).
-- Toda acción pasa por `confirmar_accion()` (diálogo de confirmación).
+Lo que queda en el árbol es lo que usan las tools de `acciones.py` (ver "Acciones del sistema en
+rem_chat" más abajo); el ejecutor completo del viejo `Rem.py` (`ejecutar_comando` con whitelist y
+`_args_permitidos()`, `_git_permitido()`/`_systemctl_permitido()`, mover/copiar/eliminar con
+`_mover_a_papelera()`, `descargar_archivo()` saneado, el diálogo `confirmar_accion()`) **se eliminó
+con él** — sigue en el historial de git (último commit que lo tiene: `58abc8e`), con su auditoría.
+Si se porta algo de ahí, portar también su validación, no solo la acción.
+
+- `_ruta_segura(ruta, permitir_raiz=False)` (`acciones.py`): valida que la ruta esté dentro de
+  `$HOME`, que no sea `$HOME` completo (salvo `permitir_raiz=True`), que no caiga en dirs del sistema
+  (`/etc`, `/root`, ...) ni en la lista negra de subrutas sensibles (`_RUTAS_PROHIBIDAS_HOME`:
+  `~/.ssh`, `~/.gnupg`, `~/.config`, `~/.local/share/keyrings`, `~/.mozilla`, y el `.env`/`.git` del
+  propio proyecto, calculados desde su ubicación real). `buscar_archivos` la usa con
+  `permitir_raiz=True` (solo lectura — `glob.glob`, nunca escribe).
+- **`buscar_archivos` filtra también los resultados del `glob.glob()`, no solo la carpeta base**
+  (`_filtrar_rutas_seguras()`): `"**"` recursivo encuentra coincidencias dentro de `~/.ssh`/
+  `~/.config`/etc. igual si están debajo de la base validada. Como defensa en profundidad,
+  `_registrar_archivo_sistema()` (el único lugar que escribe en `memoria_sistema`) rechaza una ruta
+  que no pase `_ruta_segura()`, y `_buscar_en_memoria_sistema()` ignora una entrada guardada que no
+  pase el chequeo.
+- `apagar_pc` pasa por confirmación (`TOOLS_QUE_CONFIRMAN`) y no se ofrece en overlay
+  (`TOOLS_EXCLUIDAS_OVERLAY`): ahí no hay forma de confirmar.
 - CORS restringido a `localhost` en `rem_avatar_server.py`.
 
-Los cuatro huecos detectados en la auditoría previa (`ejecutar_comando` sin validar argumentos,
-`crear_carpeta` y `buscar` sin pasar por `_ruta_segura()`, `descargar_archivo` sin sanear `nombre`)
-quedaron cerrados en esa pasada. Una revisión posterior encontró que validar la carpeta base de
-`buscar` no alcanzaba (ver el bullet de `_filtrar_rutas_seguras()` más arriba) — cerrado también. Si
-en el futuro se agrega una acción nueva que reciba una ruta directo del JSON del LLM, o que devuelva
-una lista de rutas encontradas en vez de una sola, ese es el lugar a revisar: pasarla (o filtrarla)
-por `_ruta_segura()` antes de usarla o devolverla, no asumir que el patrón ya está cubierto en todos
-lados.
+Si en el futuro se agrega una tool que reciba una ruta del modelo, o que devuelva una lista de rutas
+encontradas, ese es el lugar a revisar: pasarla (o filtrarla) por `_ruta_segura()` antes de usarla o
+devolverla.
 
 **`memoria_sistema.json` ya no se trackea en git** (`git rm --cached`, el `.gitignore` ya tenía
 `memoria_*.json` pero no aplica retroactivamente a un archivo agregado antes de esa regla) — el
@@ -384,13 +315,17 @@ la clave `"programas"` del JSON, que no existe en el schema que lee `personalida
 ## Puntos de entrada
 
 ```bash
-venv/bin/python rem_chat.py     # LA APLICACIÓN — levanta el servidor y abre la ventana
-venv/bin/python bench_chat.py   # REPL de depuración (ver abajo)
-venv/bin/python Rem.py          # asistente Tkinter legacy (no arranca en este venv: sin _tkinter)
+venv/bin/python rem_chat.py                    # LA APLICACIÓN — modo ventana (default de config.toml)
+venv/bin/python rem_chat.py --modo overlay     # LA APLICACIÓN — modo overlay (ver "Modo overlay" más abajo)
+venv/bin/python bench_chat.py                  # REPL de depuración (ver abajo)
 ```
 
-- **`rem_chat.py`** es la aplicación: llama a `rem_avatar_server.iniciar_servidor_avatar()` (levanta
-  HTTP `:18765` + WS `:18766`, o detecta que ya están y los reusa) y abre la ventana GTK + WebView.
+- **`rem_chat.py`** es la aplicación: llama a `rem_avatar_server.iniciar_servidor_avatar(permitir_reuso=False)`
+  (levanta HTTP `:18765` + WS `:18766`) y abre UNA presentación — `--modo ventana` o `--modo overlay`
+  (default: `config.toml` -> `[app].modo`), nunca las dos a la vez. A diferencia de `bench_chat.py`,
+  si los puertos ya están ocupados **no** los reusa: sale con un error claro (`ServidorOcupadoError`)
+  en vez de abrir una segunda presentación pegada a un servidor ajeno — ver "Modo overlay" más abajo,
+  "Instancia única".
 - **`bench_chat.py`** se adapta a si ya hay un servidor:
   - **modo cliente** (hay servidor): se conecta como cliente WebSocket y manda `state`/`chat`/`modo`/
     `voz`/`reset` por ahí. El servidor los procesa y la ventana los ve. El turno de LLM lo corre el
@@ -417,7 +352,7 @@ del sistema no tiene ningún rol especial en el proyecto (ver "El venv sí puede
 - **Error de audio**: verificar que PipeWire esté corriendo (`systemctl --user status pipewire`).
 
 ## Configuración de voz ganadora (comparación A/B)
-`VOZ_REM=es-VE-PaolaNeural`, `TTS_RATE=-8%`, `pitch_lvl=4`, `index_influence=0.75` — probado con
+`[voz]` voz `es-VE-PaolaNeural`, rate `-8%`, `pitch_lvl=4`, `index_influence=0.75` — probado con
 `test_voz.py --voz ... --rate ...` contra varias voces de edge-tts y comparado el resultado tras
 pasar por RVC.
 
@@ -496,8 +431,8 @@ extenso en la tabla de `config.toml`.
 
 `device` en `config.toml` → `[rvc]` vuelve a `"cuda"` por defecto (`"cpu"` sigue disponible: sirve
 si el provider activo no es `ollama`, o para liberar toda la GPU por algún otro motivo) — vía
-`config.leer_dispositivo_rvc()`, aplicado en `bench_chat.py`, `test_voz.py` y `Rem.py`
-(los tres construyen su `BaseLoader` con `only_cpu=(dispositivo == "cpu")`). Verificado en vivo
+`config.leer_dispositivo_rvc()`, aplicado en `habla.py` (rem_chat y bench_chat) y `test_voz.py`
+(los dos construyen su `BaseLoader` con `only_cpu=(dispositivo == "cpu")`). Verificado en vivo
 end-to-end: LLM → `SentenceSplitter` → RVC en CUDA, dos oraciones de una respuesta real, ambas
 convertidas sin OOM.
 
@@ -805,22 +740,24 @@ frame del `gltf.load()` callback, porque recién ahí el esqueleto refleja la po
 seguir en un estado intermedio del importador). La medición inicial por `Box3` se conserva como
 placeholder para el primer frame o dos, y ambas cifras (Box3 y huesos) quedan logueadas para comparar.
 
-## Layer surface acotada (histórico — el overlay se eliminó)
-Cuando existía `rem_overlay.py`, su layer surface se anclaba solo a `RIGHT`+`BOTTOM` con tamaño
-fijo (no a los 4 bordes) para no estirar un canvas WebGL transparente del tamaño del monitor entero
-renderizando a 60fps sobre todo el escritorio. Eso trajo dos regresiones que se arreglaron en su
-momento (click-through que no sobrevivía a la reasignación de superficie; `_ajustarAnclasPorAspect()`
-colapsando `anchorX` a 0,5 en superficies verticales). **Nada de esto aplica ya**: una ventana
-normal (`rem_chat.py`) no tiene ese problema de rendimiento ni es click-through, y
-`_ajustarAnclasPorAspect()` se eliminó. Se deja el apunte por si el reporte de "canvas WebGL a
-pantalla completa cuesta caro" reaparece con otra forma.
+## Layer surface acotada (histórico — de `rem_overlay.py`, el archivo eliminado)
+Cuando existía `rem_overlay.py` (proceso aparte, eliminado — ver "Ventana de escritorio" más
+arriba), su layer surface se anclaba solo a `RIGHT`+`BOTTOM` con tamaño fijo (no a los 4 bordes)
+para no estirar un canvas WebGL transparente del tamaño del monitor entero renderizando a 60fps
+sobre todo el escritorio. Eso trajo dos regresiones que se arreglaron en su momento (click-through
+que no sobrevivía a la reasignación de superficie; `_ajustarAnclasPorAspect()` colapsando `anchorX`
+a 0,5 en superficies verticales). El primer bug (click-through que no sobrevive a la reasignación
+de superficie) SÍ reapareció, con otra forma, en el modo overlay nuevo (ver "Modo overlay:
+click-through y la caja de texto" más abajo — ahí se documenta el fix real, `queue_draw()` tras
+`input_shape_combine_region()`). `_ajustarAnclasPorAspect()` en sí no volvió: el modo overlay nuevo
+no tiene ancho/alto por modo que colapsar, solo el encuadre de medio cuerpo de `CONFIG.overlay`.
 
 ## Conflicto de puertos: un solo servidor entre varios procesos
 `rem_avatar_server.iniciar_servidor_avatar()` levanta HTTP (`:18765`) + WS (`:18766`) **o** detecta
 que ya están corriendo (`_puerto_activo("127.0.0.1", 18765)`) y los reusa — no intenta un bind nuevo
 que competiría por el puerto. Lo llaman `rem_chat.py` (siempre) y `bench_chat.py` en modo standalone.
 `bench_chat.py` en modo cliente ni siquiera lo llama: se conecta como cliente WS al servidor que ya
-esté. `iniciar_avatar()` (legacy, `Rem.py`) es un alias de `iniciar_servidor_avatar()`.
+esté.
 
 **Bug latente que quedó arreglado en el camino**: `_iniciar_ws()` llamaba a `_ws_ready.set()`
 **antes** de `websockets.serve(...)`. Si el puerto `:18766` ya estaba ocupado, `serve()` lanzaba
@@ -877,19 +814,22 @@ disco de WebKit2GTK persiste entre lanzamientos y puede enmascarar cambios reci�
    de rendición — confirma que no reintenta indefinidamente.
 
 ## Ventana de escritorio (`rem_chat.py`)
-`rem_chat.py` es GTK3 + WebKit2: ventana normal decorada, opaca, con foco de teclado, título "Rem",
-1100×620 redimensionable. Levanta el servidor del avatar
-(`rem_avatar_server.iniciar_servidor_avatar()`) y carga `rem_avatar.html?modo=ventana` en el WebView.
-Es **la aplicación** — el overlay transparente de escritorio (`rem_overlay.py`, layer surface
-click-through con `gtk-layer-shell`) se eliminó; esta ventana lo sustituye por completo.
+`rem_chat.py` es GTK3 + WebKit2 y tiene DOS presentaciones (`--modo ventana|overlay`, nunca las dos
+a la vez — ver "Modo overlay" más abajo para el segundo). En modo ventana: ventana normal decorada,
+opaca, con foco de teclado, título "Rem", 1100×620 redimensionable. Levanta el servidor del avatar
+(`rem_avatar_server.iniciar_servidor_avatar(permitir_reuso=False)`) y carga
+`rem_avatar.html?modo=ventana` en el WebView. **Es la aplicación** en los dos modos — un solo
+proceso, un solo servidor, mismo pipeline de voz y LLM.
 
-**El overlay eliminado — qué se fue con él**: `rem_overlay.py`, `_lanzar_overlay()`/`_overlay_proc`
-en `rem_avatar_server.py`, las env `REM_LAYER`/`REM_OVERLAY_W`/`REM_OVERLAY_H`, la dependencia de
-`gtk-layer-shell`, y el modo `?modo=overlay` de `rem_avatar.html` (con `CONFIG.modos.overlay`, el
-fondo transparente y `_ajustarAnclasPorAspect()` — ya no hay superficie angosta/vertical que
-colapsar a `anchorX=0.5`). `rem_avatar.html` quedó con un único modo (ventana); `?modo=ventana`
-sigue en la URL pero ya no cambia nada. `iniciar_avatar()`/`cerrar_avatar()` quedan como alias
-vacíos de `iniciar_servidor_avatar()` solo para no romper `Rem.py` (legacy).
+**Historia: el overlay se eliminó y después volvió.** `rem_overlay.py` (layer surface
+click-through con `gtk-layer-shell`, proceso APARTE lanzado por `rem_avatar_server._lanzar_overlay()`)
+se eliminó por completo en su momento — la ventana decorada lo sustituyó. El modo overlay actual
+**no es una resurrección de ese archivo**: es `--modo overlay` DENTRO de `rem_chat.py` (mismo
+proceso que la ventana, mismo servidor), reconstruido desde cero reusando lo que `rem_overlay.py`
+ya tenía bien resuelto (recuperado del historial de git: `WebsitePolicies(autoplay=ALLOW)`, el
+volcado de consola con `os.dup2`, el inspector remoto, el retry exponencial de carga) — ver "Modo
+overlay" más abajo para el diseño nuevo (click-through parcial con una caja de texto interactiva,
+algo que `rem_overlay.py` nunca tuvo, y push-to-talk).
 
 **El venv sí puede tener GTK.** `pip install pygobject pycairo` en el venv compila sin problema
 contra las libs GTK3/WebKit2GTK-4.1 ya instaladas en el sistema (Arch no separa paquetes `-dev`).
@@ -1223,9 +1163,7 @@ del REPL standalone y viceversa: son el mismo objeto. `cambiar_modo_chat()` es e
 manda `modo_actual` por WebSocket. En modo cliente, `bench_chat.py` no toca `SesionChat` directo:
 manda `cambiar_modo` por WS y el servidor (el proceso de `rem_chat.py`) lo aplica sobre SU singleton.
 
-Perezoso a propósito: `Rem.py` también importa `rem_avatar_server` pero tiene su propio pipeline de
-conversación aparte (Tkinter, `preguntar_groq()`) y no usa nada de esto — construir la sesión
-recién en el primer `chat_message`/`cambiar_modo`/`reset` real evita pagar `get_provider()` (que
+Perezoso a propósito: construir la sesión recién en el primer `chat_message`/`cambiar_modo`/`reset` real evita pagar `get_provider()` (que
 puede lanzar sin API key) o leer `memoria_larga.json`/`memoria_sistema.json` para quien no la pide.
 
 **Turnos serializados con un flag, no una cola**: `_procesar_mensaje_chat()` rechaza un
@@ -1854,5 +1792,562 @@ librerías de Mesa carga el proceso `WebKitWebProcess` en runtime:
 confirma software puro, `iris`/`i965` confirmaría que sí usa la iGPU Intel por DRI. No se hizo
 todavía (hace falta encontrar el PID del proceso hijo correcto, no el de `rem_chat.py`).
 
+## Modo overlay: arranque, superficie y exclusión mutua con el modo ventana
+
+`rem_chat.py --modo overlay` (o `config.toml` -> `[app].modo = "overlay"`) abre, en el MISMO
+proceso y con el MISMO servidor que el modo ventana, una layer surface (`gtk-layer-shell`)
+transparente anclada IZQUIERDA+ABAJO, tamaño configurable en `config.toml` -> `[overlay]`
+(`ancho`/`alto`/`margen_izquierdo`/`margen_inferior`/`capa`/`zona_exclusiva`, default 420×600,
+capa `top`). El avatar se ve de medio cuerpo (cadera hacia arriba) sobre el escritorio, con una
+caja de texto discreta abajo. Nunca los dos modos a la vez — ver "Instancia única" más abajo.
+
+`GDK_BACKEND=wayland` se fuerza en el proceso ANTES de que GDK se inicialice, solo en modo overlay
+(en modo ventana no hace falta y no se toca): `gtk-layer-shell` aborta si GDK arrancó con XWayland,
+y `GtkLayerShell` se importa ANTES que `Gtk`/`WebKit2`/`Gdk` (exige enlazarse antes que
+`libwayland-client`) — mismo orden que ya usaba `rem_overlay.py` (ver "Ventana de escritorio" más
+arriba). Si el paquete de sistema `gtk-layer-shell` no está instalado, `rem_chat.py --modo overlay`
+sale con un mensaje claro (`sudo pacman -S gtk-layer-shell`) en vez de un `ImportError` críptico.
+
+**Instancia única — `ServidorOcupadoError`.** `iniciar_servidor_avatar()` ahora toma
+`permitir_reuso: bool` (default `True`, sin cambios para `bench_chat.py`, que
+sigue reusando un servidor ya levantado sin competir por el puerto). `rem_chat.py` llama con
+`permitir_reuso=False`: si los puertos `:18765`/`:18766` ya están ocupados (otra instancia de
+`rem_chat.py`, en cualquier modo), sale con un error claro a la terminal Y al log (código 1) en vez
+de abrir una segunda presentación pegada al servidor de la primera — el chequeo va ANTES de abrir
+`rem_chat.log` con `'w'`, que si no truncaría el log de la instancia que sigue viva.
+`_comprobar_instancia_unica()` además nombra el proceso que tiene el puerto (`ss -ltnp`) para que
+el mensaje sea accionable, no solo "ocupado". Verificado en vivo: con una instancia corriendo (en
+cualquier modo), lanzar una segunda en cualquier modo sale con `exit=1` y el mensaje nombra el pid
+real; el log de la primera instancia queda intacto (no se pisa).
+
+**Bind HTTP también robusto ahora, con el mismo patrón que el WS.** `_iniciar_http()` tenía el
+mismo bug que `_iniciar_ws()` ya tenía arreglado (ver "Conflicto de puertos" más arriba): si el
+bind fallaba (carrera entre el chequeo de `_puerto_activo()` y el bind real), el hilo daemon moría
+en silencio y el llamador creía que había levantado. Ahora usa el mismo mecanismo
+(`_http_ready`/`_http_bind_error`) que `_ws_ready`/`_ws_bind_error`.
+
+## Modo overlay: click-through y la caja de texto (la región interactiva la mide la PÁGINA)
+
+El overlay es click-through en TODA la superficie salvo el rectángulo de la caja de texto — pero,
+a diferencia de un overlay estático, ese rectángulo se mueve (la caja puede reposicionarse/cambiar
+de tamaño con un resize de la ventana o un cambio de CSS) y solo la PÁGINA sabe dónde está de
+verdad. `rem_chat.py` no adivina la geometría: `crearOverlayUI()` en `rem_avatar.html` mide la caja
+con `getBoundingClientRect()` (vía un `ResizeObserver` + al arrancar) y se lo manda a Python por un
+`WebKitUserContentManager` script message handler llamado `"rem"`
+(`window.webkit.messageHandlers.rem.postMessage(JSON.stringify({tipo:'region', x,y,w,h}))`) — el
+mismo canal que ya usa `bench_chat.py`/el panel para nada relacionado, registrado aparte para esto.
+`_EntradaOverlay.on_mensaje()` en `rem_chat.py` recibe ese mensaje y llama a
+`gdk_win.input_shape_combine_region()` con esa región exacta (o una región VACÍA — todo
+click-through — mientras la página todavía no reportó nada: mejor una caja inalcanzable unos
+segundos que una superficie de 420×600 que se traga los clics del escritorio desde el frame cero).
+
+**Bug real encontrado y arreglado: la región nueva no se aplicaba sin forzar un redibujado.**
+`input_shape_combine_region()` por sí solo no bastaba — confirmado en vivo con
+`wlr-virtual-pointer` contra un Hyprland anidado (ver "Verificación en vivo" más abajo): el
+puntero seguía cayendo en la ventana de abajo incluso sobre la caja. La causa: GDK/Wayland aplica
+la input region recién en el PRÓXIMO commit del toplevel, y el contenido lo pinta el WebView (su
+propio commit) — sin forzar un `queue_draw()` del toplevel después de
+`input_shape_combine_region()`, la región nueva podía quedar sin comitear indefinidamente. Se
+arregló agregando `self.win.queue_draw()` justo después — mismo síntoma, otra forma, del bug
+documentado en "Layer surface acotada" más arriba (`rem_overlay.py` lo resolvía reaplicando la
+región en más eventos, no forzando el redibujado; acá alcanzó con esto).
+
+**`WebKit2.Settings` en `_crear_webview()` es ahora compartido entre los dos modos** (antes vivía
+solo en `main()` de la ventana) — la única diferencia por modo es `transparente` (color de fondo
+`RGBA(0,0,0,0)` en overlay vs. el violeta oscuro opaco de siempre en ventana). Todo lo demás
+(WebGL, `WebsitePolicies(autoplay=ALLOW)`, volcado de consola, developer extras) es idéntico.
+
+**Teclado: `ON_DEMAND` fijo secuestraba el foco — se hizo dinámico.** Medido en vivo en Hyprland
+(que sigue el puntero, `follow_mouse`): con `GtkLayerShell.KeyboardMode.ON_DEMAND` fijado una vez
+al crear la layer surface, bastaba con que el puntero PASARA por encima de la caja (sin clic) para
+que la superficie tomara el foco de teclado — y lo CONSERVABA al alejarse, hasta que otra ventana
+se enfocara a la fuerza, dejando el resto del escritorio sin poder escribir. `_EntradaOverlay`
+alterna el modo en runtime: `NONE` por defecto, `ON_DEMAND` solo mientras el puntero está sobre la
+caja (`enter-notify-event`/`leave-notify-event` de GTK, filtrando `Gdk.NotifyType.INFERIOR` para no
+contar cruces internos con hijos) **o** la caja de texto tiene el foco real dentro de la página (la
+página lo avisa con `{tipo:'foco', caja: bool}` por el mismo canal de mensajes, en los eventos
+`focus`/`blur` del `<input>`) — así escribir sin soltar el mouse de la caja, o alejar el mouse a
+mitad de frase, no corta el foco. Al dejar de cumplirse las dos condiciones, vuelve a `NONE` y
+Hyprland le devuelve el teclado a la ventana de antes. `Enter` con texto también suelta el foco
+explícitamente (`$input.blur()`) tras enviar, para no quedarse con el teclado secuestrado sin
+querer escribir más.
+
+**Verificado en vivo — click-through, foco de teclado, push-to-talk, cambio de modo**: instrumentado
+con un cliente C mínimo de `wlr-virtual-pointer-unstable-v1` (mueve/clickea el puntero por protocolo,
+sin depender de X11) contra la sesión Wayland REAL (Hyprland) y, para las pruebas de foco de
+teclado más invasivas, un Hyprland ANIDADO aparte (otro `WAYLAND_DISPLAY`, otro cursor, aislado de
+la sesión real) con dos ventanas `foot` de prueba a los lados:
+- Hover sobre CUALQUIER punto de la superficie que NO sea la caja (esquina transparente, el cuerpo
+  opaco de Rem) atraviesa a la ventana de abajo — sin eventos en la página, sin captura de
+  puntero/teclado.
+- Hover sobre la caja SÍ la atraviesa: `mouseenter` en la página, `teclado -> ON_DEMAND` en el log
+  de `rem_chat.py`. Al alejarse sin clic, vuelve a `NONE` — la ventana de abajo recupera el
+  teclado.
+- Clic en la caja: foco real (`focus` de la página, captura confirmada con `ydotool type` escribiendo
+  el texto en la caja — capturado en pantalla, ver `ui_*.png` en el historial de la sesión de
+  pruebas). Alejar el puntero MIENTRAS se escribe conserva el foco (no cae a `NONE`) gracias al aviso
+  `{tipo:'foco'}` — solo se suelta al perder el foco real de la caja (blur, Enter, Escape).
+- Cambio de modo ventana <-> overlay en la misma sesión: ambos arrancan, cargan el VRM, hacen su
+  encuadre respectivo y hablan sin errores nuevos — solo se puede tener uno a la vez (ver
+  "Instancia única" más arriba).
+
+## Modo overlay: encuadre de medio cuerpo
+
+`CONFIG.overlay.encuadre` (en `rem_avatar.html`) controla el recorte — medido por huesos, mismo
+criterio que el encuadre de cuerpo entero del modo ventana (`medirAlturaHuesos()`, ver "Encuadre
+del avatar" más arriba), no por `Box3` (que da la mitad de la altura real en un `SkinnedMesh`, ver
+esa misma sección). `medirMedioCuerpo()` mide dos cosas, con `vrm.scene.position.y` puesto en 0
+durante la medición (mismo fix que `medirAlturaHuesos()`, para no contaminar el centro con el
+offset de una pasada anterior — ver "Bug de encuadre" más arriba):
+
+- **Alto**: el tramo desde el hueso `hips` (menos `bajoCaderaFrac` del tramo cadera-cabeza, para
+  bajar el corte un poco por debajo de la cintura) hasta el hueso `head` (más `sobreCabezaFrac`,
+  margen para pelo/adornos sin hueso propio) — `ocupaAltoFrac` de esa altura en fracción del alto
+  visible de la superficie.
+- **Ancho**: la mayor distancia lateral al eje de la cadera entre hombros/brazos/manos (con los
+  brazos YA en su pose de reposo — ver más abajo, "sin T-pose"), más `anchoExtraFrac` de margen
+  (mangas sueltas/volados del vestido no tienen hueso propio y sobresalen de las manos medidas —
+  0,18 no alcanzaba, subido a 0,34 tras verlo recortado en captura real).
+
+`recalcularEncuadre()` calcula la altura visible objetivo por las DOS restricciones (alto y ancho)
+y usa la MÁS RESTRICTIVA (`Math.max`): en una superficie vertical angosta (420×600, aspect ~0,7) el
+cuerpo con los brazos separados es más ancho que alto — ajustar solo por alto (lo que hacía la
+primera versión) cortaba los brazos por los costados, confirmado con captura real antes del fix.
+El resto de la fórmula (distancia de cámara, `setViewOffset`, `anchorX`/`anchorY`) es la misma que
+el modo ventana — `_anclasEncuadre()` decide qué fracciones usar según `ES_OVERLAY`, sin ramificar
+el resto del código de encuadre.
+
+**El corte de cadera se apoya en el borde INFERIOR de la superficie**, no centrado — a diferencia
+del modo ventana (donde el centro del cuerpo cae en `anchorY`), acá el sobrante vertical (si
+`ocupaAltoFrac` deja margen) queda ARRIBA, transparente, no como un hueco entre Rem y la caja de
+texto de abajo (`CONFIG.overlay.encuadre.baseSobreBordeFrac`, 0 por defecto).
+
+**Sin T-pose ni clips VRMA: el cuerpo es 100% procedural, congelado en el estado `idle`.**
+`estadoCorporal()` devuelve siempre `'idle'` en modo overlay, sin importar el `estado` real (que
+sigue variando y sí afecta cara/mirada) — así los brazos quedan en la pose de reposo de
+`CONFIG.brazos` (nunca T-pose ni gesticulando) y nunca se dispara `sincronizarClipConEstado()` (que
+retorna de inmediato si `ES_OVERLAY`, sin tocar el mixer — no existe mixer en overlay:
+`inicializarAnimacionClips()`/`precargarClips()` no se llaman). `getStatePose()`/`updateLook()` y
+el guard de `updateSaccades()` para `thinking` leen `estadoCorporal()` en vez de `estado` crudo, por
+la misma razón. `window.dispararClipDebug()` (comando `clip` de `bench_chat.py`/paleta
+`/animaciones`) es un no-op explícito en overlay, con log, en vez de fallar contra un mixer que no
+existe.
+
+**El VRM nace oculto y solo se muestra tras el primer encuadre real** (`vrm.scene.visible = false`
+al cargar, `true` recién en `animate()` tras `medirMedioCuerpo()` + `recalcularEncuadre()`) — sin
+esto, el frame o dos entre la carga (T-pose, encuadre provisorio por `Box3` con el recorte de
+cuerpo entero) y la primera medición real se verían, sobre un fondo TRANSPARENTE, como un parpadeo
+feo de la T-pose mal encuadrada. En modo ventana no hace falta (el fondo synthwave ya tapa ese
+instante).
+
+**Sin suelo, sin panel de chat.** `crearSueloSynthwave()` no se llama en overlay (`if (!ES_OVERLAY)
+crearSueloSynthwave();`) — sin geometría de piso ni niebla, y el renderer usa `alpha: true` +
+`setClearColor(0x000000, 0)` en vez del fondo opaco violeta del modo ventana. `crearPanelChat()`
+tampoco se llama; en su lugar, `crearOverlayUI()` monta solo el indicador de estado + la caja
+(`<html class="overlay">`, fijada por un `<script>` inline en el `<head>`, ANTES del script
+principal, para que el CSS `pointer-events:none`/fondo transparente aplique desde el primer frame
+sin esperar al módulo — un frame de fondo oscuro sobre el escritorio real sería un parpadeo
+visible).
+
+## Modo overlay: push-to-talk (voz de entrada, `stt/`)
+
+Paquete `stt/` (mismo patrón que `llm/`): `base.py` (`STTProvider`, ABC — `transcribir(audio:
+np.ndarray) -> str`, sincrónico a propósito, ver su docstring), `local.py`
+(`LocalSTTProvider`, faster-whisper), `groq.py` (`GroqSTTProvider`, Whisper por la API de Groq — 
+implementado por trivial, **sin verificar en vivo** con una API key real en esta máquina),
+`microfono.py` (`Grabador`, captura con `sounddevice`/PortAudio sobre PipeWire, abierto SOLO entre
+`iniciar()`/`detener()`), `__init__.py` (`get_stt_provider()`/`obtener_stt()` — instancia única por
+proceso, mismo criterio que `llm.get_provider()`: `REM_STT_PROVIDER` (env) > `[stt].provider` en
+`config.toml` > `"local"`).
+
+**`local` (default) corre en CPU a propósito** — mismo motivo que RVC comparte la GPU con Ollama
+(ver "RVC vuelve a GPU" más arriba): la VRAM (4 GB) ya está justa entre el LLM local y RVC, no hay
+margen para un tercer modelo. `config.toml` -> `[stt.local]`: `model="small"`,
+`compute_type="int8"`, `device="cpu"`, `language="es"`, `beam_size=1` (decodificación voraz, la más
+rápida — ver la comparación de latencia más abajo), `initial_prompt` con vocabulario del proyecto
+(Rem, Ollama, Claude, Hyprland, etc., para sesgar nombres propios/técnicos). `WhisperModel.transcribe()`
+corre con `vad_filter=True` (recorta silencio antes de decodificar — sin esto Whisper alucina texto
+sobre pausas/ruido de fondo) y `condition_on_previous_text=False` (cada push-to-talk es un
+enunciado suelto; arrastrar texto previo como contexto solo propaga alucinaciones).
+
+**Precarga igual que RVC**: `rem_chat.py` lanza `stt.precargar_stt()` en un hilo daemon, ANTES de
+levantar el servidor, en los dos modos (la voz de entrada es de primera clase, sin flag para
+omitirla — mismo criterio que la precarga de RVC). `LocalSTTProvider._lock` (un `threading.Lock`)
+serializa carga y transcripciones — mismo motivo que `habla._rvc_lock`: la precarga en hilo de
+fondo y un primer `ptt_stop` real pueden coincidir.
+
+**Push-to-talk end-to-end**: `rem_ptt.py start|stop` (proceso corto, pensado para atarse a una
+tecla mantenida) manda `{tipo:'ptt_start'}`/`{tipo:'ptt_stop'}` por WS al servidor de `rem_chat.py`
+y espera una confirmación (`ptt_estado`) antes de salir — nunca falla en silencio: código 0
+aceptado, 1 sin conexión/sin respuesta, 2 ignorado (con el motivo impreso). Toda la lógica vive en
+`rem_avatar_server.py` (`_ptt_iniciar()`/`_ptt_detener()`), corriendo en `_ws_loop` sin locks (un
+solo hilo): `ptt_start` abre `stt.microfono.Grabador` (`asyncio.to_thread`, no bloquea el loop),
+manda `ptt_estado: escuchando`; `ptt_stop` lo cierra, descarta grabaciones más cortas que
+`[stt].min_grabacion_s` (toque accidental), transcribe (`asyncio.to_thread`), muestra el texto en
+la caja/panel (`ptt_transcripcion`, con `[stt].mostrar_transcripcion_s` de pausa para que se vea
+qué entendió antes de mandarlo) y recién entonces lo corre como un `chat_message` normal
+(`_procesar_mensaje_chat(texto, t_ref=...)`) — mismo turno de LLM/voz que si se hubiera escrito, sin
+duplicar ese pipeline. Un tope de grabación (`[stt].max_grabacion_s`) se agenda con
+`call_later()` al abrir el micrófono, por si se pierde el `ptt_stop` (tecla soltada fuera de foco,
+proceso `rem_ptt.py stop` muerto).
+
+**Decisión — `ptt_start` mientras Rem habla: SE IGNORA, no la interrumpe.** Documentado en el
+propio código (comentario extenso sobre `_ptt_motivo_ocupada()`): interrumpir exigiría cancelar el
+turno de LLM en curso, vaciar la cola de síntesis (TTS/RVC corre en un hilo que no se puede
+cancelar a mitad) y cortar el `<audio>` del frontend, coordinado entre procesos — mucha superficie
+para un beneficio dudoso. Ignorar garantiza lo que sí importa: **el micrófono nunca está abierto
+mientras suena la voz de Rem**, así que no puede grabarse a sí misma. `_ptt_motivo_ocupada()`
+compone la razón real de "Rem está ocupada" con varias señales, ninguna sola alcanza: turno de LLM
+en curso (`_chat_turno_activo`), la cola de síntesis con trabajo pendiente
+(`cola._unfinished_tasks` — frases encoladas O en conversión que el worker no marcó todavía),
+**algún frontend reportando audio sonando** (`voz_estado`, ver el punto siguiente — necesario
+porque el turno de LLM y la síntesis pueden haber terminado mientras el `<audio>` del navegador
+sigue sonando) y un margen tras el último fin de habla (`[stt].espera_tras_habla_s`, eco de sala).
+El pedido ignorado nunca es silencioso: se difunde `ptt_estado: ignorado` con el motivo, que la UI
+muestra como aviso.
+
+**`voz_estado` — el frontend le dice al backend cuándo suena de verdad, no cuándo lo despachó.**
+`rem_avatar.html` manda `{tipo:'voz_estado', reproduciendo: bool}` por WS al recibir un audio nuevo
+(`true`, en `encolarAudio()` — cierra el hueco entre que el servidor lo despacha y que el
+`<audio>` realmente empieza a sonar) y al vaciarse la cola (`false`, en `_avanzarCola()`).
+`_registrar_voz_estado()` en el servidor mantiene `_ws_reproduciendo` (el set de websockets con
+audio sonando) y marca `_ultimo_fin_habla` al vaciarse — de ahí sale `espera_tras_habla_s`.
+
+**Casos límite probados en vivo, no solo el camino feliz**: toque muy corto (`start`+`stop`
+inmediato) descarta la grabación por `min_grabacion_s` sin transcribir nada; un `ptt_stop` SIN
+`ptt_start` previo (huérfano — puede pasar si el `stop` de un toque corto de verdad llega ANTES que
+su propio `start`, dos procesos `rem_ptt.py` distintos) ahora SIEMPRE contesta con el estado actual
+(antes se quedaba mudo y `rem_ptt.py` esperaba el timeout de 2s sin respuesta — bug real encontrado
+durante la prueba, arreglado agregando un `ptt_estado` explícito en esa rama); ese mismo huérfano
+sirve de guarda contra la carrera de un toque muy corto (`_ptt_stop_huerfano_t`, ventana de 0,5s):
+un `ptt_start` que llega justo después de un `stop` huérfano se ignora también (`"toque muy corto"`)
+en vez de abrir el micrófono y dejarlo grabando hasta el tope; `ptt_start` repetido mientras ya se
+está grabando/transcribiendo se ignora con el motivo correspondiente.
+
+**Mediciones en vivo, esta máquina** (RTX 3050, `faster-whisper` "small" int8 en CPU; frases de
+prueba sintetizadas con `edge-tts` e inyectadas por un sumidero nulo de PulseAudio/PipeWire —
+`module-null-sink` + `PULSE_SOURCE=<sink>.monitor`/`REM_MIC_DEVICE=pulse` — para no depender de
+hablar de verdad frente al micrófono real, y reproducibles):
+- **Latencia de STT** (duración del audio vs. tiempo de transcripción, `beam_size=1`): factor
+  ~0,17-0,38× tiempo real — una frase de ~4s tarda ~1,1-1,3s en transcribir. Cargado el modelo, la
+  primera transcripción real de la sesión no paga penalidad de arranque en frío (la precarga ya
+  hizo una de calentamiento).
+- **Tiempo total, soltar la tecla -> primer audio de Rem SONANDO** (no solo despachado — mide hasta
+  el evento `voz_estado: true` real): ~6-9s para una respuesta corta de Claude, dominado por el
+  turno de LLM + TTS/RVC de la primera oración, no por el STT (que es la porción más chica,
+  ~1-1,3s de esos 6-9s). `habla.TurnoHabla` ahora acepta un `t_ref` opcional (el instante en que se
+  soltó la tecla, pasado por `_ptt_detener()`) para que el log de "primer audio enviado" muestre
+  las dos cifras: desde que arrancó el turno de LLM, y desde que el usuario soltó la tecla — la
+  segunda es la que le importa a la latencia percibida.
+- **RAM de faster-whisper** (`/proc/self/status`, VmRSS): proceso recién importado ~38 MiB ->
+  provider creado sin modelo ~40 MiB -> modelo "small" int8 cargado + calentado ~900 MiB (pico
+  ~1,4 GiB durante la carga) -> tras transcribir, estable en ~960 MiB. Con RVC + Ollama ya cargados
+  en el proceso real de `rem_chat.py`, el total medido en vivo (`faster-whisper` cargado dentro del
+  mismo proceso) llegó a ~4 GiB de RSS del proceso Python — RAM del sistema (23,6 GiB en esta
+  máquina), no VRAM: no compite con la calibración de `num_gpu`.
+- **Micrófono real**: `sounddevice.InputStream` abre en ~2ms sobre PipeWire (medido con el
+  dispositivo predeterminado del sistema). No se pudo grabar audio real de una persona hablando
+  frente al micrófono en esta sesión (el `@DEFAULT_SOURCE@` del sistema está silenciado —
+  `pactl get-source-mute` devuelve `yes`, una configuración preexistente de la máquina, no algo que
+  tocara esta implementación) — por eso las mediciones end-to-end de arriba usan el sumidero nulo.
+  El camino de código es el mismo (`Grabador` no distingue el origen); si el mute se destraba, no
+  hace falta cambiar nada para que capture voz real.
+
+## Líneas de Hyprland para push-to-talk (SUPER+H mantenida)
+
+No se edita `hyprland.conf` desde el código — son las líneas a agregar a mano. **Son TRES**, y la
+tercera es `bindrt`, no `bindr`:
+
+```
+bind   = SUPER, H,       exec, /mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_ptt.py start
+bindr  = SUPER, H,       exec, /mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_ptt.py stop
+bindrt = SUPER, Super_L, exec, /mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_ptt.py stop
+```
+
+`bind` (sin `r`) dispara al PRESIONAR, `bindr` al SOLTAR — juntas dan un push-to-talk real sin un
+daemon aparte escuchando teclado. **Por qué la tercera**: `bindr = SUPER, H` solo dispara si SUPER
+sigue pulsada al soltar H. Si se suelta Super ANTES que H (pasa sin darse cuenta), ese `stop` nunca
+llega y la grabación quedaba abierta (pasó en una prueba real: 18 s hasta pulsar otra vez).
+`bindrt = SUPER, Super_L` manda el `stop` también al soltar Super. Es inocuo si ya se mandó: un
+`ptt_stop` sin grabación en curso se contesta con `ptt_estado: idle` ("no estaba grabando") y no
+hace nada más. Efecto colateral aceptado: cada vez que se suelta Super (con o sin H) se lanza un
+`rem_ptt.py stop` corto. La guarda de "toque muy corto" (`_ptt_stop_huerfano_t`, que ignora un
+`start` llegado justo después de un `stop` huérfano) se bajó de 0,5 s a 0,3 s por eso: con este
+tercer bind los `stop` huérfanos son frecuentes, y 0,5 s se comía un SUPER+H pulsado justo después de
+otro atajo con Super.
+
+**Tiene que ser `bindrt`; `bindr` y `bindir` NO sirven — medido, no supuesto.** Se probaron seis
+variantes de un bind de release sobre el propio modificador (`bindr`/`bindir`/`bindrt`, con y sin
+modificador en la definición) con una tecla mantenida detrás. Con el modificador solo, disparan
+casi todas; **con otra tecla ya pulsada bajo ese modificador (el caso real: SUPER+H), solo dispara
+`bindrt`**. La `t` es "transparent, cannot be shadowed by other binds": el bind de SUPER+H ya
+consumió la tecla y "tapa" a los demás binds de release del mismo modificador. Un `bindr = SUPER,
+Super_L` normal (lo que se documentó primero, sin probar) no corta nada.
+
+**Red de seguridad independiente de las teclas**: `[stt].max_grabacion_s` (30 s por defecto, en
+`config.toml`) — `_ptt_iniciar()` agenda un `call_later()` al abrir el micrófono que cierra Y
+transcribe solo, pase lo que pase con las teclas. Un `ptt_stop` que llega después del tope es
+huérfano e inocuo.
+
+**Verificado en vivo** (Hyprland real, teclado virtual de `ydotool`, audio inyectado por un sumidero
+nulo de PipeWire para no depender del micrófono, que en esta máquina está silenciado a nivel
+sistema). Se usaron binds temporales en memoria (`hyprctl keyword`, ya retirados) sobre
+**CTRL + código 191 (F13)** en lugar de SUPER+H, porque `Super_L` tiene un bind propio de caelestia
+(`bindi = Super, Super_L, global, caelestia:launcher`) y inyectar SUPER habría abierto el lanzador en
+el escritorio en uso. El mecanismo de Hyprland es el mismo (solo cambia la máscara de modificador),
+pero **la interacción concreta con el lanzador de caelestia no se probó**. Resultados:
+- Control, solo `bind`+`bindr` de la tecla: pulsar, soltar el modificador primero y después la tecla
+  → la grabación siguió abierta (3 s después de soltar el modificador y 3 s después de soltar la
+  tecla) hasta un `stop` manual. Reproduce el fallo real.
+- Con el tercer bind como `bindr`: igual, no corta. Con `bindrt`: la grabación termina al soltar el
+  modificador aunque la tecla siga pulsada (3,86 s de audio, transcribe, responde).
+- Orden normal (tecla primero, modificador después) con los tres binds: una sola grabación, una sola
+  transcripción, sin efectos dobles (el segundo `stop` llega huérfano y se ignora).
+- Tope de duración: con `max_grabacion_s = 6` (temporal), `start` sin ningún `stop` → a los 6 s
+  exactos `tope de 6s alcanzado`, transcribe y responde; un `stop` posterior contesta "no estaba
+  grabando".
+
+## Precarga de Ollama al arrancar, y por qué el tok/s real varía tanto
+
+**Precarga**: `rem_chat.py` lanza `llm.precargar_provider()` en un hilo de fondo junto a las de RVC y
+STT. Con Ollama llama a `OllamaProvider.precargar()` — una petición a `/api/chat` con `messages`
+vacío (Ollama carga el modelo y responde `done_reason: "load"`, sin generar). Tiene que llevar las
+MISMAS `options` (`num_gpu`, `num_ctx`...) y `keep_alive` que las peticiones reales: Ollama recarga
+el modelo si cambian las opciones de carga, y una precarga con otros valores no serviría. Con
+Claude/Groq no hace nada. No bloqueante: si falla solo lo loguea (`[LLM] precarga falló`). Medido: el
+modelo carga en ~4 s en paralelo con RVC y Whisper, sin OOM de VRAM (3238 MiB usados con los tres), y
+el primer turno reporta `carga del modelo: 1ms` (antes ~6,7 s). Ojo: `keep_alive = "10m"` sigue
+descargando el modelo tras 10 min sin uso, y el primer turno de después vuelve a pagar la carga; la
+precarga solo cubre el arranque. El log por turno de `[Ollama]` ahora incluye los tokens/tiempo del
+prompt y los tok/s de generación.
+
+**La precarga también evalúa el prefijo fijo** (`chat_sesion.precargar_prefijo(tools)`, lanzado por
+`rem_chat.py` con `acciones.tools_disponibles(MODO)`): system + tools + ejemplos de tono + memoria
+larga, más un mensaje de usuario de relleno y `num_predict: 1`. Así ese prefijo queda en la caché KV
+de Ollama y el primer turno solo evalúa lo nuevo. Para que la caché pegue, el prefijo tiene que
+serializarse idéntico al de un turno real: `OllamaProvider._payload()` lo arman `stream_chat()` y
+`precargar()` con el mismo código, `chat_sesion._prefijo_fijo()` lo comparten `procesar_turno()` y la
+precarga, y las **tools tienen que ser las del modo activo** (el template del modelo las mete en el
+bloque system; ventana y overlay ofrecen tools distintas). `num_predict` no es opción de carga: no
+provoca recarga del modelo.
+Medido (2026-09-27, con corriente, GPU P0; modelo descargado entre corridas, A/B alternados, 4 rondas,
+primer turno "Hola, Rem." con las tools de ventana, ~1913 tok de prompt): precarga vieja (solo carga)
+→ 1er token a **~2,0 s** (prompt evaluado en ~1970 ms); precarga con prefijo → 1er token a **~0,29 s**
+(~256 ms). La precarga tarda ~2 s más (3,7 s vs 1,7 s), pero en segundo plano. Sigue valiendo lo de
+`keep_alive`: tras 10 min sin uso el modelo se descarga y el primer turno de después paga carga y
+prefijo.
+
+**El "5 tok/s del primer turno" NO era Whisper ni competencia por núcleos.** Investigado con un banco
+directo contra Ollama (mismo payload que `OllamaProvider`, prompt real de ~1170 tokens):
+- **Whisper no compite en régimen estable**: con `faster-whisper` transcribiendo en bucle continuo
+  (peor caso, `cpu_threads` 0/2/1) los tok/s de Ollama quedaron dentro del mismo rango que sin él
+  (6,0-6,3 con Whisper, 6,6 sin). En el uso real ni siquiera coinciden: la transcripción termina
+  ANTES de que empiece el turno de LLM, y un `ptt_start` mientras Rem responde se ignora. No se
+  tocó `cpu_threads` de faster-whisper (nada que limitar).
+- **Tampoco los hilos de CPU**: `num_thread` = default/4/8/12 dan 6,5-6,6 tok/s, idénticos. La
+  decodificación no está limitada por los núcleos.
+- **Causa medida: estado de energía de la GPU.** Durante la generación la GPU sube un instante a P3
+  (memoria a 5470 MHz, ~19,7 tok/s la primera generación corta) y enseguida cae a **P5 con memoria a
+  810 MHz y PCIe gen 2** (de gen 4) — y ahí se queda: ~6,6 tok/s constantes, un valor tan estable
+  que delata un tope fijo, no ruido. La decodificación con 24 capas en GPU está limitada por ancho de
+  banda de memoria. `nvidia-smi -q -d PERFORMANCE` reporta `SW Power Cap: Active` y `SW Thermal
+  Slowdown: Active`, y **el portátil estaba en batería** (`ACAD online=0`, `BAT1 Discharging`, 29%).
+  Una carga CUDA concurrente (imitando a RVC) no la saca de P5.
+- **Verificado con corriente conectada** (el equipo se enchufó a mitad de la sesión, batería 16-19%
+  cargando): la GPU pasa a **P0, memoria a 6001 MHz, PCIe gen 4**, y Ollama da **21,7-22,2 tok/s
+  estables** (5 generaciones seguidas, banco directo) y ~20 tok/s por `rem_chat.py` — 3,3× lo de
+  batería, y coincide con la tabla de calibración de `num_gpu` (20,7). O sea: en batería ~6,6 tok/s,
+  con corriente ~20-22. Los ~16-17 tok/s de aquella corrida de `rem_chat.py` en batería siguen sin
+  causa confirmada (no se muestreó la GPU). Forzar relojes en batería (`nvidia-smi -lmc`) requiere
+  root y no se hizo.
+- **Ninguna medición de tok/s sin este dato**: el log `[Ollama]` de cada turno ahora termina con
+  `energía: AC (batería 18% cargando) | GPU P0→P0 (mem 6001 MHz)` (`llm/_energia.py`: `/sys/class/
+  power_supply` + `nvidia-smi`, de mejor esfuerzo — `n/d` si no están). La GPU se muestrea al llegar
+  el primer token y al terminar (`P3→P5`: sube a P3 un par de segundos y luego cae; mirar solo uno
+  engaña). También va en `Done.usage` (`energia`, `gpu_pstate_inicio/fin`, `gpu_mem_mhz_fin`).
+
+## Contexto dinámico condicional, historial limpio y prompt sin acciones (rem_chat: ventana Y overlay)
+
+Un "Hola, Rem." recibía respuestas como "tu disco está casi lleno" (medido: **6 de 6**) y, en otra
+prueba, leía los 11 GB de RAM como espacio en disco. Causa: el bloque volátil que se anteponía a cada
+mensaje (`[ESTADO ACTUAL DE LA PC: … Disco /: 13.8 GB libres]`) y ~665 de los ~1020 tokens del system
+prompt (catálogo de acciones JSON, reglas de seguridad, instrucción de "MEMORIA DEL SISTEMA"), que
+empujaban a un modelo de 4B a hablar de discos, archivos y comandos. Cambios, todos en el camino
+compartido `chat_sesion.procesar_turno()` (ventana y overlay lo usan igual):
+
+1. **Contexto condicional, con palabras clave en `config.toml` -> `[contexto]`.** Cada línea tiene su
+   modo (`linea_pc`, `linea_fecha`: `"condicional"` | `"siempre"` | `"nunca"`) y su lista
+   (`palabras_pc`, `palabras_fecha`), con coincidencia por palabra completa/frase sin distinguir
+   mayúsculas ni tildes (`"ram"` no salta con "programa"; `personalidad.palabra_clave_pc()`). Sin
+   ninguna coincidencia el mensaje va tal cual, sin bloque alguno. `memoria_sistema` (archivos/carpetas
+   conocidos) ya no se inyecta en rem_chat: solo servía a las acciones de búsqueda, que rem_chat no
+   ejecuta. La línea de PC, cuando se inyecta, va sin la hora duplicada ni el `[PC]` anidado y con
+   etiqueta neutra (`obtener_info_pc()`). Cada turno loguea `[Contexto] fecha|PC|nada`.
+   Como bonus, `obtener_info_pc()` (0,2 s de `cpu_percent`) ya no corre en cada turno.
+   **Después se quitó la línea de PC del todo** (`linea_pc`/`palabras_pc` ya no existen): aun
+   condicional, el modelo sacaba la PC/RAM en saludos. Ahora es la tool `estado_pc`, que el modelo
+   llama solo si le preguntan. Solo queda la línea de fecha (`palabra_clave()` hace la coincidencia).
+2. **La fecha también es condicional — decidido con datos.** Se probó primero una variante con SOLO
+   fecha/hora (sin la línea de PC): 0 de 6 derivaban. Pero por el pipeline real (`chat_message` por WS,
+   prompt sin acciones) la fecha se leyó en voz alta sin que nadie la pidiera en 1 de 5 y 1 de 12
+   respuestas a "Hola, Rem." (~2 de 23, ≈9%). La regla acordada era "si no desvía, la fecha va siempre": no se cumplía del todo, así que
+   `linea_fecha = "condicional"` (palabras: hora, fecha, día, hoy, mañana, ayer, semana, mes, año…).
+   Volver a "siempre" es una línea de config.
+3. **El historial guarda solo el texto del usuario.** Antes cada turno se guardaba con su bloque de
+   fecha/PC pegado y lo arrastraba para siempre (datos caducos que el modelo terminaba comentando). Ahora
+   `procesar_turno()` anexa `Message(user, texto)` al historial y arma aparte, solo para ese turno, la
+   copia del último mensaje con el contexto. Verificado con un provider falso que captura lo enviado:
+   historial limpio, cero mensajes anteriores con `[FECHA`/`[ESTADO`.
+4. **Sin el bloque ACCIONES DEL SISTEMA + REGLAS DE SEGURIDAD + MEMORIA DEL SISTEMA** en el prompt
+   de rem_chat. Prompt de un "Hola": **1166 → ~416 tokens**. (Primero era un recorte opcional,
+   `con_acciones=False`; al eliminar `Rem.py`, su único otro usuario, el bloque se borró del texto.)
+
+**Medido (el modelo tiene temperatura 0,7; muestras chicas, es evidencia, no prueba)**, 6 × "Hola, Rem.":
+prompt completo + contexto completo: 6/6 comentan PC/disco. Sin acciones pero con contexto completo:
+5/6. Sin acciones y sin contexto: 0/6. Solo fecha/hora: 0/6 en el banco directo, pero ~2/23 leyéndola en voz alta por el pipeline real. Con
+ambas líneas condicionales (pipeline real, 12 × "Hola, Rem."): 0/12 mencionan la fecha, 0/12 datos de
+PC. Y las preguntas que sí las necesitan funcionan: "¿Qué hora es?" → "Es 16:55"; "¿Cuánta RAM estoy
+usando?" → "12.5 GB" (real: 12); "¿el disco?" → "13.8 GB libres" (real: 14 G). Lo que sigue pasando (el modelo inventa
+charla técnica: "los logs del servidor", "¿ya actualizaste el kernel?") **no viene del contexto**: es
+el propio modelo de 4B con la personalidad técnica.
+
+### Acciones del sistema en rem_chat (`acciones.py`)
+
+rem_chat ejecuta acciones por **tool calling nativo** (`stream_chat(tools=...)`), no por JSON en el
+texto (que en modo voz se leería en voz alta). `acciones.py` tiene 6 tools: `abrir_programa` (solo
+resuelve contra `.desktop` instalados, nunca ejecuta un nombre arbitrario), `apagar_pc` (con
+confirmación; no se ofrece en overlay), `buscar_en_navegador`, `buscar_archivos`, y dos de solo
+lectura: `estado_pc` (CPU/RAM/disco vía psutil) y `calcular`. Si el modelo pide
+una tool, `procesar_turno()` descarta el texto que la acompañe y habla la respuesta de
+`acciones.ejecutar_tool_async()`. `bench_chat.py` llama a `procesar_turno()` **sin** `tools=`.
+
+**`calcular`** evalúa la expresión recorriendo el AST (`ast.parse(mode="eval")`), **nunca `eval()`**:
+solo números, `+ - * / // % **`, `sqrt`/`raiz`/`abs` de un argumento y `pi`. Acepta `×`, `÷`, `^` y
+coma decimal entre dígitos. Topes: 200 caracteres, exponente ≤ 100, |resultado| ≤ 1e15 (así
+`9**9**9` no cuelga el proceso). Responde "Da 84." con coma decimal, para que el TTS lo lea bien. El
+prompt (regla HERRAMIENTAS) dice "Para cualquier cuenta, usá calcular; nunca hagás cuentas de cabeza".
+
+**`estado_pc` no da la hora**: sin aclararlo en su descripción, "¿qué hora es?" la disparaba en 4 de 9
+(respondía con la RAM en vez de leer la `[FECHA Y HORA ACTUAL]` del mensaje). Con la aclaración, 0 de 9.
+
+**Prueba con stubs (2026-09-27, tools de ventana, prompt real)**: las tools con efectos
+(abrir/apagar/navegador/archivos) se reemplazan por stubs; `estado_pc`/`calcular` corren de verdad.
+15/15 llamadas correctas (2 por tool con efectos, 4 `estado_pc`, 3 `calcular` con el resultado
+correcto). Controles sin tool: 5/6 — "abrí tu mente, parce" abrió un programa (el falso positivo
+con modismos ya conocido). `calcular` ×3 con 12×7, 15 % de 240 y 3 GiB en MiB: 9/9 (`12*7`,
+`240*0.15`, `3*1024`). Caché: el prefijo (system + tools + ejemplos) se serializa idéntico entre
+turnos; tras la precarga, cada turno evalúa ~2330 tok en 244-459 ms (en frío: 2271 ms).
+
+El resto del catálogo viejo (`ejecutar_comando`, mover/copiar/eliminar, volumen, captura, etc.) se
+eliminó con `Rem.py` (recuperable de `58abc8e`). Si se porta algo de ahí:
+- **Auditoría de seguridad propia del nuevo contexto**, no solo mover código: en rem_chat la entrada
+  también llega por VOZ (STT), es decir, texto que puede venir mal transcrito o de audio ajeno; la
+  confirmación tiene que funcionar en GTK/overlay (¿cómo confirma una acción destructiva una
+  superficie click-through con una caja de texto?); y la regla "toda acción destructiva pasa por
+  confirmación" no puede degradarse por comodidad.
+- Actualizar la regla "HERRAMIENTAS" de `personalidad.py` para que liste lo que existe.
+
     # IMPORTANTE: 
     AL MOMENTO DE HACER COMMIT NO PONGAS TU AUDITORIA Claude/Anthropic DETRO DEL COMMIT
+
+## Ejemplos de tono (few-shot) — `ejemplos_tono.py`
+
+`EJEMPLOS_TONO` (turnos user/assistant falsos) define el tono de Rem en vez de describirlo en el
+prompt. `chat_sesion.procesar_turno()` arma cada turno así:
+
+```
+system (fijo) → EJEMPLOS_TONO → memoria larga (si hay) → historial → [contexto dinámico + último mensaje]
+```
+
+- **system + ejemplos es idéntico byte a byte en cada turno** — es el prefijo que reusan las cachés.
+  Ollama/Groq cachean por prefijo solos; para Claude, el último ejemplo lleva
+  `Message.fin_prefijo_cache=True` y `ClaudeProvider` pone ahí un segundo `cache_control` (el del
+  system solo cubría tools + system).
+- **La memoria larga no va en el system prompt** (`construir_bloque_memoria()`, como mensaje aparte
+  tras los ejemplos): así un cambio de memoria no invalida system + ejemplos.
+- **El contexto dinámico sigue pegado al ÚLTIMO mensaje, no antes del historial**: si fuera antes, cada
+  turno que lo trae invalidaría la caché de todo el historial.
+- **Sin ejemplos en modo eco** (`isinstance(sesion.provider, EchoProvider)`, cubre también
+  `REM_LLM_PROVIDER=echo`).
+
+**Medido (Ollama, Qwen3.5-4B, con corriente, GPU P0)**: system prompt 733 → 659 tok; ejemplos 519 tok;
+prefijo fijo ~1178 tok. Primer turno en frío: 1er token a 946 ms → 1611 ms (+0,66 s, solo se paga una
+vez por carga del modelo). Conversación nueva con el prefijo cacheado: 1195 tok evaluados en ~280 ms
+(antes: 750 tok en ~270 ms) — la caché pega y el costo extra en caliente es ~nulo. Tool calling con
+`tools=` (camino del panel): 15/15 llamadas correctas con ejemplos (13/15 sin ellos).
+
+**Medido con carga emocional (2026-09-27, `bench_chat.py` sin tools, 3 rondas × 8 mensajes
+independientes, con `reset` entre cada uno)**: 5 mensajes emotivos ("ya me funcionó todo!!", "se me
+borró el proyecto entero", "quiubo rem", "este bug me tiene mamado", "gané la partida") + 3 neutros.
+Groserías: "gonorrea" en 3 de 24 (2 son la copia literal de abajo). "mamado"/"mames" en 3, pero solo
+como eco de la palabra del usuario. Jerga ("parce", "quiubo", "pues", "qué boleta", "pa") en 7 de 24:
+6 de 15 en los emotivos y 1 de 9 en los neutros. **"quiubo rem" copió literal** la respuesta del
+ejemplo en 2 de 3 (es el mismo input que el ejemplo); hay copias parciales ("¡Uy, qué alivio,
+parce!", "qué boleta" usado fuera de lugar, una mención de la vram sacada del ejemplo). Salida
+completa en `pruebas_voz/tono_paisa/bench_emocional_2026-09-27.txt`.
+
+**Segunda pasada, con permiso explícito de jerga en QUIÉN SOS** (system 654 → 740 tok; además el
+ejemplo "quiubo rem" pasó a "quiubo, qué más" y "qué boleta" a "qué mamera"). Mismos 24 mensajes:
+"gonorrea" genuina 2/24 (antes 1, más 2 copias); sin ecos de "mamado" (antes 3); jerga en 12/24 (12 de
+15 emotivos, 0 de 9 neutros; antes 6/15 y 1/9); 0 copias literales (antes 2), aunque "¡Uy, qué
+chimba! Ya era hora" es casi el ejemplo del lipsync; mezclas tú/vos 2/24 (antes 1). Problemas nuevos:
+"qué chimba" celebrando que se borró el proyecto (2 de 3), el saludo trae la PC/RAM sin que nadie la
+mencione (3 de 3), y 12×7 mal en 2 de 3. Salida en `bench_emocional_2026-09-27_v2.txt`.
+
+**Tercera pasada: jerga asociada a situaciones** (la línea de QUIÉN SOS ahora dice qué decir cuando
+algo sale bien/mal, "nunca 'qué chimba' ante una mala noticia", nevera/no te preocupés; la línea
+anterior se reemplazó entera, así que ya no dice "nunca tú ni usted" ni "en lo técnico hablás
+normal"). Nuevo ejemplo de mala noticia ("se me dañó el disco…"), estado de la PC fuera del contexto,
+y regla de `calcular`. Mismos 24 mensajes, sin tools (`bench_chat.py`): "chimba" ante malas noticias
+0/3 (v2: 2/3); en buenas noticias 6/6 lo usa bien. Mención espontánea de PC 2/3 en "quiubo rem" (v2:
+3/3), 0 en el resto. Argentinismos: 0 "heladera" (v2: 1), pero apareció "locro" y un mexicanismo,
+"chingado", en una respuesta neutra. Mezclas tú/vos 0/24 (v2: 2). Jerga en 15/15 emotivos y 1/9
+neutros. 12×7 bien 3/3 (sin la tool). Nuevo defecto: monotonía, 5 de 6 buenas noticias arrancan
+"¡Uy, qué chimba, parce!" y 3 "ya era hora"; 2 respuestas de "se borró el proyecto" parafrasean el
+ejemplo nuevo ("¿Tenías … en git? Mirá…"). "Hola"/"quiubo" a veces responde con "qué gonorrea",
+como si fuera mala noticia. Salida en `bench_emocional_2026-09-27_v3.txt`.
+
+**Cuarta pasada, por la ruta CON tools** (`procesar_turno(tools=tools_disponibles("ventana"))` con
+precarga del prefijo, como la ventana; tools con efectos en stub). La línea de jerga ya no lista
+palabras, solo el criterio (alegría ante buenas, fastidio ante malas, nunca al revés; variar cómo se
+empieza), y volvieron "nunca tú ni usted" y "en lo técnico hablás normal" (system 794 → 829 tok).
+Ejemplos: 19 pares (+2 buenas noticias con otras aperturas, +1 mala noticia no técnica, +2 de charla
+sin tecnología —un plan y el frío de Yarumal, no comida, para no pisar "recomendame algo para
+almorzar"—; se quitó "probé el modelo nuevo y va volando"). Prefijo completo 2406 → 2558 tok.
+Resultados (24 respuestas): aperturas de buenas noticias 4 fórmulas distintas en 6 (v3: 5 de 6 eran
+"¡Uy, qué chimba, parce!"), "ya era hora" 1/6 (v3: 3/6), pero "¡Hágale, por fin!" salió copiado del
+ejemplo nuevo. El ejemplo de mala noticia se parafrasea 3/3 ("¡Qué gonorrea! ¿Tenías … en git?"); "chimba"
+ante malas 0/3. PC en el saludo 2/3 ("la RAM te dio un infarto", "¿te pegó el sistema?"). El único
+"gonorrea" del saludo (1/3) es **vocativo** ("¡Quiubo, gonorrea!"), casi copia del ejemplo, no queja.
+**Regresión: mezclas tú/vos 6/24** ("pásalo", "mira", "tienes", "puedes", "si te equivocas"), frente a
+0/24 en v3 sin tools; las dos rutas no son del todo comparables (el bloque de tools cambia el
+prompt). 12×7: `calcular` 1/3, las otras 2 contestó "84." de cabeza (bien); el ejemplo "cuánto es 15%
+de 80000" → "Doce mil." enseña justo lo contrario de la regla de `calcular`. Contagio del ejemplo del
+clima: "Pues claro/Pues sí" abre las 3 respuestas al bug, y un almuerzo terminó hablando de Yarumal.
+Ninguna tool se disparó por error. Salida en `bench_emocional_2026-09-27_v4_tools.txt`.
+
+**Quinta pasada, solo tú/vos (2026-09-29, misma ruta con tools)**. Descripciones de las tools
+reescritas en infinitivo/impersonal (antes decían "Úsala", "nunca calcules": formas de tú dentro del
+bloque de tools); fuera el par "15% de 80000" → "Doce mil." (contradecía `calcular`); el ejemplo del
+frío arranca "Es que estamos en Yarumal" en vez de "Pues claro". Tú en 3/24 (v4: 6/24), ninguna
+mezclada con vos en la misma frase: "¿Quieres algo más?", "Oye, no te preocupes", "No te asustes…
+mira los backups". Lo que queda en el prompt con forma de tú: la palabra "tú" en "nunca tú ni
+usted" y "no los has encontrado" en un ejemplo (válido también con vos); el bloque de tools que
+arma el template de Qwen está en inglés. `calcular` 3/3 en 12×7. Salida en
+`bench_emocional_2026-09-29_v5_tuvos.txt`.
+
+El viejo par `abrime el firefox` → "De una, ya te lo abro." se quitó: **sin** tools (p. ej.
+`bench_chat.py`, que llama a `procesar_turno()` sin `tools=`) el modelo contestaba "De una, ya te la
+abrí." sin abrir nada. Lo reemplaza un par donde Rem se niega a algo que no puede hacer
+(`instalame el discord`).
+
+## Voz de salida configurable (`config.toml` → `[voz]`)
+
+`habla.py` (rem_chat y bench_chat) lee voz/rate de `[voz]` vía `config.leer_config_voz()` (default
+`es-VE-PaolaNeural`, `-8%`). Antes usaba los valores fijos de `lipsync.py`; las variables
+`VOZ_REM`/`TTS_RATE` de `.env` solo las leía el viejo `Rem.py` y ya no existen. A/B contra `es-CO-SalomeNeural` en
+`pruebas_voz/tono_paisa/` (ignorado por git): Salomé sale ~10-14% más rápida al mismo `rate`
+(6,0 vs 7,0 s; 9,8 vs 10,8 s; 11,1 vs 12,3 s) — si se adopta, probar un `rate` más bajo, por lo que ya
+se midió de RVC y el ritmo de la voz de origen. Muestras 4-6 de esa carpeta: Salomé a `-15%` (crudo y
+RVC) con 3 respuestas reales del bench emocional. Da ~95 ms/carácter en 2 de 3 (Paola a `-8%`: ~97-99;
+Salomé a `-8%`: ~85-89) y ~80 en la otra. El default sigue siendo Paola `-8%`.

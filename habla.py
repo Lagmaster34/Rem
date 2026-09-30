@@ -127,7 +127,7 @@ def precargar_rvc():
     try:
         rvc, dispositivo = _obtener_rvc()
         t0 = time.perf_counter()
-        audio_mp3, _ = asyncio.run(lipsync.sintetizar_con_timings("Hola."))
+        audio_mp3, _ = asyncio.run(lipsync.sintetizar_con_timings("Hola.", *config.leer_config_voz()))
         _preparar_wav_16k(audio_mp3, tmp_mp3, tmp_wav)
         _convertir_rvc(rvc, tmp_wav)
         log(f"calentamiento RVC listo en {time.perf_counter() - t0:.2f}s ({dispositivo}) — RVC caliente para el primer turno")
@@ -146,14 +146,20 @@ class TurnoHabla:
     oración frente a cuánto tarda la respuesta completa — la comparación que
     justifica solapar TTS+RVC con la generación en vez de esperar todo el
     texto antes de hablar."""
-    def __init__(self):
+    def __init__(self, t_ref=None):
         self.t_inicio = time.perf_counter()
+        # Referencia externa opcional (p.ej. el instante en que se soltó la
+        # tecla de push-to-talk, ver rem_avatar_server._ptt_detener): el
+        # tiempo que le importa al usuario cuenta desde AHÍ, no desde que
+        # arrancó el turno de LLM.
+        self.t_ref = t_ref
         self.t_primer_audio = None
 
     def marcar_primer_audio(self):
         if self.t_primer_audio is None:
             self.t_primer_audio = time.perf_counter()
-            log(f"primer audio enviado a los {self.t_primer_audio - self.t_inicio:.2f}s")
+            extra = f" ({self.t_primer_audio - self.t_ref:.2f}s desde la referencia externa)" if self.t_ref else ""
+            log(f"primer audio enviado a los {self.t_primer_audio - self.t_inicio:.2f}s{extra}")
 
 
 async def decir(texto, usar_rvc):
@@ -166,7 +172,7 @@ async def decir(texto, usar_rvc):
     WS o local), para que el llamador pueda medir "tiempo hasta el primer
     audio"."""
     log(f'hablando: "{texto}"')
-    audio_mp3, palabras = await lipsync.sintetizar_con_timings(texto)
+    audio_mp3, palabras = await lipsync.sintetizar_con_timings(texto, *config.leer_config_voz())
     timeline = lipsync.construir_timeline(palabras)
 
     uid = int(time.time() * 1000)
