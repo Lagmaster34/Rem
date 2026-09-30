@@ -222,6 +222,7 @@ tmp_audio/
 
 ```bash
 venv/bin/python rem_chat.py     # LA APLICACIÓN — abre la ventana del avatar con panel de chat
+venv/bin/python rem_chat.py --modo overlay   # avatar sobre el escritorio + caja de texto
 venv/bin/python bench_chat.py   # REPL de depuración — se conecta a rem_chat.py si está corriendo,
                                 # o levanta el servidor él mismo. 'modo eco' = voz sin LLM
 ```
@@ -233,6 +234,7 @@ La carpeta `lanzadores/` abre cada modo con doble clic o desde el lanzador de ap
 | Script | Entrada en el lanzador | Qué abre |
 |---|---|---|
 | `lanzadores/rem-ventana.sh` | **Rem Ventana** | `rem_chat.py --modo ventana` |
+| `lanzadores/rem-overlay.sh` | **Rem Overlay** | `rem_chat.py --modo overlay` (avatar sobre el escritorio + caja de texto) |
 | `lanzadores/rem-debug.sh` | **Rem Debug** | `bench_chat.py` en una terminal (`$TERMINAL`, o foot/kitty/alacritty) |
 
 Para que aparezcan en el lanzador de apps (Hyprland, rofi, wofi, etc.):
@@ -241,9 +243,10 @@ Para que aparezcan en el lanzador de apps (Hyprland, rofi, wofi, etc.):
 lanzadores/instalar.sh    # escribe los .desktop en ~/.local/share/applications/
 ```
 
-- **Dos instancias nunca compiten por el puerto.** `rem-ventana.sh` cierra cualquier `rem_chat.py`
-  que ya esté corriendo antes de abrir el nuevo: primero pide un cierre limpio (SIGTERM) y solo
-  fuerza (SIGKILL) si no se cerró en 5 s. `rem-debug.sh` **no** lo cierra, porque `bench_chat.py`
+- **Dos instancias nunca compiten por el puerto.** `rem-ventana.sh` y `rem-overlay.sh` cierran
+  cualquier `rem_chat.py` que ya esté corriendo, en el modo que sea, antes de abrir el nuevo. Así
+  nunca quedan la ventana y el overlay abiertos a la vez. Primero piden un cierre limpio (SIGTERM) y solo
+  fuerzan (SIGKILL) si no se cerró en 5 s. `rem-debug.sh` **no** lo cierra, porque `bench_chat.py`
   no ocupa el puerto: si hay una ventana abierta se conecta a ella como cliente, y si no, levanta
   su propio servidor.
 - **Logs** en `lanzadores/logs/<script>.log`: cada arranque se agrega con fecha y hora, sin borrar
@@ -254,8 +257,8 @@ lanzadores/instalar.sh    # escribe los .desktop en ~/.local/share/applications/
   `Exec=`, así que se instala como copia con la ruta real y no como symlink.
 - **Ícono**: el proyecto no trae uno propio, así que se usa `avatar-default` del tema. Si dejás un
   `lanzadores/rem.png` o `rem.svg` y volvés a correr `instalar.sh`, se usa ese.
-- El lanzador del **modo overlay** todavía no existe: se agrega cuando `feat/modo-overlay-stt`
-  llegue a `main`.
+- Para el push-to-talk del overlay hacen falta además los binds de Hyprland (ver CLAUDE.md,
+  "Líneas de Hyprland para push-to-talk").
 
 ---
 

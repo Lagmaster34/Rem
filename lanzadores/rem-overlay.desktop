@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Rem Overlay
+Comment=Rem sobre el escritorio, con caja de texto y push-to-talk
+Exec=@LANZADORES@/rem-overlay.sh
+Icon=@ICONO@
+Terminal=false
+Categories=Utility;
+StartupNotify=false
