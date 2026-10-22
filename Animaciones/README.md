@@ -75,3 +75,41 @@ en su glTF. `@pixiv/three-vrm-animation@2.1.3` (la versión que empareja con el
 memoria antes de pasársela a `GLTFLoader`) — los archivos en disco quedan intactos y no
 hace falta ningún paso manual. El pack oficial VRoid ya trae `specVersion: "1.0"` y no
 necesita normalización.
+
+## Catálogo: `catalogo.json`
+
+Registro de **todos** los clips de esta carpeta (los de `VRMA_MotionPack/` y los de
+`nerumi/`), con su categoría, etiqueta en español, origen y medidas. A diferencia de los
+`.vrma`, **sí se versiona**: solo lleva metadatos.
+
+Lo genera y actualiza `catalogo_animaciones.py` (en la raíz del proyecto):
+
+```bash
+venv/bin/python catalogo_animaciones.py          # tras agregar o quitar clips
+venv/bin/python catalogo_animaciones.py --check  # solo informa (sale con 1 si hay ilegibles o SHA-256 distintos)
+```
+
+- **Lo curado se edita a mano** en el JSON y el script lo conserva: `etiqueta`, `categoria`,
+  `origen`, `peso`, `horas`, `nota`, `activoPorDefecto`, y las secciones `categorias`,
+  `porEstado` y `poseBase`.
+- **Lo medido lo recalcula el script** en cada corrida: `medido` (duración, giro de la cadera,
+  desplazamiento, inclinación del torso y ángulo de cada brazo a lo largo de todo el clip),
+  `avisos`, `giraCuerpo`, `fundidoEntradaS` y `sha256`.
+- Un clip nuevo entra con etiqueta sacada del nombre y origen `desconocido` (o el de un
+  `provenance.json` de su carpeta): **completar a mano**. Un clip que desaparece del disco no se
+  borra del catálogo: queda con `"falta": true`.
+
+### `nerumi/`: origen y licencias
+
+Clips sacados de Nerumi. El origen de cada uno está en `catalogo.json` → `origen`, tomado de
+los `provenance.json` (con SHA-256 verificado), los `README.md` de cada subcarpeta y la tabla
+de autores de `NOTAS-nerumi.md`; si no hay dato, `"desconocido"`.
+
+- **KAWAII ANIMATIONS 100 (FUDASTORE)**: pack **de pago** de la Unity Asset Store. Uso
+  personal; **no se pueden redistribuir los archivos**.
+- **Bailes**: cada autor (BOOTH, vrcmods, Ko-fi...) tiene sus propios términos, sin revisar, y
+  varios bailes están atados a canciones con derechos.
+- **Desconocidos**: sin licencia conocida.
+
+Nada de esto va al repo (está en `.gitignore`); el catálogo versionado solo nombra archivos y
+autores.

@@ -31,6 +31,8 @@ models/*.vrm
 # El README sí se versiona; los .vrma y el pack descargado, no.
 Animaciones/*
 !Animaciones/README.md
+# El catálogo sí: solo metadatos (etiquetas, origen, medidas), ningún .vrma.
+!Animaciones/catalogo.json
 
 # Entorno virtual
 venv/

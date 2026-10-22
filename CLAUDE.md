@@ -46,6 +46,7 @@ no basta con copiar la carpeta.
 | `rem_panel.py` / `rem_panel.html` | Panel de control: ventana GTK+WebKit aparte, cliente del servidor de `rem_chat.py`. Ver "Panel de control (`rem_panel.py`)" más abajo |
 | `webview_comun.py` | Piezas GTK+WebKit compartidas por `rem_chat.py` y `rem_panel.py`: `crear_webview()`, `cargar_con_retry()`, `redirigir_salida_a_log()` |
 | `preferencias.py` | Preferencias editables en vivo desde el panel de control, en `preferencias.json` por encima de `config.toml`. Ver "Preferencias del panel de control" más abajo |
+| `catalogo_animaciones.py` | Genera/actualiza `Animaciones/catalogo.json`: mide cada `.vrma` y conserva lo curado. Ver "Catálogo de animaciones" |
 | `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — `[llm]`/`[llm.claude]`/`[app]`/`[overlay]`/`[stt]` |
 
 ## Capa de abstracción de LLM (`llm/`)
@@ -2451,4 +2452,65 @@ Verificado con el servidor real y clientes de cada rol: solo panel → estado 0,
 avatar → estado 1, audio `True`; al desconectar el avatar vuelve a 0 y su rol se borra. Con
 `rem_chat.py` real, un `state idle` desde `bench_chat.py` cliente no dejó aviso: la ventana se contó
 como avatar.
+
+## Catálogo de animaciones (`Animaciones/catalogo.json`)
+
+Fuente de verdad de los 189 clips del avatar: 172 de `Animaciones/nerumi/` (sacados de Nerumi) y los
+17 de `VRMA_MotionPack/` (categoría **Rem anterior**). Versionado (`!Animaciones/catalogo.json` en
+`.gitignore`); los `.vrma` no. Uso y licencias: `Animaciones/README.md`.
+
+**Estructura**: `categorias` (etiqueta, `activa`, `peso`, `orden`, `nota`), `porEstado` (estado →
+`{clips: [...], modo, enfriamiento?}`), `poseBase` y `clips` (clave = ruta relativa a
+`Animaciones/`). Cada clip: `etiqueta` (español), `categoria`, `origen` (`autor`, `pack`, `url`,
+`licencia`, `fuente`, `sha256Verificado` si sale de un `provenance.json`), `peso`, `horas`, `nota`,
+`activoPorDefecto`, y lo medido: `giraCuerpo`, `fundidoEntradaS`, `avisos`, `medido`, `sha256`.
+
+**`catalogo_animaciones.py`** mide con cinemática directa propia (numpy, sin three.js): duración, giro
+de la cadera (yaw desenrollado), desplazamiento horizontal, inclinación del torso y, **para cada
+brazo, el ángulo con el "abajo" del torso a lo largo de todo el clip** (0° colgando, 90° en cruz)
+— la lección de `Relax.vrma`. Calibrado contra las cifras ya medidas de los clips viejos: `Relax`
+da brazos >60° el 82 % del ciclo (antes 83-85 %), `VRMA_01`/`VRMA_05` 418,5°/408,2°, `LookAround`
+40,4°, `VRMA_06` 36,2° — idénticas. Recalcula lo medido en cada corrida y **conserva lo curado**;
+un clip nuevo entra con etiqueta del nombre y origen `desconocido` (o el de su `provenance.json`);
+uno que desaparece queda con `"falta": true`; uno ilegible se informa y no entra. `--check` sale con
+1 si hay ilegibles o SHA-256 distintos del `provenance.json` (hoy: 0 y 14/14 verificados). Probado
+sobre una copia con un clip nuevo, uno borrado, uno corrupto y uno con un byte de más.
+
+**Avisos** (umbrales al principio del script): `empieza-brazos-alto`/`termina-brazos-alto` (>60° en
+el primer/último frame), `brazos-alto-mayoria` (>60° más de la mitad del clip), `gira` (>90°, =
+`giraCuerpo`), `acrobacia` (torso >90°), `se-sale` (cadera >0,5 m), `largo` (>30 s). Si empieza con
+los brazos altos, `fundidoEntradaS = 0.8` (en vez del `fadeIn` normal): el fundido no los levanta
+de golpe.
+
+**Lo que se midió en los 172 de Nerumi**: todos parsean (a 144 les falta `specVersion`, lo parchea
+`normalizarVrma()`). Los 58 idles kawaii empiezan y terminan en la misma pose neutra (brazos ~12°).
+De 81 idles, 11 empiezan/terminan con los brazos altos o son acrobacias/se salen (`idle14-idle2`,
+`idle8-robot`, `idle12-dab`, `idle0-break2`, `Backflip`, `Handstand`, `head-spin`, `worm`,
+`break`, `Stretch2`, `FeelDown`). De 58 bailes, 36 empiezan o terminan con los brazos altos (su
+estilo; se reproducen una vez), 3 son largos (`ghost-complete` 163 s, `Dance42-ghost` 61 s,
+`seetinh` 30 s) y 3 se salen de cuadro. Los de `sit` no bajan la cadera (en Nerumi van sobre un
+asiento): sueltos, Rem queda sentada en el aire. `Blush.vrma` (el viejo `happy`) lleva un brazo en
+alto el 66 % del clip.
+
+**Valores por defecto** (decididos con Esteban): activas solo las categorías `idle` (peso 4) y
+`dance` (peso 1). Dentro, `activoPorDefecto` sale de la política `activo_generado()`: fuera los
+`acrobacia`/`se-sale`/`largo`, y los de brazos altos al empezar/terminar salvo en `dance` (ahí
+quedan activos con el fundido largo). Además, apagados a mano con su `nota`: `Idle01_breathing`
+(candidato a pose base, hasta verlo), `Cry`/`Shout`/`Surprise`/`Surprise2` (reacciones,
+reservadas a estados) y los dos `lets-groove` (también apagados en Nerumi). Resultado: 115 de 189
+activos (65 de reposo, 50 bailes). Peso de clip 0,25 en los "raros" de Nerumi (`JumpAround`,
+`Backflip`, `Handstand`, `JumpForJoy`, `RareDance*`); `Idle99_Sleepy` y el viejo `Sleepy` solo de
+00:00 a 06:00 (`horas`).
+
+**`porEstado`**: `thinking` → `Thinking.vrma` (viejo, bucle); `sad` → `Idle38_Cry`; `angry` →
+`Idle26_Shout` (los dos `unaVez` con `enfriamiento`: si se reprodujo hace menos de N minutos, esa
+vez solo la cara); `surprised` → `Idle68_Surprise`; `happy` → `Idle74_Cheer` / `Idle65_ThumbsUp`
+al azar sin repetir. `talking` y la pose base siguen procedurales (`poseBase.archivo = null`,
+`candidato` = `Idle01_breathing`).
+
+**Origen** (`origen.fuente` dice de dónde salió cada dato): FUDASTORE / KAWAII ANIMATIONS 100 (77
+clips; pack de pago, no redistribuible), autores de bailes de la tabla de NOTAS (thedao77, Umai,
+vyath pack...), tk256ailab (MIT) y VRoid Project (crédito obligatorio) para Rem anterior, y
+`desconocido` en 54 (bailes sin autor, idles no kawaii, sit no kawaii, lying, tutorial,
+`greet.vrma`).
 
