@@ -73,6 +73,88 @@ def _validar_vrm(v):
     return v
 
 
+# ── Animaciones: se validan contra Animaciones/catalogo.json ──────────────
+CATALOGO_ANIM = os.path.join(config.BASE_DIR, "Animaciones", "catalogo.json")
+_cat_cache: dict = {}
+_cat_mtime: float | None = None
+
+
+def _catalogo_anim() -> dict:
+    """catalogo.json (cacheado por mtime). Sin catálogo, {}: nada valida y las
+    bases salen de los defaults de abajo."""
+    global _cat_cache, _cat_mtime
+    try:
+        mtime = os.path.getmtime(CATALOGO_ANIM)
+        if mtime != _cat_mtime:
+            with open(CATALOGO_ANIM, encoding="utf-8") as f:
+                _cat_cache, _cat_mtime = json.load(f), mtime
+    except (OSError, json.JSONDecodeError):
+        _cat_cache, _cat_mtime = {}, None
+    return _cat_cache
+
+
+def _ajuste_anim(clave, default):
+    return copy.deepcopy(_catalogo_anim().get("ajustes", {}).get(clave, default))
+
+
+def _dict_de(v, nombre, claves_validas, validar_valor):
+    if not isinstance(v, dict):
+        raise PreferenciaInvalida(f"{nombre}: tiene que ser un objeto")
+    for k, x in v.items():
+        if k not in claves_validas:
+            raise PreferenciaInvalida(f"{nombre}: {k!r} no está en el catálogo")
+        validar_valor(k, x)
+    return v
+
+
+def _bool(nombre):
+    def validar(k, x):
+        if not isinstance(x, bool):
+            raise PreferenciaInvalida(f"{nombre}.{k}: tiene que ser true/false")
+    return validar
+
+
+def _numero(v, nombre, minimo, maximo):
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not (minimo <= v <= maximo):
+        raise PreferenciaInvalida(f"{nombre}: número entre {minimo} y {maximo}, no {v!r}")
+    return v
+
+
+def _validar_categorias(v):
+    return _dict_de(v, "categorias", _catalogo_anim().get("categorias", {}), _bool("categorias"))
+
+
+def _validar_clips(v):
+    return _dict_de(v, "clips", _catalogo_anim().get("clips", {}), _bool("clips"))
+
+
+def _validar_pesos(v):
+    return _dict_de(v, "pesos", _catalogo_anim().get("categorias", {}),
+                    lambda k, x: _numero(x, f"pesos.{k}", 0, 20))
+
+
+def _validar_por_estado(v):
+    """estado -> lista de ids del catálogo ([] = ese estado sin clip, solo la
+    cara). Solo los estados que el catálogo ya mapea: su modo/enfriamiento
+    siguen saliendo de ahí."""
+    clips = _catalogo_anim().get("clips", {})
+
+    def validar(est, ids):
+        if not isinstance(ids, list) or len(ids) > 10 or any(i not in clips for i in ids):
+            raise PreferenciaInvalida(f"porEstado.{est}: lista (máx. 10) de clips del catálogo")
+    return _dict_de(v, "porEstado", _catalogo_anim().get("porEstado", {}), validar)
+
+
+def _validar_intervalo(v):
+    if not isinstance(v, dict) or set(v) != {"minS", "maxS"}:
+        raise PreferenciaInvalida("intervaloReposo: {minS, maxS}")
+    _numero(v["minS"], "intervaloReposo.minS", 1, 600)
+    _numero(v["maxS"], "intervaloReposo.maxS", 1, 600)
+    if v["minS"] > v["maxS"]:
+        raise PreferenciaInvalida("intervaloReposo: minS no puede ser mayor que maxS")
+    return v
+
+
 @dataclass(frozen=True)
 class Campo:
     validar: Callable[[Any], Any]
@@ -99,6 +181,19 @@ ESQUEMA: dict[str, dict[str, Campo]] = {
     },
     "modelo": {
         "vrm": Campo(_validar_vrm, lambda: _toml("avatar", "modelo", "rem.vrm")),
+    },
+    # Las cuatro primeras son EXCEPCIONES al catálogo ({} = todo como dice
+    # catalogo.json); las dos últimas tienen su default en catalogo.json ->
+    # ajustes. Ver "Catálogo de animaciones" en CLAUDE.md.
+    "animaciones": {
+        "categorias": Campo(_validar_categorias, dict),
+        "clips": Campo(_validar_clips, dict),
+        "pesos": Campo(_validar_pesos, dict),
+        "porEstado": Campo(_validar_por_estado, dict),
+        "enfriamientoMin": Campo(lambda v: _numero(v, "enfriamientoMin", 0, 120),
+                                 lambda: _ajuste_anim("enfriamientoMin", 5)),
+        "intervaloReposo": Campo(_validar_intervalo,
+                                 lambda: _ajuste_anim("intervaloReposo", {"minS": 4, "maxS": 9})),
     },
 }
 

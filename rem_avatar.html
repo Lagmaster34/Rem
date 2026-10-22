@@ -412,10 +412,6 @@ const CONFIG = {
     // se puede precargar todo en un WebGL rasterizado por software: solo se
     // precargan los de estado y la pose base (que tampoco cuentan para el tope).
     cacheMax: 20,
-    // Minutos que un clip de estado con 'enfriamiento' (porEstado del catálogo:
-    // Cry, Shout) espera antes de volver a reproducirse; mientras tanto ese
-    // estado solo pone la cara. El panel lo pisa.
-    enfriamientoMin: 5,
     // Muchos bailes de Nerumi son una unidad de bucle (doodle 0,33 s, ankha
     // 1 s...) pensada para repetirse con la canción: como gesto de una sola vez
     // serían un parpadeo. Un baile más corto que esto se repite en bucle el
@@ -447,11 +443,10 @@ const CONFIG = {
     //                    emoción (la maneja updateExpressions() por 'estado').
     //   enfriamiento   : si ese clip se reprodujo por estado hace menos de
     //                    enfriamientoMin minutos, esa vez solo la cara.
-    // Intervalo de reposo entre gestos — se sortea en este rango CADA VEZ que
-    // termina un gesto (ver _alTerminarClip/updateGestos), nunca desde que
-    // empieza: la espera es tiempo de reposo real, no tiempo total de ciclo.
-    // El ritmo real visible es intervalo + duración del clip elegido.
-    intervaloReposo: { minS: 4, maxS: 9 },
+    // intervaloReposo y enfriamientoMin: catalogo.json -> ajustes, y el panel
+    // los pisa (ver ajusteAnim()). El intervalo se sortea CADA VEZ que termina
+    // un gesto (ver _alTerminarClip/updateGestos), nunca desde que empieza: el
+    // ritmo real visible es intervalo + duración del clip elegido.
     // Gestos de reposo aleatorios (solo en idle y sin audio): el repertorio es
     // el catálogo — los clips activos (ver clipActivo()) que estén en disco. Se
     // sortea primero la CATEGORÍA por su peso y después el clip dentro de ella
@@ -2255,6 +2250,15 @@ let _clipPesoObjetivo = 0;
 let _clipTopeTimer = null;     // segundos restantes de un clip 'bucle' con duracionS, o null
 const _clipCache = new Map();  // id -> {archivo: id, clip} | {archivo: id, error} — orden = LRU
 const _clipCargando = new Map(); // id -> Promise en vuelo, para no cargar dos veces el mismo
+// Declarados acá arriba, no junto a cargarCatalogo(): _gestoTimer (más abajo)
+// sortea su intervalo al cargar el módulo y lee los dos vía ajusteAnim().
+let _catalogo = null;             // Animaciones/catalogo.json, ver cargarCatalogo()
+const _clipsFallidos = new Set(); // ids que fallaron al cargar: fuera de la paleta y del repertorio
+// Preferencias del panel (sección 'animaciones' de preferencias.py, llegan por
+// WS: prefs_estado al conectar, prefs_actualizadas al cambiar). Lo que no
+// traigan sale del catálogo. {categorias: {cat: bool}, clips: {id: bool},
+// pesos: {cat: n}, porEstado: {estado: [ids]}, enfriamientoMin, intervaloReposo}
+let _prefsAnim = {};
 const _huesosNorm = [];        // [{nombre, node, q:Quaternion}] — todos los huesos normalizados, para la mezcla
 let _hipsNode = null;
 
@@ -2296,7 +2300,7 @@ let _gestoActivo = false;      // un gesto de reposo controla el cuerpo (incluid
 let _ultimoGestoDisparado = null; // id del último gesto — para no repetirlo dos veces seguidas
 
 function _sortearIntervaloGesto() {
-  const { minS, maxS } = CONFIG.animaciones.intervaloReposo;
+  const { minS, maxS } = ajusteAnim('intervaloReposo', { minS: 4, maxS: 9 });
   return minS + Math.random() * (maxS - minS);
 }
 
@@ -2398,11 +2402,33 @@ function clipDeVrma(va) {
 // ── CATÁLOGO (Animaciones/catalogo.json) ─────────────────────────────────
 // Se descarga una vez al arrancar (no en overlay: ahí no hay mixer). Si no
 // llega, no hay clips y todo sigue procedural — nada se rompe.
-let _catalogo = null;
-const _clipsFallidos = new Set();  // ids que fallaron al cargar: fuera de la paleta y del repertorio
-// Preferencias del panel (sección 'animaciones'): lo que no traiga sale del
-// catálogo. {categorias: {cat: bool}, clips: {id: bool}, pesos: {cat: n}, enfriamientoMin}
-let _prefsAnim = {};
+
+function aplicarPrefsAnim(prefs) {
+  _prefsAnim = prefs ?? {};
+  if (_catalogo) {
+    const ids = Object.keys(_catalogo.clips);
+    console.log(`[Anim] preferencias del panel aplicadas — ${ids.filter(id => clipUsable(id) && clipActivo(id)).length} ` +
+                `clips activos en el reposo, intervalo ${JSON.stringify(ajusteAnim('intervaloReposo', null))}, ` +
+                `enfriamiento ${ajusteAnim('enfriamientoMin', null)} min`);
+  }
+  // Un clip de estado nuevo se precarga ya. Solo con el VRM cargado (clipDeVrma
+  // lo necesita); si todavía no, la precarga del arranque ya lo incluye.
+  if (_mixer) _catalogoListo.then(precargarClipsFijos);
+}
+
+// Ajuste con default en catalogo.json -> ajustes, pisable por el panel.
+function ajusteAnim(clave, porDefecto) {
+  return _prefsAnim[clave] ?? _catalogo?.ajustes?.[clave] ?? porDefecto;
+}
+
+// estado -> {clips, modo, ...}: el del catálogo, con la lista de clips del
+// panel si la hay ([] = ese estado sin clip, solo la cara). null = sin mapeo.
+function porEstadoEfectivo(est) {
+  const m = _catalogo?.porEstado?.[est];
+  if (!m) return null;
+  const clips = _prefsAnim.porEstado?.[est];
+  return clips ? { ...m, clips } : m;
+}
 
 async function cargarCatalogo() {
   try {
@@ -2474,7 +2500,7 @@ function clipsDisponibles() {
 // Los de estado y la pose base: se precargan y nunca se desalojan del caché.
 function _clipsFijos() {
   const s = new Set();
-  for (const m of Object.values(_catalogo?.porEstado ?? {})) for (const id of m.clips ?? []) s.add(id);
+  for (const est of Object.keys(_catalogo?.porEstado ?? {})) for (const id of porEstadoEfectivo(est).clips ?? []) s.add(id);
   if (poseBaseArchivo()) s.add(poseBaseArchivo());
   return s;
 }
@@ -2705,7 +2731,7 @@ const _ultimoUsoClipEstado = new Map(); // id -> performance.now() de su último
 function _elegirClipDeEstado(est, m) {
   let ids = (m.clips ?? []).filter(clipUsable);
   if (m.enfriamiento) {
-    const minutos = _prefsAnim.enfriamientoMin ?? CONFIG.animaciones.enfriamientoMin;
+    const minutos = ajusteAnim('enfriamientoMin', 5);
     const ahora = performance.now();
     const listos = ids.filter(id => !(ahora - (_ultimoUsoClipEstado.get(id) ?? -Infinity) < minutos * 60000));
     if (ids.length && !listos.length) {
@@ -2723,7 +2749,7 @@ function _elegirClipDeEstado(est, m) {
 // mientras el clip carga (async), el token no coincide y se descarta.
 function sincronizarClipConEstado() {
   if (ES_OVERLAY) return; // overlay: sin clips VRMA (no hay mixer)
-  const m = _catalogo?.porEstado?.[estado];
+  const m = porEstadoEfectivo(estado);
   const tok = ++_tokenClip;
   _gestoActivo = false; // un cambio de estado siempre gana sobre un gesto de reposo
   const id = m ? _elegirClipDeEstado(estado, m) : null;
@@ -2810,7 +2836,7 @@ function _logGesto(msg) {
 }
 
 function updateGestos(dt) {
-  const hayClipEstado = !!_catalogo?.porEstado?.[estado];
+  const hayClipEstado = !!porEstadoEfectivo(estado);
 
   if (_gestoActivo) {
     // Interrupción (regla: la voz manda): si dejó de ser elegible a mitad de
@@ -3759,6 +3785,8 @@ let _ws = null;
     // Rol para el servidor: solo los avatares cuentan como destinatarios del
     // estado/audio (ver ROLES_WS en rem_avatar_server.py).
     _ws.send(JSON.stringify({ tipo: 'hola', rol: 'avatar' }));
+    // Preferencias del panel (repertorio de animaciones): llegan en prefs_estado.
+    _ws.send(JSON.stringify({ tipo: 'prefs_get' }));
     _wsRetries = 0;
   };
   _ws.onmessage = e => {
@@ -3775,6 +3803,10 @@ let _ws = null;
         window.__remChat?.onModoActual(d.modo);
       } else if (d.tipo === 'error') {
         window.__remChat?.onError(d.mensaje ?? 'error desconocido');
+      } else if (d.tipo === 'prefs_estado') {
+        aplicarPrefsAnim(d.prefs?.animaciones);
+      } else if (d.tipo === 'prefs_actualizadas') {
+        if (d.seccion === 'animaciones') aplicarPrefsAnim(d.prefs);
       } else if (d.tipo === 'debug_clip') {
         window.dispararClipDebug?.(String(d.nombre ?? ''));
       } else if (d.tipo === 'ptt_estado') {

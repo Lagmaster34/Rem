@@ -94,7 +94,9 @@ venv/bin/python catalogo_animaciones.py --check  # solo informa (sale con 1 si h
 
 - **Lo curado se edita a mano** en el JSON y el script lo conserva: `etiqueta`, `categoria`,
   `origen`, `peso`, `horas`, `nota`, `activoPorDefecto`, y las secciones `categorias`,
-  `porEstado` y `poseBase`.
+  `porEstado`, `poseBase` y `ajustes` (intervalo de reposo y minutos de enfriamiento por defecto).
+- **Lo que se cambie desde el panel de control no toca este archivo**: va a `preferencias.json`
+  como excepciones (ver "Preferencias del panel de control" en CLAUDE.md).
 - **Lo medido lo recalcula el script** en cada corrida: `medido` (duración, giro de la cadera,
   desplazamiento, inclinación del torso y ángulo de cada brazo a lo largo de todo el clip),
   `avisos`, `giraCuerpo`, `fundidoEntradaS` y `sha256`.

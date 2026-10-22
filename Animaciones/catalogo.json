@@ -7952,5 +7952,12 @@
    "sha256": "9533b00e5212aa26272318f7db5c21d928b3ce50eebdd0299d7ac75ee6b67b04"
   }
  },
- "nota": "Fuente de verdad de los clips del avatar. Lo curado (etiqueta, categoria, origen, peso, horas, nota, activoPorDefecto, categorias, porEstado, poseBase) se edita a mano; medido/avisos/giraCuerpo/fundidoEntradaS/sha256 los recalcula catalogo_animaciones.py."
+ "nota": "Fuente de verdad de los clips del avatar. Lo curado (etiqueta, categoria, origen, peso, horas, nota, activoPorDefecto, categorias, porEstado, poseBase) se edita a mano; medido/avisos/giraCuerpo/fundidoEntradaS/sha256 los recalcula catalogo_animaciones.py.",
+ "ajustes": {
+  "intervaloReposo": {
+   "minS": 4,
+   "maxS": 9
+  },
+  "enfriamientoMin": 5
+ }
 }

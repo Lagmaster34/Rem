@@ -16,7 +16,7 @@ Qué hace este script, y qué NO:
     archivo, origen desde un provenance.json de su carpeta o "desconocido").
   - CONSERVA todo lo curado a mano de los clips existentes (etiqueta,
     categoria, origen, peso, horas, nota, activoPorDefecto) y las secciones
-    `categorias`/`porEstado`/`poseBase`. Un clip que ya no está en disco no se
+    `categorias`/`porEstado`/`poseBase`/`ajustes`. Un clip que ya no está en disco no se
     borra: queda con "falta": true (el avatar lo ignora).
 
     venv/bin/python catalogo_animaciones.py          # actualiza el catálogo

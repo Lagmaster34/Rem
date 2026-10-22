@@ -1528,8 +1528,11 @@ arriba.
 ### Catálogo, precarga y caché
 
 **Qué clips hay sale de `Animaciones/catalogo.json`** (ver "Catálogo de animaciones"), no de
-`CONFIG`: `CONFIG.animaciones` guarda solo el comportamiento (fundidos, ritmo, `cacheMax`,
-`enfriamientoMin`, `baileMinS`, mezcla de la pose base). `cargarCatalogo()` lo baja al arrancar (no en
+`CONFIG`: `CONFIG.animaciones` guarda solo el comportamiento del motor (fundidos, `cacheMax`,
+`baileMinS`, mezcla de la pose base). El intervalo de reposo y los minutos de enfriamiento salen de
+`catalogo.json` → `ajustes`, pisables por el panel (`ajusteAnim()`); qué clips están activos, los
+pesos y el estado → clip también pueden venir del panel (`_prefsAnim`, ver "Preferencias del panel
+de control"). `cargarCatalogo()` lo baja al arrancar (no en
 overlay) con `cache: 'no-cache'`; sin catálogo no hay clips y todo sigue procedural. Los clips se
 identifican por su ruta relativa a `Animaciones/` (`nerumi/dance/Dance11-spooky.vrma`).
 
@@ -1565,7 +1568,7 @@ identifican por su ruta relativa a `Animaciones/` (`nerumi/dance/Dance11-spooky.
   crossfade a procedural (la cara sigue). `modo: 'unaVez'` = `LoopOnce` + `clampWhenFinished`; al
   terminar hace crossfade a procedural **siempre**.
 - **Enfriamiento** (`_elegirClipDeEstado()`): un clip de un estado con `enfriamiento` que se reprodujo
-  por estado hace menos de `enfriamientoMin` minutos (5; el panel lo pisa) no vuelve a salir: ese
+  por estado hace menos de `enfriamientoMin` minutos (5, de `ajustes`; el panel lo pisa) no vuelve a salir: ese
   estado solo pone la cara (`[Anim] sad: clip en enfriamiento ... — solo la cara`). Solo cuentan los
   disparos por estado, no los de la paleta.
 - `sincronizarClipConEstado()` se llama en el `estado !== prevEstado` de `animate()`. Guarda de
@@ -1623,7 +1626,7 @@ de estado con crossfade (`reproducirClip`/`sincronizarClipConEstado`) y se vuelv
   no-idle.
 
 **Gestos de reposo** (`_elegirGesto()`): solo en `estado === 'idle'` && `!_audioActivo` && sin clip
-de estado, cada `intervaloReposo` (4–9 s) tras terminar el anterior. El repertorio es el catálogo:
+de estado, cada `intervaloReposo` (4–9 s, de `ajustes`) tras terminar el anterior. El repertorio es el catálogo:
 clips usables y **activos** (`clipActivo()`: preferencia del panel por clip, si no categoría activa +
 `activoPorDefecto`), dentro de su franja `horas`. Se sortea **primero la categoría** por su peso
 (`pesoCategoria()`: idle 4, dance 1) y **después el clip** dentro de ella por el suyo — así el
@@ -2360,7 +2363,9 @@ código. `config.toml` sigue siendo la base versionada.
 
 - **Esquema por sección** (`ESQUEMA`): cada clave con su validador y su valor base (leído de
   `config.toml` directo, no por `config.leer_*()`, que ya devuelven el valor efectivo). Hoy: `voz`
-  (`voz`, `rate`) y `modelo` (`vrm`). Cada pestaña agrega su sección al implementarse.
+  (`voz`, `rate`), `modelo` (`vrm`) y `animaciones` (ver abajo). Cada pestaña agrega su sección al
+  implementarse. **Cada clave se reemplaza entera** en un parche (no hay fusión profunda de
+  objetos): quien cambie `porEstado.happy` tiene que mandar el `porEstado` completo.
 - **`aplicar(seccion, cambios)`** valida el parche ENTERO antes de tocar nada: una clave desconocida
   o un valor inválido lo rechaza completo (`PreferenciaInvalida`, con mensaje para el usuario).
   `None` borra la preferencia (vuelve a `config.toml`); un valor igual al de `config.toml` tampoco se
@@ -2373,6 +2378,16 @@ código. `config.toml` sigue siendo la base versionada.
   que un cambio de voz suena en la frase siguiente. Lo que hay que avisar se registra con
   `al_cambiar(seccion, callback)`; corre en un hilo aparte (`asyncio.to_thread` en el servidor) y un
   oyente que falla no deshace lo guardado.
+- **Sección `animaciones`**, validada contra `Animaciones/catalogo.json` (cacheado por mtime):
+  `categorias` ({cat: bool}), `clips` ({id: bool}), `pesos` ({cat: 0..20}) y `porEstado` ({estado:
+  [ids]}, `[]` = sin clip; solo estados que el catálogo ya mapea) son **excepciones** al catálogo
+  (base `{}`); `enfriamientoMin` (0..120) e `intervaloReposo` ({minS, maxS}, 1..600, min ≤ max)
+  tienen su base en `catalogo.json` → `ajustes`. Un id o categoría fuera del catálogo se rechaza.
+  El avatar pide `prefs_get` al conectar y aplica `prefs_estado`/`prefs_actualizadas` de
+  `animaciones` en caliente (`aplicarPrefsAnim()`): el siguiente gesto/estado ya los usa, y un clip
+  de estado nuevo se precarga. Verificado en vivo: apagar `dance` (115 → 65 activos, solo salen
+  idles), `porEstado.happy = [VRMA_02]`, `sad = []` (solo la cara), `enfriamientoMin = 0` (`Shout` dos
+  veces seguidas) y el reset (vuelta a 115 y 4–9 s).
 - **Protocolo**: `prefs_get`/`prefs_set` → `prefs_estado`/`prefs_actualizadas`/`prefs_error` (ver la
   tabla de "WebSocket bidireccional"). Verificado con el servidor real y dos clientes WS: un cambio
   llega a los dos y queda en `leer_config_voz()`; 8 parches inválidos (clave desconocida mezclada con
@@ -2438,7 +2453,8 @@ Fuente de verdad de los 189 clips del avatar: 172 de `Animaciones/nerumi/` (saca
 `.gitignore`); los `.vrma` no. Uso y licencias: `Animaciones/README.md`.
 
 **Estructura**: `categorias` (etiqueta, `activa`, `peso`, `orden`, `nota`), `porEstado` (estado →
-`{clips: [...], modo, enfriamiento?}`), `poseBase` y `clips` (clave = ruta relativa a
+`{clips: [...], modo, enfriamiento?}`), `poseBase`, `ajustes` (`intervaloReposo`, `enfriamientoMin`:
+los defaults que el panel pisa) y `clips` (clave = ruta relativa a
 `Animaciones/`). Cada clip: `etiqueta` (español), `categoria`, `origen` (`autor`, `pack`, `url`,
 `licencia`, `fuente`, `sha256Verificado` si sale de un `provenance.json`), `peso`, `horas`, `nota`,
 `activoPorDefecto`, y lo medido: `giraCuerpo`, `fundidoEntradaS`, `avisos`, `medido`, `sha256`.
