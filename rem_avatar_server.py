@@ -247,6 +247,11 @@ class _LocalHandler(SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", f"http://localhost:{HTTP_PORT}")
+        # Sin esto WebKit cachea por heurística (solo hay Last-Modified) y su
+        # caché en disco, que sobrevive entre arranques, servía un
+        # rem_avatar.html viejo tras editarlo. no-cache = revalidar siempre: un
+        # archivo sin cambios vuelve como 304 (If-Modified-Since), sin bajarse.
+        self.send_header("Cache-Control", "no-cache")
         super().end_headers()
 
     def do_GET(self):

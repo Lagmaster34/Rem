@@ -7,16 +7,18 @@ que `rem_avatar.html` reproduce sobre el modelo con `THREE.AnimationMixer` +
 
 ## Dónde van
 
-Todos los `.vrma` van juntos en:
-
 ```
-Animaciones/VRMA_MotionPack/
+Animaciones/
+├── catalogo.json       qué clips hay (sí se versiona — ver "Catálogo" más abajo)
+├── VRMA_MotionPack/    los clips de antes (categoría "Rem anterior" en el catálogo)
+└── nerumi/             los clips sacados de Nerumi, por categoría
 ```
 
-`rem_avatar.html` los busca ahí por nombre exacto (ver `CONFIG.animaciones` en ese archivo:
-`porEstado` mapea estados emocionales a clips, `gestos.repertorio` los gestos de reposo).
-Si un clip falta en disco, el avatar cae a la animación procedural con un aviso en consola
-(`[Anim] "<archivo>" no disponible: ... — se mantiene la animación procedural`), no se rompe.
+`rem_avatar.html` no busca clips por su cuenta: usa los del catálogo, identificados por su ruta
+relativa a esta carpeta (`nerumi/dance/Dance11-spooky.vrma`). Un clip nuevo tiene que pasar por
+`catalogo_animaciones.py` para aparecer. Si un clip del catálogo falta en disco, el avatar cae a la
+animación procedural con un aviso en consola (`[Anim] "<id>" no disponible: ... — se mantiene la
+animación procedural`), no se rompe.
 
 ## De dónde se bajan
 
@@ -24,7 +26,8 @@ Si un clip falta en disco, el avatar cae a la animación procedural con un aviso
 
 Repo: <https://github.com/tk256ailab/vrm-viewer>, carpeta `VRMA/`.
 
-Archivos que usa este proyecto (copiar tal cual a `Animaciones/VRMA_MotionPack/`):
+Archivos (copiar tal cual a `Animaciones/VRMA_MotionPack/`). La columna "Uso" es la de antes del
+catálogo: hoy el uso lo decide `catalogo.json` y casi todos quedan como "Rem anterior", apagados:
 
 | Archivo | Uso |
 |---|---|

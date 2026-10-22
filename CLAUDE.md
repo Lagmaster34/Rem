@@ -859,6 +859,14 @@ proceso, sin pasar por el objeto `sys.stdout` de Python — reasignar solo ese o
 antes, para que cada línea llegue al toque. Los `print()` de arranque (dónde quedó el log, el
 inspector) salen ANTES del `os.dup2`, a la terminal real.
 
+**Caché HTTP**: el servidor manda `Cache-Control: no-cache` en todo (`_LocalHandler.end_headers`).
+Antes solo mandaba `Last-Modified` y WebKit cacheaba por heurística en su caché en disco
+(`~/.cache/rem_chat.py/WebKitCache`, sobrevive entre arranques): tras editar `rem_avatar.html` la
+ventana seguía sirviendo la versión vieja (pasó al conectar el catálogo de animaciones). Con
+`no-cache` revalida siempre y un archivo sin cambios vuelve como 304, sin bajarse. Una entrada ya
+cacheada SIN esa cabecera no se revalida hasta caducar: si vuelve a pasar con una caché vieja, vaciar
+esa carpeta una vez.
+
 **Inspector remoto**: `WEBKIT_INSPECTOR_SERVER=127.0.0.1:9222` (fijado antes de que WebKit2 se
 inicialice) — abrir `http://127.0.0.1:9222` en un navegador normal para DevTools.
 
@@ -1064,7 +1072,7 @@ en absoluto (el pipeline de voz no se tocó).
 
 Comandos escritos en el input del panel que se resuelven **enteros en el frontend**: nunca salen por
 el WebSocket, no generan `chat_message` ni turno del LLM. Motivo de diseño: el registro de clips solo
-lo conoce `rem_avatar.html` (ver `CONFIG.animaciones.catalogo`), así que el backend no tiene nada que
+lo resuelve `rem_avatar.html` (con `Animaciones/catalogo.json`), así que el backend no tiene nada que
 aportar. Todo vive en `crearPanelChat()`.
 
 **`COMANDOS`**: `{ animaciones: {descripcion, listar(), ejecutar(arg)} }`. `listar()` es opcional y es
@@ -1086,7 +1094,7 @@ registraron los handlers. Con la paleta abierta `Enter` **nunca** envía, ni siq
 (si no, un `/anim` a medio escribir se le mandaría al LLM).
 
 **CSS**: `#chat-paleta` es `position:absolute; bottom:100%` dentro de `#chat-inputbar`, que por eso
-pasó a `position:relative` — queda siempre dentro del panel de chat. Con los 17 clips mide 240px de
+pasó a `position:relative` — queda siempre dentro del panel de chat. Con los 17 clips de entonces medía 240px de
 alto visible sobre 535px de contenido, o sea scroll propio y cero desbordamiento (medido en vivo con
 `getBoundingClientRect()`).
 
@@ -1452,18 +1460,16 @@ está en `rem_avatar.html` — no se tocó Python.
 
 ```
 Animaciones/
-├── README.md                    (de dónde se baja cada conjunto + términos de uso)
-└── VRMA_MotionPack/             (todos los .vrma acá, por nombre exacto)
-    ├── Thinking.vrma Sad.vrma Angry.vrma Surprised.vrma Blush.vrma
-    ├── LookAround.vrma Sleepy.vrma Goodbye.vrma Clapping.vrma Relax.vrma  (pack tk256ailab, MIT)
-    ├── Readme_VRMA_MotionPack_EN.txt
-    └── VRMA_01.vrma … VRMA_07.vrma                              (pack oficial VRoid Project)
+├── README.md         (de dónde sale cada conjunto + licencias)
+├── catalogo.json     (versionado: QUÉ clips hay — ver "Catálogo de animaciones")
+├── VRMA_MotionPack/  (los 17 de antes: tk256ailab + pack oficial VRoid — categoría "Rem anterior")
+└── nerumi/           (172 clips de Nerumi, por categoría: dance/ idle/ greetings/ actions/sit|lying/ ...)
 ```
 
-`Animaciones/` está en `.gitignore` (mismo criterio que `rmvpe.pt`/`rem.vrm`). Se descarga a mano
-— ver `Animaciones/README.md`. Si un clip falta o no parsea, el avatar cae a la animación
-procedural con un aviso (`[Anim] "<archivo>" no disponible: … — se mantiene la animación
-procedural`), sin romperse.
+Los `.vrma` están en `.gitignore` (mismo criterio que `rmvpe.pt`/`rem.vrm`); `catalogo.json` no. Si
+un clip falta o no parsea, el avatar cae a la animación procedural con un aviso (`[Anim] "<id>" no
+disponible: … — se mantiene la animación procedural`), sin romperse, y ese clip sale de la paleta y
+del repertorio por el resto de la sesión (`_clipsFallidos`).
 
 ### Librería: `@pixiv/three-vrm-animation@2.1.3` (solo el loader plugin)
 
@@ -1519,70 +1525,49 @@ arriba.
 - Al llegar `_clipPeso` a 0: `_mixer.stopAllAction()` + `vrm.humanoid.resetNormalizedPose()` (deja
   en reposo piernas/`hips.position` que el clip movió y lo procedural no toca).
 
-### Catálogo de clips, precarga y registro (`CONFIG.animaciones.catalogo`)
+### Catálogo, precarga y caché
 
-`catalogo` es la **única fuente de verdad** del nombre legible y del giro de cuerpo de cada `.vrma`.
-Registra los **17** clips del pack (no 16), incluidos los que `porEstado`/`gestos` no usan
-(`Clapping`, `Goodbye`, `VRMA_02/03/04/06`): la paleta de comandos los ofrece igual. `porEstado`/
-`gestos` siguen referenciando archivos y heredan la etiqueta de acá — no se duplica nada.
+**Qué clips hay sale de `Animaciones/catalogo.json`** (ver "Catálogo de animaciones"), no de
+`CONFIG`: `CONFIG.animaciones` guarda solo el comportamiento (fundidos, ritmo, `cacheMax`,
+`enfriamientoMin`, `baileMinS`, mezcla de la pose base). `cargarCatalogo()` lo baja al arrancar (no en
+overlay) con `cache: 'no-cache'`; sin catálogo no hay clips y todo sigue procedural. Los clips se
+identifican por su ruta relativa a `Animaciones/` (`nerumi/dance/Dance11-spooky.vrma`).
 
-| Archivo | `etiqueta` | Archivo | `etiqueta` |
-|---|---|---|---|
-| `Angry.vrma` | Enfado | `VRMA_01.vrma` | Mostrar cuerpo entero |
-| `Blush.vrma` | Sonrojo | `VRMA_02.vrma` | Saludo |
-| `Clapping.vrma` | Aplaudir | `VRMA_03.vrma` | Señal de V |
-| `Goodbye.vrma` | Despedida | `VRMA_04.vrma` | Disparar |
-| `LookAround.vrma` | Mirar alrededor | `VRMA_05.vrma` | Giro de bailarina |
-| `Relax.vrma` | Relajarse | `VRMA_06.vrma` | Pose de modelo |
-| `Sad.vrma` | Tristeza | `VRMA_07.vrma` | Sentadillas |
-| `Sleepy.vrma` | Sueño | | |
-| `Surprised.vrma` | Sorpresa | | |
-| `Thinking.vrma` | Pensar | | |
+- **Precarga solo de los fijos** (`precargarClipsFijos()`: los de `porEstado` y la pose base, hoy 6):
+  con 189 clips (58 MB) no se puede precargar todo en un WebGL rasterizado por software. El resto se
+  carga la primera vez que se usa.
+- **Caché LRU** (`obtenerClip()`, `_podarCacheClips()`): hasta `cacheMax` (20) clips parseados, sin
+  contar los fijos ni los fallos; al pasarse se desaloja el usado hace más tiempo (con
+  `mixer.uncacheClip`), salvo el que suena y el que se desvanece. `_clipCargando` evita cargar dos veces
+  el mismo clip si se pide mientras ya está en vuelo.
+- **Paleta `/animaciones`**: todos los clips usables (activos o no — pedirlo a mano es explícito),
+  agrupados por categoría (`orden`) con una cabecera por grupo (`.pal-grupo`, no seleccionable);
+  filtra también por el nombre del grupo ("/animaciones bailes").
+- **`giraCuerpo` y `fundidoEntradaS` salen del catálogo, medidos**. Un clip con `fundidoEntradaS`
+  (empieza con los brazos arriba) entra con ese fundido (0,8 s) en vez de `fadeIn`, y su crossfade
+  clip→clip es al menos ese.
 
-Las del pack VRoid salen de su propio `Readme_VRMA_MotionPack_EN.txt`, no están inventadas. Ojo:
-`VRMA_07` es **"Squat" = sentadillas**; el repo lo venía llamando "flexiones", que era incorrecto.
+### Estado → clip y gestos de reposo
 
-**`giraCuerpo` está MEDIDO, no supuesto.** Se extrajo la pista de rotación del hueso `hips` de los 17
-`.vrma` y se calculó el yaw **desenrollado** (acumulando los cruces de ±180°, que si no se leen como
-saltos en vez de como un giro continuo):
+**`porEstado` del catálogo** (`{clips, modo, duracionS?, enfriamiento?}`):
 
-| clip | rango de yaw | `giraCuerpo` |
+| estado | clip(s) | modo |
 |---|---|---|
-| `VRMA_01` | **418,5°** | `true` |
-| `VRMA_05` | **408,2°** | `true` |
-| `LookAround` | 40,4° | `false` |
-| `VRMA_04` | 38,3° | `false` |
-| `VRMA_06` | 36,2° | `false` |
-| resto | ≤ 27° | `false` |
-
-El corte no es ambiguo: los dos marcados dan vuelta y media completa y el siguiente del ranking está
-diez veces por debajo. `VRMA_01` ("mostrar cuerpo entero") gira porque es un giro de exhibición.
-
-**Precarga**: `precargarClips()` corre al cargar el VRM (justo después de `inicializarAnimacionClips()`,
-que es cuando ya existe `vrm.humanoid`, que `clipDeVrma()` necesita) y carga los 17 en **paralelo**
-sin bloquear el render — `obtenerClip()` ya es perezoso/cacheado y nunca lanza. Llena
-`_registroClips` (`archivo → {nombre, etiqueta, giraCuerpo, estado, motivo}`) y loguea
-`[Anim] precarga: 17/17 clips cargados` más la lista de fallidos. Un clip que no parsea queda en
-estado `'error'` y **no aparece en la paleta**, en vez de ofrecerse y no hacer nada al elegirlo.
-`clipsDisponibles()` devuelve solo los `'ok'`, en el orden del catálogo.
-
-### Mapeo estado → clip y gestos de reposo (`CONFIG.animaciones`)
-
-Todo configurable sin tocar código:
-
-| `porEstado` | clip | modo |
-|---|---|---|
-| `thinking` | `Thinking.vrma` | `bucle` (sin tope — dura lo que dure thinking) |
-| `sad` | `Sad.vrma` | `bucle`, `duracionS: 6` |
-| `angry` | `Angry.vrma` | `bucle`, `duracionS: 4` |
-| `surprised` | `Surprised.vrma` | `unaVez` |
-| `happy` | `Blush.vrma` | `unaVez` |
+| `thinking` | `VRMA_MotionPack/Thinking.vrma` | `bucle` (sin tope — dura lo que dure thinking) |
+| `sad` | `Idle38_Cry` | `unaVez`, con enfriamiento |
+| `angry` | `Idle26_Shout` | `unaVez`, con enfriamiento |
+| `surprised` | `Idle68_Surprise` | `unaVez` |
+| `happy` | `Idle74_Cheer` / `Idle65_ThumbsUp` | `unaVez`; al azar sin repetir el último (con dos, alterna) |
 | `talking` | — | sin clip (procedural) |
 | `idle` | — | sin clip: **procedural** (ver "Clip de POSE BASE de idle" abajo) |
 
 - `modo: 'bucle'` = `LoopRepeat`; `duracionS` opcional = tras N s de controlar el cuerpo hace
   crossfade a procedural (la cara sigue). `modo: 'unaVez'` = `LoopOnce` + `clampWhenFinished`; al
   terminar hace crossfade a procedural **siempre**.
+- **Enfriamiento** (`_elegirClipDeEstado()`): un clip de un estado con `enfriamiento` que se reprodujo
+  por estado hace menos de `enfriamientoMin` minutos (5; el panel lo pisa) no vuelve a salir: ese
+  estado solo pone la cara (`[Anim] sad: clip en enfriamiento ... — solo la cara`). Solo cuentan los
+  disparos por estado, no los de la paleta.
 - `sincronizarClipConEstado()` se llama en el `estado !== prevEstado` de `animate()`. Guarda de
   carrera: `_tokenClip` invalida cargas async pendientes si el estado cambió mientras el `.vrma`
   cargaba.
@@ -1637,31 +1622,31 @@ de estado con crossfade (`reproducirClip`/`sincronizarClipConEstado`) y se vuelv
   `updateGestos()` ya no bloquea por `_clipPesoObjetivo === 1`, solo por clip de estado / audio /
   no-idle.
 
-**Gestos de reposo** (`CONFIG.animaciones.gestos`, reemplazan el giro): solo en `estado === 'idle'`
-&& `!_audioActivo` && sin clip de estado. Cada `intervaloMinS`–`intervaloMaxS` (**8–16s**) se elige
-uno por peso:
+**Gestos de reposo** (`_elegirGesto()`): solo en `estado === 'idle'` && `!_audioActivo` && sin clip
+de estado, cada `intervaloReposo` (4–9 s) tras terminar el anterior. El repertorio es el catálogo:
+clips usables y **activos** (`clipActivo()`: preferencia del panel por clip, si no categoría activa +
+`activoPorDefecto`), dentro de su franja `horas`. Se sortea **primero la categoría** por su peso
+(`pesoCategoria()`: idle 4, dance 1) y **después el clip** dentro de ella por el suyo — así el
+reparto es la proporción de las categorías, no depende de cuántos clips tenga cada una (medido sobre
+20 000 sorteos con el catálogo real: idle 79,5 %, dance 20,5 %, 0 repeticiones seguidas). No se
+repite el último gesto mientras quede otro candidato.
 
-| clip | peso | nota |
-|---|---|---|
-| `VRMA_05.vrma` (girar) | 10 | el más frecuente; reemplaza el giro a mano |
-| `LookAround.vrma` | 3 | |
-| `VRMA_07.vrma` (flexiones) | 1 | |
-| `VRMA_01.vrma` (cuerpo entero) | 1 | |
-| `Sleepy.vrma` | 3 | solo `horaDesde:0`–`horaHasta:6` (00:00–06:00, `new Date().getHours()`) |
+**Bailes cortos** (`_opcionesGesto()`): 11 bailes de Nerumi son unidades de bucle de menos de 4 s
+(`doodle` 0,33 s, `ankha` 1 s...). Un baile más corto que `baileMinS` (8 s, la mediana) se repite en
+`bucle` con tope = ciclos completos hasta llegar (`brooklinbloodpop` 8 × 1,03 s, `doodle` 25 × 0,33 s,
+verificado en vivo), así el corte cae en frontera de ciclo. Igual para el disparo manual.
 
-`Goodbye.vrma`/`Clapping.vrma`/`VRMA_02.vrma` quedan disponibles pero fuera del repertorio.
-
-**Ritmo real = intervalo + duración del clip.** `VRMA_05.vrma` dura 9,3s, así que con 8–16s de
-espera sale un gesto cada ~20s. Medido en vivo: **~1 `VRMA_05` por minuto** (4 de 7 gestos en 4
-minutos de reposo). Los dos únicos números a tocar para subirlo o bajarlo son `intervaloMinS/MaxS` y
-el `peso` relativo del clip — los dos en `CONFIG.animaciones.gestos`, nada hardcodeado.
+**Ritmo real = intervalo + duración del clip.** Los dos números a tocar son `intervaloReposo` y los
+pesos (de categoría en el catálogo/panel, de clip en el catálogo).
 
 **`debug_clip` — disparar un clip por nombre bajo demanda** (para grabar video sin esperar al
 sorteo). `window.dispararClipDebug(nombre)` en `rem_avatar.html` lo corre como si fuera un gesto de
-reposo (`unaVez` + vuelta al reposo con crossfade); acepta el nombre con o sin `.vrma`. Se llega por
+reposo (vuelta al reposo con crossfade; un baile corto se repite hasta `baileMinS`); acepta el id
+del catálogo o el nombre de archivo con o sin `.vrma` (`resolverClip()`: `VRMA_05`, `Dance11-spooky`),
+cualquier clip del catálogo aunque no esté activo. Se llega por
 WebSocket (`{tipo: "debug_clip", nombre: "VRMA_05"}`) desde `bench_chat.py` (comando `clip <nombre>`,
-en los dos modos) o desde la consola del inspector remoto. Si el `.vrma` no existe, avisa en consola
-y no dispara nada. Se comporta como cualquier gesto: si entra audio o cambia el estado, se interrumpe
+en los dos modos) o desde la consola del inspector remoto. Si no está en el catálogo o no carga,
+avisa en consola y no dispara nada. Se comporta como cualquier gesto: si entra audio o cambia el estado, se interrumpe
 con crossfade (la voz manda).
 - Guarda de carrera: usa `_tokenClip` igual que `updateGestos()`, y en la rama de token obsoleto
   **libera `_gestoActivo`**. Sin eso, un `.vrma` grande (VRMA_03 son 1,3 MB) pisado por otro pedido
@@ -1673,24 +1658,17 @@ con crossfade (la voz manda).
 `updateGestos()`/`sincronizarClipConEstado()` disparan `volverAProcedural()` o un `crossFadeTo` al
 clip que toque — siempre con crossfade, nunca corte.
 
-### Carga perezosa + cache
-
-`obtenerClip(archivo)` carga el `.vrma` la primera vez que se usa y cachea el resultado (también el
-**fallo**, para no reintentar en cada disparo). Nunca lanza: en error devuelve `{archivo, error}` y
-el llamador cae a lo procedural.
-
 ### Cómo añadir un clip nuevo
 
-1. Dejar el `.vrma` en `Animaciones/VRMA_MotionPack/`.
-2. Agregar la entrada en `CONFIG.animaciones.catalogo` (`etiqueta` + `giraCuerpo`) — con eso solo
-   ya se precarga y aparece en la paleta `/animaciones`. Para `giraCuerpo`, **medir el yaw del hueso
-   `hips` a lo largo del clip**, no adivinar (ver la tabla más arriba).
-3. Si además tiene que dispararse solo, agregarlo a `CONFIG.animaciones.porEstado` (estado → clip),
-   `CONFIG.animaciones.gestos.repertorio` (gesto de reposo con peso, opcionalmente
-   `horaDesde`/`horaHasta`), o `CONFIG.animaciones.idle` (pose base de idle).
-4. Nada más — la carga es perezosa/cacheada; si el archivo falta o no parsea, cae a lo procedural
-   con un aviso en consola (y queda fuera de la paleta). Si el `.vrma` no trae `specVersion`, `normalizarVrma()` lo parchea en
-   memoria automáticamente.
+1. Dejar el `.vrma` en `Animaciones/` (en la subcarpeta de su categoría).
+2. `venv/bin/python catalogo_animaciones.py`: lo mide y lo agrega al catálogo con etiqueta del nombre
+   de archivo, origen `desconocido` y `activoPorDefecto` según la política (categoría activa y sin
+   avisos que lo descalifiquen). **Completar a mano** en `catalogo.json` la `etiqueta` y el `origen`.
+   `giraCuerpo` y el fundido salen medidos, no hay que adivinarlos.
+3. Si tiene que salir por un estado, agregarlo a `porEstado`; como pose base, a `poseBase.archivo`
+   (antes, mirar `medido.brazoIzq/brazoDer` en todo el clip — la lección de `Relax.vrma`).
+4. Nada más: la página relee el catálogo al cargarse. Si el `.vrma` no trae `specVersion`,
+   `normalizarVrma()` lo parchea en memoria.
 
 ### Presupuesto de VRAM del render (`CONFIG.render`)
 
