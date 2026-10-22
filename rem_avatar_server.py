@@ -29,6 +29,19 @@ BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 HTTP_PORT = 18765
 WS_PORT   = 18766
 
+# Orígenes aceptados en el handshake del WS. Un navegador deja que CUALQUIER
+# página abra ws://localhost:18766 (el WebSocket no tiene CORS), y eso basta
+# para mandar chat_message (que dispara tools) — por eso se filtra el Origin:
+# solo las páginas servidas por nuestro HTTP (avatar, y el panel después), más
+# `None` = sin cabecera Origin, que es lo que mandan los clientes Python
+# (bench_chat.py, rem_ptt.py). Un proceso local puede falsificar el Origin, pero
+# ese ya tiene el mismo acceso que el usuario: esto cierra la puerta al navegador.
+WS_ORIGENES_PERMITIDOS = [
+    f"http://localhost:{HTTP_PORT}",
+    f"http://127.0.0.1:{HTTP_PORT}",
+    None,
+]
+
 TMP_AUDIO_DIR   = os.path.join(BASE_DIR, "tmp_audio")
 AUDIO_MAX_AGE_S = 5 * 60  # borrar audios servidos hace más de 5 minutos
 os.makedirs(TMP_AUDIO_DIR, exist_ok=True)
@@ -709,7 +722,8 @@ async def _iniciar_ws():
     _ws_loop = asyncio.get_running_loop()
     import websockets
     try:
-        server = await websockets.serve(_ws_handler, "127.0.0.1", WS_PORT)
+        server = await websockets.serve(_ws_handler, "127.0.0.1", WS_PORT,
+                                        origins=WS_ORIGENES_PERMITIDOS)
     except OSError as e:
         _ws_bind_error = e
         logger.error("[Avatar] no se pudo abrir el WebSocket en :%d (%s)", WS_PORT, e)

@@ -299,6 +299,15 @@ Si se porta algo de ahí, portar también su validación, no solo la acción.
 - `apagar_pc` pasa por confirmación (`TOOLS_QUE_CONFIRMAN`) y no se ofrece en overlay
   (`TOOLS_EXCLUIDAS_OVERLAY`): ahí no hay forma de confirmar.
 - CORS restringido a `localhost` en `rem_avatar_server.py`.
+- **El WS valida el `Origin`** (`WS_ORIGENES_PERMITIDOS`, vía `websockets.serve(origins=...)`): un
+  WebSocket no tiene CORS, así que sin esto cualquier página abierta en el navegador podía conectarse
+  a `ws://localhost:18766` y mandar `chat_message` (que dispara tools). Solo se aceptan
+  `http://localhost:18765`/`http://127.0.0.1:18765` (las páginas servidas por nuestro HTTP) y la
+  ausencia de `Origin` (clientes Python: `bench_chat.py`, `rem_ptt.py`). Lo demás recibe un 403 en
+  el handshake (queda un traceback `InvalidOrigin` de `websockets` en el log, a propósito visible).
+  Verificado: los 3 aceptados conectan; `https://evil.example`, `http://localhost:8080`, `null` y
+  `http://localhost:18765.evil.example` dan 403; la ventana real y `rem_ptt.py` siguen funcionando.
+  No protege de un proceso local (puede falsificar la cabecera), que ya tiene el acceso del usuario.
 
 Si en el futuro se agrega una tool que reciba una ruta del modelo, o que devuelva una lista de rutas
 encontradas, ese es el lugar a revisar: pasarla (o filtrarla) por `_ruta_segura()` antes de usarla o
