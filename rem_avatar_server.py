@@ -615,6 +615,37 @@ async def _ptt_detener(por_tope: bool = False):
     await _procesar_mensaje_chat(texto, t_ref=t_suelta)
 
 
+# ── Preferencias del panel de control (preferencias.py) ───────────────
+# prefs_get -> prefs_estado {prefs}             (solo a quien pregunta)
+# prefs_set {seccion, cambios} -> prefs_actualizadas {seccion, prefs}  (a TODOS:
+#     el avatar y cualquier otro panel abierto tienen que enterarse)
+#                             o prefs_error {seccion, mensaje} (solo a quien pidió)
+# No es `error` a secas: ese lo muestra el panel de chat como burbuja, y un
+# parche rechazado es asunto del panel de control que lo mandó.
+async def _enviar_prefs_estado(websocket):
+    import preferencias
+    await websocket.send(json.dumps({"tipo": "prefs_estado", "prefs": preferencias.todas()}))
+
+
+async def _aplicar_prefs(websocket, seccion, cambios):
+    import preferencias
+    try:
+        # to_thread: escribe a disco y corre los oyentes de la sección, que no
+        # tienen por qué ser instantáneos — el loop del WS sigue atendiendo.
+        efectivos = await asyncio.to_thread(preferencias.aplicar, seccion, cambios)
+    except Exception as e:
+        # PreferenciaInvalida trae un mensaje para el usuario; cualquier otra
+        # cosa (disco lleno, permisos) también se contesta, en vez de dejar que
+        # suba y cierre la conexión del panel.
+        mensaje = str(e) if isinstance(e, preferencias.PreferenciaInvalida) \
+            else f"no se pudo guardar ({type(e).__name__}: {e})"
+        logger.warning("[Prefs] prefs_set rechazado: %s", mensaje)
+        await websocket.send(json.dumps({"tipo": "prefs_error", "seccion": seccion,
+                                         "mensaje": mensaje}))
+        return
+    _broadcast_ws({"tipo": "prefs_actualizadas", "seccion": seccion, "prefs": efectivos})
+
+
 # ── Servidor WebSocket ────────────────────────────────────────────────
 async def _ws_handler(websocket):
     from websockets.exceptions import ConnectionClosed
@@ -692,6 +723,12 @@ async def _ws_handler(websocket):
                 else:
                     _broadcast_ws({"tipo": "error",
                                    "mensaje": "debug_clip sin 'nombre'"})
+
+            elif tipo == "prefs_get":
+                await _enviar_prefs_estado(websocket)
+
+            elif tipo == "prefs_set":
+                await _aplicar_prefs(websocket, data.get("seccion"), data.get("cambios"))
 
             # cualquier otro tipo (o mensaje sin 'tipo') se ignora — el
             # cliente no manda nada más que el servidor necesite procesar.

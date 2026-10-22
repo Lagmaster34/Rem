@@ -37,12 +37,13 @@ def leer_config_toml(ruta: str = TOML_PATH) -> dict:
 
 def leer_modelo_avatar() -> str:
     """Ruta (relativa a la raíz del proyecto) del modelo VRM a cargar en el
-    avatar, desde config.toml [avatar].modelo (default "rem.vrm"). La sirve
+    avatar: la preferencia del panel (preferencias.json -> modelo.vrm) o, si no
+    hay, config.toml [avatar].modelo (default "rem.vrm"). La sirve
     rem_avatar_server.py (que sirve todo BASE_DIR) y la consume
     rem_avatar.html vía el query param ?modelo=... que arma
     rem_avatar_server.url_avatar()."""
-    avatar_config = leer_config_toml().get("avatar", {})
-    return str(avatar_config.get("modelo", "rem.vrm")).strip() or "rem.vrm"
+    import preferencias
+    return preferencias.obtener("modelo")["vrm"]
 
 
 def leer_dispositivo_rvc() -> str:
@@ -56,13 +57,13 @@ def leer_dispositivo_rvc() -> str:
 
 
 def leer_config_voz() -> tuple[str, str]:
-    """(voz, rate) de edge-tts para habla.py, desde config.toml [voz]. Default
-    = la combinación ganadora del A/B (es-VE-PaolaNeural, -8%, ver CLAUDE.md)."""
-    import lipsync
-    cfg = leer_config_toml().get("voz", {})
-    voz = str(cfg.get("voz", lipsync.VOZ_DEFAULT)).strip() or lipsync.VOZ_DEFAULT
-    rate = str(cfg.get("rate", lipsync.RATE_DEFAULT)).strip() or lipsync.RATE_DEFAULT
-    return voz, rate
+    """(voz, rate) de edge-tts para habla.py: la preferencia del panel
+    (preferencias.json -> voz) o, si no hay, config.toml [voz]. Default = la
+    combinación ganadora del A/B (es-VE-PaolaNeural, -8%, ver CLAUDE.md). Se
+    llama por frase, así que un cambio desde el panel suena en la siguiente."""
+    import preferencias
+    cfg = preferencias.obtener("voz")
+    return cfg["voz"], cfg["rate"]
 
 
 def leer_modo_app() -> str:

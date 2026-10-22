@@ -40,3 +40,7 @@ venv/
 
 # Archivos de prueba/debug
 fix_pipeline.py
+
+# Preferencias del panel de control (las edita rem_panel, ver preferencias.py)
+preferencias.json
+preferencias.json.tmp

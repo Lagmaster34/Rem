@@ -43,6 +43,7 @@ no basta con copiar la carpeta.
 | `apply_shim.py` | Copia `fairseq_shim/` sobre el fairseq instalado en `venv/`. Ejecutar tras cualquier reinstalación de fairseq |
 | `llm/` | Capa de abstracción de LLM (contrato + providers). Ver "Capa de abstracción de LLM" más abajo |
 | `config.py` | Módulo compartido: carga `.env` y lee `config.toml`. Lo usan `rem_chat.py`/`bench_chat.py`/`llm/`/`habla.py` |
+| `preferencias.py` | Preferencias editables en vivo desde el panel de control, en `preferencias.json` por encima de `config.toml`. Ver "Preferencias del panel de control" más abajo |
 | `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — `[llm]`/`[llm.claude]`/`[app]`/`[overlay]`/`[stt]` |
 
 ## Capa de abstracción de LLM (`llm/`)
@@ -252,6 +253,7 @@ usuario escribe o habla.
 |---------|-----------|
 | `memoria_larga.json` | Recuerdos a largo plazo (hechos, emociones, eventos, preferencias). Hoy solo se lee: nada la actualiza desde que se fue `Rem.py` |
 | `memoria_sistema.json` | Archivos y carpetas conocidas del sistema |
+| `preferencias.json` | Lo cambiado desde el panel de control (solo lo que difiere de `config.toml`) |
 
 ## Archivos pesados (ignorados por git, descargar manualmente)
 | Archivo | Tamaño | Fuente |
@@ -1146,6 +1148,11 @@ por un campo `tipo`:
 | cliente → Python | `voz` | `{activa: bool}` | Interruptor de voz del panel (`voz_chat_activa()`) |
 | cliente → Python | `estado` | `{estado}` | Pide poner el avatar en ese estado — se valida y se re-difunde a todos (lo usa el comando `state` de `bench_chat.py` cliente) |
 | cliente → Python | `debug_clip` | `{nombre}` | Depuración: dispara un clip VRMA por nombre — se re-difunde a todos (comando `clip` de `bench_chat.py`, ver "Animación de cuerpo con clips VRMA") |
+| cliente → Python | `prefs_get` | — | Pide las preferencias efectivas (respuesta `prefs_estado`, solo a quien pregunta) |
+| cliente → Python | `prefs_set` | `{seccion, cambios}` | Aplica un parche de preferencias (ver "Preferencias del panel de control") |
+| Python → cliente | `prefs_estado` | `{prefs}` | Todas las secciones, valores efectivos |
+| Python → cliente | `prefs_actualizadas` | `{seccion, prefs}` | Un cambio aplicado — se difunde a TODOS (avatar y paneles) |
+| Python → cliente | `prefs_error` | `{seccion, mensaje}` | Parche rechazado — solo a quien lo mandó, no como `error` (eso es burbuja del chat) |
 | Python → cliente | `debug_clip` | `{nombre}` | El avatar corre ese clip una vez y vuelve al reposo |
 | Python → cliente | `estado` | `{estado}` | Estado emocional/de habla del avatar |
 | Python → cliente | `audio` | `{url, timeline}` | WAV a reproducir + timeline de visemes |
@@ -2360,3 +2367,32 @@ abrí." sin abrir nada. Lo reemplaza un par donde Rem se niega a algo que no pue
 se midió de RVC y el ritmo de la voz de origen. Muestras 4-6 de esa carpeta: Salomé a `-15%` (crudo y
 RVC) con 3 respuestas reales del bench emocional. Da ~95 ms/carácter en 2 de 3 (Paola a `-8%`: ~97-99;
 Salomé a `-8%`: ~85-89) y ~80 en la otra. El default sigue siendo Paola `-8%`.
+
+## Preferencias del panel de control (`preferencias.py`)
+
+Base del panel de control (ventana GTK+WebKit aparte, en construcción: pestañas Personalidad,
+Animaciones, Voz y Modelo — el VRM del avatar, no el LLM). `preferencias.json` (ignorado por git)
+guarda solo lo cambiado desde el panel; prioridad `preferencias.json` > `config.toml` > default del
+código. `config.toml` sigue siendo la base versionada.
+
+- **Esquema por sección** (`ESQUEMA`): cada clave con su validador y su valor base (leído de
+  `config.toml` directo, no por `config.leer_*()`, que ya devuelven el valor efectivo). Hoy: `voz`
+  (`voz`, `rate`) y `modelo` (`vrm`). Cada pestaña agrega su sección al implementarse.
+- **`aplicar(seccion, cambios)`** valida el parche ENTERO antes de tocar nada: una clave desconocida
+  o un valor inválido lo rechaza completo (`PreferenciaInvalida`, con mensaje para el usuario).
+  `None` borra la preferencia (vuelve a `config.toml`); un valor igual al de `config.toml` tampoco se
+  guarda. `vrm` exige ruta relativa a un `.vrm` existente dentro del proyecto (sin `..` ni absolutas).
+- **Concurrencia**: la cache del JSON se invalida por mtime (lo puede leer otro proceso, p. ej.
+  `bench_chat.py` standalone) y la escritura es atómica (`.tmp` + `os.replace`) bajo un lock. Un JSON
+  roto o con valores que ya no validan no tumba la app: se ignora lo inválido con un aviso.
+- **Quién aplica**: lo que se lee en cada uso no necesita nada — `config.leer_config_voz()` (por
+  frase, en `habla.decir()`) y `config.leer_modelo_avatar()` (en `url_avatar()`) ya pasan por acá, así
+  que un cambio de voz suena en la frase siguiente. Lo que hay que avisar se registra con
+  `al_cambiar(seccion, callback)`; corre en un hilo aparte (`asyncio.to_thread` en el servidor) y un
+  oyente que falla no deshace lo guardado.
+- **Protocolo**: `prefs_get`/`prefs_set` → `prefs_estado`/`prefs_actualizadas`/`prefs_error` (ver la
+  tabla de "WebSocket bidireccional"). Verificado con el servidor real y dos clientes WS: un cambio
+  llega a los dos y queda en `leer_config_voz()`; 8 parches inválidos (clave desconocida mezclada con
+  una válida, rate fuera de rango, voz con basura, `../`, ruta absoluta, `.vrm` inexistente, sección
+  desconocida, parche vacío) se rechazan sin tocar el archivo ni difundir nada.
+
