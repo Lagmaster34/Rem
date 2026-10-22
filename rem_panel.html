@@ -8,6 +8,7 @@
   /* Misma paleta que el panel de chat de rem_avatar.html (fondo violeta muy
      oscuro, acento cian del suelo synthwave), sin fuentes externas. */
   :root {
+    color-scheme: dark;   /* controles nativos (spin de number, listas de select) en oscuro */
     --fondo: #05000f;
     --fondo-panel: #070212;
     --fondo-elev: #0c0820;
@@ -111,6 +112,95 @@
   }
   #sin-conexion[hidden] { display: none; }
 
+  /* ── Pestaña Animaciones ──────────────────────────────────────── */
+  .tarjeta {
+    max-width: 760px; margin-bottom: 16px; padding: 14px 16px 16px; border-radius: 12px;
+    background: var(--fondo-elev); border: 1px solid var(--borde);
+  }
+  .tarjeta > h3 { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .tarjeta > .ayuda { color: var(--texto-suave); font-size: 12.5px; line-height: 1.45; margin-bottom: 12px; }
+  .aviso-modo {
+    max-width: 760px; margin-bottom: 14px; padding: 10px 14px; border-radius: 8px;
+    background: rgba(255,198,92,0.08); border: 1px solid rgba(255,198,92,0.35); color: var(--aviso);
+  }
+  .linea-estado { max-width: 760px; min-height: 18px; margin-bottom: 8px; font-size: 12.5px; }
+  .linea-estado.ok { color: var(--ok); }
+  .linea-estado.error { color: var(--error); }
+  .fila-ajuste { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  .fila-ajuste label { display: flex; align-items: center; gap: 8px; color: var(--texto-suave); font-size: 13px; }
+  .entrada {
+    font: inherit; font-size: 13px; color: var(--texto); background: var(--fondo);
+    border: 1px solid var(--borde-fuerte); border-radius: 6px; padding: 5px 8px;
+  }
+  .entrada:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+  .entrada.num { width: 72px; }
+  .entrada.busca { width: 100%; max-width: 360px; margin-bottom: 12px; }
+  select.entrada {
+    appearance: none; max-width: 240px; padding-right: 26px; cursor: pointer; color: var(--texto-suave);
+    background: var(--fondo) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237d94a3'/%3E%3C/svg%3E") no-repeat right 9px center;
+  }
+  select.entrada:disabled { opacity: .45; cursor: default; }
+  select.entrada option, select.entrada optgroup { background: var(--fondo-elev); color: var(--texto); }
+
+  .interruptor {
+    appearance: none; flex: none; width: 34px; height: 20px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--borde-fuerte); background: rgba(255,255,255,0.06); position: relative;
+    transition: background .15s ease, border-color .15s ease;
+  }
+  .interruptor::after {
+    content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--texto-suave); transition: transform .15s ease, background .15s ease;
+  }
+  .interruptor[aria-checked="true"] { background: rgba(43,232,255,0.25); border-color: var(--acento); }
+  .interruptor[aria-checked="true"]::after { transform: translateX(14px); background: var(--acento); }
+  .interruptor:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+  .interruptor:disabled { opacity: .4; cursor: default; }
+
+  .estado-fila { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; align-items: start; padding: 8px 0; border-top: 1px solid var(--borde); }
+  .estado-fila:first-of-type { border-top: none; }
+  .estado-fila .nombre { font-weight: 600; padding-top: 4px; }
+  .estado-clips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border-radius: 999px;
+    background: rgba(43,232,255,0.08); border: 1px solid var(--borde-fuerte); font-size: 12.5px;
+  }
+  .chip button {
+    appearance: none; border: none; background: transparent; color: var(--texto-suave); cursor: pointer;
+    font-size: 14px; line-height: 1; width: 20px; height: 20px; border-radius: 50%;
+  }
+  .chip button:hover { color: var(--texto); background: rgba(255,255,255,0.08); }
+  .solo-cara { color: var(--texto-suave); font-size: 12.5px; font-style: italic; }
+  .estado-clips .insignia { font-size: 11.5px; color: var(--texto-suave); }
+
+  .categoria { border-top: 1px solid var(--borde); }
+  .categoria:first-of-type { border-top: none; }
+  .categoria-cab { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 0; }
+  .categoria-cab .nombre { font-weight: 600; }
+  .categoria-cab .cuenta { color: var(--texto-suave); font-size: 12.5px; }
+  .categoria-cab .derecha { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .categoria-nota { color: var(--texto-suave); font-size: 12px; margin: -4px 0 8px 46px; line-height: 1.4; }
+  .clips { display: flex; flex-direction: column; gap: 2px; margin: 0 0 10px 0; }
+  .clip {
+    display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; align-items: center;
+    padding: 7px 8px; border-radius: 8px;
+  }
+  .clip:hover { background: rgba(255,255,255,0.025); }
+  .clip .titulo { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+  .clip .titulo .etq { font-weight: 600; font-size: 13px; }
+  .clip .titulo .dur { color: var(--texto-suave); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .clip .detalle { grid-column: 2; display: flex; flex-wrap: wrap; gap: 4px 6px; font-size: 11.5px; color: var(--texto-suave); }
+  .insignia { padding: 1px 7px; border-radius: 999px; border: 1px solid var(--borde); white-space: nowrap; }
+  .insignia.aviso { color: var(--aviso); border-color: rgba(255,198,92,0.35); }
+  .insignia.desconocido { font-style: italic; }
+  .clip .nota { grid-column: 2; font-size: 11.5px; color: var(--texto-suave); }
+  .clip .boton { grid-column: 3; grid-row: 1 / span 2; }
+
+  @media (max-width: 620px) {
+    .estado-fila { grid-template-columns: 1fr; }
+    .categoria-cab .derecha { margin-left: 0; }
+    .categoria-nota { margin-left: 0; }
+  }
+
   @media (max-width: 620px) {
     body { flex-direction: column; }
     #lateral { flex: none; padding: 12px 16px; }
@@ -151,8 +241,8 @@ const WS_URL = `ws://${location.hostname}:18766`;
 const PESTANAS = [
   { id: 'personalidad', titulo: 'Personalidad', seccion: null,
     desc: 'Cómo habla Rem: tu nombre y el bloque del personaje. Las reglas de longitud, honestidad y herramientas no se editan.' },
-  { id: 'animaciones', titulo: 'Animaciones', seccion: null,
-    desc: 'Clips del avatar: gestos de reposo, su frecuencia y el clip de cada emoción.' },
+  { id: 'animaciones', titulo: 'Animaciones', seccion: 'animaciones', pintar: pintarAnimaciones,
+    desc: 'Clips del avatar: qué gestos hace en reposo y con qué frecuencia, y el clip de cada emoción. Los cambios se aplican al siguiente gesto.' },
   { id: 'voz', titulo: 'Voz', seccion: 'voz',
     desc: 'Voz de edge-tts y su velocidad. Un cambio suena desde la próxima frase.' },
   { id: 'modelo', titulo: 'Modelo', seccion: 'modelo',
@@ -169,6 +259,8 @@ const estado = {
   propias: {},     // {seccion: [claves que vienen del panel]}
   conectado: false,
   mensajes: {},    // `${seccion}.${clave}` -> {texto, tipo}
+  modo: null,      // 'ventana' | 'overlay' (de prefs_estado)
+  catalogo: null,  // Animaciones/catalogo.json, o {error} si no se pudo leer
 };
 
 // ── Pestañas ─────────────────────────────────────────────────────────
@@ -228,7 +320,24 @@ $pestanas.addEventListener('keydown', (e) => {
 });
 
 // ── Pintado ──────────────────────────────────────────────────────────
+// Repinta la pestaña entera. Conserva el scroll y el control con foco (por su
+// data-foco): sin eso, cada interruptor pulsado perdía el foco de teclado.
 function pintar(id) {
+  const foco = document.activeElement?.dataset?.foco;
+  const seleccion = foco ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+  const scroll = $contenido.scrollTop;
+  pintarCuerpo(id);
+  $contenido.scrollTop = scroll;
+  if (foco) {
+    const el = vistas[id].querySelector(`[data-foco="${CSS.escape(foco)}"]`);
+    if (el) {
+      el.focus({ preventScroll: true });
+      if (seleccion && el.setSelectionRange && seleccion[0] != null) el.setSelectionRange(...seleccion);
+    }
+  }
+}
+
+function pintarCuerpo(id) {
   const p = PESTANAS.find(x => x.id === id);
   const cuerpo = vistas[id].querySelector('.cuerpo');
   cuerpo.replaceChildren();
@@ -247,6 +356,7 @@ function pintar(id) {
     cuerpo.appendChild(vacio);
     return;
   }
+  if (p.pintar) { p.pintar(cuerpo, valores); return; }
   const lista = document.createElement('div');
   lista.className = 'campos';
   const propias = new Set(estado.propias[p.seccion] || []);
@@ -328,6 +438,7 @@ function conectar() {
     ponerConexion('conectado', 'Conectado a Rem');
     ws.send(JSON.stringify({ tipo: 'hola', rol: 'panel' }));
     ws.send(JSON.stringify({ tipo: 'prefs_get' }));
+    cargarCatalogo();   // de nuevo en cada reconexión: puede haberse regenerado
   });
   ws.addEventListener('message', (ev) => {
     let d;
@@ -351,6 +462,7 @@ function recibir(d) {
   if (d.tipo === 'prefs_estado') {
     estado.prefs = d.prefs || {};
     estado.propias = d.propias || {};
+    estado.modo = d.modo ?? null;
     pintar(pestanaActiva());
   } else if (d.tipo === 'prefs_actualizadas') {
     estado.prefs[d.seccion] = d.prefs;
@@ -379,6 +491,302 @@ function aplicarCambio(seccion, cambios, clave) {
     (prefs) => { ponerMensaje(seccion, clave, 'Guardado', 'ok'); return prefs; },
     (err) => { ponerMensaje(seccion, clave, err.message, 'error'); throw err; },
   );
+}
+
+// ═══ Pestaña Animaciones ═════════════════════════════════════════════
+// El catálogo (Animaciones/catalogo.json) dice qué clips hay y sus valores por
+// defecto; la sección 'animaciones' de las preferencias guarda solo las
+// EXCEPCIONES. Lo efectivo se calcula acá con las mismas reglas que el avatar
+// (clipActivo()/categoriaActiva() en rem_avatar.html). Cada clave se manda
+// ENTERA: el backend reemplaza la clave, no la fusiona.
+const NOMBRES_ESTADO = { thinking: 'Pensando', happy: 'Contenta', sad: 'Triste', angry: 'Enfadada', surprised: 'Sorprendida' };
+const AVISOS = {
+  'empieza-brazos-alto': 'empieza con brazos arriba (fundido largo)',
+  'termina-brazos-alto': 'termina con brazos arriba',
+  'brazos-alto-mayoria': 'brazos arriba casi todo el clip',
+  'gira': 'gira el cuerpo',
+  'acrobacia': 'acrobacia',
+  'se-sale': 'se sale del encuadre',
+  'largo': 'muy largo',
+};
+// En ámbar: los que lo dejan fuera del reposo por defecto (ver
+// AVISOS_DESCALIFICAN en catalogo_animaciones.py). El resto es informativo.
+const AVISOS_PROBLEMA = new Set(['acrobacia', 'se-sale', 'largo']);
+const anim = { expandidas: new Set(), filtro: '' };
+
+async function cargarCatalogo() {
+  try {
+    const r = await fetch('/Animaciones/catalogo.json', { cache: 'no-cache' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    estado.catalogo = await r.json();
+  } catch (e) {
+    console.warn(`[Panel] no se pudo leer el catálogo: ${e.message}`);
+    estado.catalogo = { error: e.message };
+  }
+  repintarSeccion('animaciones');
+}
+
+function el(tag, clase, texto) {
+  const e = document.createElement(tag);
+  if (clase) e.className = clase;
+  if (texto != null) e.textContent = texto;
+  return e;
+}
+
+function interruptor(activo, foco, etiqueta, alCambiar) {
+  const b = el('button', 'interruptor');
+  b.setAttribute('role', 'switch');
+  b.setAttribute('aria-checked', String(activo));
+  b.setAttribute('aria-label', etiqueta);
+  b.dataset.foco = foco;
+  b.disabled = !estado.conectado;
+  b.addEventListener('click', () => alCambiar(!activo));
+  return b;
+}
+
+function guardarAnim(cambios) {
+  // El resultado (o el error del backend) se ve en la línea de estado.
+  return aplicarCambio('animaciones', cambios, '_').catch(() => {});
+}
+
+function pintarAnimaciones(cuerpo, prefs) {
+  const cat = estado.catalogo;
+  if (!cat) { cuerpo.appendChild(el('div', 'vacio', 'Cargando el catálogo…')); return; }
+  if (cat.error) {
+    cuerpo.appendChild(el('div', 'vacio', `No se pudo leer Animaciones/catalogo.json (${cat.error}).`));
+    return;
+  }
+  const clips = cat.clips ?? {};
+  const cats = cat.categorias ?? {};
+  const catActiva = c => prefs.categorias[c] ?? (cats[c]?.activa === true);
+  const defectoClip = id => catActiva(clips[id].categoria) && clips[id].activoPorDefecto === true;
+  const clipActivo = id => prefs.clips[id] ?? defectoClip(id);
+  const etiqueta = id => clips[id]?.etiqueta ?? id.split('/').pop();
+
+  if (estado.modo === 'overlay') {
+    cuerpo.appendChild(el('div', 'aviso-modo',
+      'Rem está en modo overlay: ahí el cuerpo es procedural y no usa clips. Los cambios se guardan igual y se aplican en modo ventana.'));
+  }
+  const m = estado.mensajes['animaciones._'];
+  const linea = el('div', 'linea-estado' + (m ? ` ${m.tipo}` : ''), m?.texto ?? '');
+  linea.setAttribute('aria-live', 'polite');
+  cuerpo.appendChild(linea);
+
+  // ── Ritmo ─────────────────────────────────────────────────────────
+  {
+    const t = el('section', 'tarjeta');
+    t.appendChild(el('h3', null, 'Ritmo'));
+    t.appendChild(el('p', 'ayuda', 'Espera entre un gesto de reposo y el siguiente (se sortea entre el mínimo y el máximo; el ritmo real suma la duración del clip), y cuánto tarda en repetirse un clip de emoción marcado con enfriamiento.'));
+    const fila = el('div', 'fila-ajuste');
+    const num = (valor, foco, min, max, paso, alCambiar) => {
+      const i = el('input', 'entrada num');
+      Object.assign(i, { type: 'number', min, max, step: paso, value: valor });
+      i.dataset.foco = foco;
+      i.disabled = !estado.conectado;
+      i.addEventListener('change', () => alCambiar(Number(i.value)));
+      return i;
+    };
+    const iv = prefs.intervaloReposo;
+    const lMin = el('label', null, 'Reposo entre gestos: de');
+    lMin.appendChild(num(iv.minS, 'iv-min', 1, 600, 1, v => guardarAnim({ intervaloReposo: { minS: v, maxS: iv.maxS } })));
+    const lMax = el('label', null, 'a');
+    lMax.appendChild(num(iv.maxS, 'iv-max', 1, 600, 1, v => guardarAnim({ intervaloReposo: { minS: iv.minS, maxS: v } })));
+    lMax.appendChild(document.createTextNode('s'));
+    const lEnf = el('label', null, 'Enfriamiento de emociones:');
+    lEnf.appendChild(num(prefs.enfriamientoMin, 'enfriamiento', 0, 120, 1, v => guardarAnim({ enfriamientoMin: v })));
+    lEnf.appendChild(document.createTextNode('min'));
+    fila.append(lMin, lMax, lEnf);
+    t.appendChild(fila);
+    cuerpo.appendChild(t);
+  }
+
+  // ── Emociones (estado -> clip) ───────────────────────────────────
+  {
+    const t = el('section', 'tarjeta');
+    t.appendChild(el('h3', null, 'Emociones'));
+    t.appendChild(el('p', 'ayuda', 'Clip de cuerpo de cada estado. Con varios, sale uno al azar sin repetir el último. Sin ninguno, ese estado solo pone la cara. Estos clips salen aunque su categoría esté apagada.'));
+    const opciones = clipsPorCategoria(clips, cats);
+    for (const [est, def] of Object.entries(cat.porEstado ?? {})) {
+      const lista = prefs.porEstado[est] ?? def.clips ?? [];
+      const guardarLista = nueva => {
+        const porEstado = { ...prefs.porEstado };
+        if (JSON.stringify(nueva) === JSON.stringify(def.clips ?? [])) delete porEstado[est];
+        else porEstado[est] = nueva;
+        guardarAnim({ porEstado });
+      };
+      const fila = el('div', 'estado-fila');
+      fila.appendChild(el('span', 'nombre', NOMBRES_ESTADO[est] ?? est));
+      const caja = el('div', 'estado-clips');
+      if (!lista.length) caja.appendChild(el('span', 'solo-cara', 'Sin clip: solo la cara'));
+      lista.forEach((id, i) => {
+        const chip = el('span', 'chip');
+        chip.appendChild(el('span', null, etiqueta(id)));
+        chip.title = id;
+        const quitar = el('button', null, '×');
+        quitar.setAttribute('aria-label', `Quitar ${etiqueta(id)} de ${NOMBRES_ESTADO[est] ?? est}`);
+        quitar.dataset.foco = `quitar:${est}:${id}`;
+        quitar.disabled = !estado.conectado;
+        quitar.addEventListener('click', () => guardarLista(lista.filter((_, j) => j !== i)));
+        chip.appendChild(quitar);
+        caja.appendChild(chip);
+      });
+      const sel = el('select', 'entrada');
+      sel.dataset.foco = `agregar:${est}`;
+      sel.setAttribute('aria-label', `Agregar un clip a ${NOMBRES_ESTADO[est] ?? est}`);
+      sel.disabled = !estado.conectado || lista.length >= 10;
+      sel.appendChild(new Option('Agregar clip…', ''));
+      for (const { grupo, ids } of opciones) {
+        const og = document.createElement('optgroup');
+        og.label = grupo;
+        for (const id of ids) if (!lista.includes(id)) og.appendChild(new Option(clips[id].etiqueta, id));
+        if (og.children.length) sel.appendChild(og);
+      }
+      sel.addEventListener('change', () => { if (sel.value) guardarLista([...lista, sel.value]); });
+      caja.appendChild(sel);
+      if (def.enfriamiento) caja.appendChild(el('span', 'insignia', `enfriamiento ${prefs.enfriamientoMin} min`));
+      if (prefs.porEstado[est]) {
+        const r = el('button', 'boton', 'Restablecer');
+        r.dataset.foco = `reset-estado:${est}`;
+        r.disabled = !estado.conectado;
+        r.addEventListener('click', () => { const porEstado = { ...prefs.porEstado }; delete porEstado[est]; guardarAnim({ porEstado }); });
+        caja.appendChild(r);
+      }
+      fila.appendChild(caja);
+      t.appendChild(fila);
+    }
+    cuerpo.appendChild(t);
+  }
+
+  // ── Repertorio de reposo ─────────────────────────────────────────
+  {
+    const t = el('section', 'tarjeta');
+    t.appendChild(el('h3', null, 'Gestos de reposo'));
+    t.appendChild(el('p', 'ayuda', 'Qué clips puede hacer Rem cuando está quieta. Primero se sortea la categoría según su peso y después un clip activo dentro de ella. Apagar o encender una categoría entera borra las excepciones de sus clips.'));
+    const busca = el('input', 'entrada busca');
+    Object.assign(busca, { type: 'search', placeholder: 'Buscar por nombre, archivo o autor…', value: anim.filtro });
+    busca.dataset.foco = 'busca';
+    busca.setAttribute('aria-label', 'Buscar clips');
+    busca.addEventListener('input', () => { anim.filtro = busca.value; repintarSeccion('animaciones'); });
+    t.appendChild(busca);
+    const f = anim.filtro.trim().toLowerCase();
+    const coincide = id => !f || [clips[id].etiqueta, id, clips[id].origen?.autor ?? ''].some(x => x.toLowerCase().includes(f));
+
+    for (const { cat: c, grupo, ids } of clipsPorCategoria(clips, cats)) {
+      const visibles = ids.filter(coincide);
+      if (f && !visibles.length) continue;
+      const activa = catActiva(c);
+      const nActivos = ids.filter(clipActivo).length;
+      const bloque = el('div', 'categoria');
+      const cab = el('div', 'categoria-cab');
+      cab.appendChild(interruptor(activa, `cat:${c}`, `Categoría ${grupo}`, v => {
+        const categorias = { ...prefs.categorias };
+        if (v === (cats[c]?.activa === true)) delete categorias[c]; else categorias[c] = v;
+        const clipsPrefs = Object.fromEntries(Object.entries(prefs.clips).filter(([id]) => clips[id]?.categoria !== c));
+        guardarAnim({ categorias, clips: clipsPrefs });
+      }));
+      cab.appendChild(el('span', 'nombre', grupo));
+      cab.appendChild(el('span', 'cuenta', `${nActivos} de ${ids.length} activos`));
+      const der = el('div', 'derecha');
+      const lPeso = el('label', null, 'Peso');
+      lPeso.style.cssText = 'display:flex;align-items:center;gap:6px;color:var(--texto-suave);font-size:12.5px';
+      const peso = el('input', 'entrada num');
+      Object.assign(peso, { type: 'number', min: 0, max: 20, step: 0.5, value: prefs.pesos[c] ?? cats[c]?.peso ?? 1 });
+      peso.dataset.foco = `peso:${c}`;
+      peso.disabled = !estado.conectado;
+      peso.addEventListener('change', () => {
+        const pesos = { ...prefs.pesos };
+        const v = Number(peso.value);
+        if (v === (cats[c]?.peso ?? 1)) delete pesos[c]; else pesos[c] = v;
+        guardarAnim({ pesos });
+      });
+      lPeso.appendChild(peso);
+      der.appendChild(lPeso);
+      const abierta = !!f || anim.expandidas.has(c);
+      const ver = el('button', 'boton', abierta ? 'Ocultar clips' : 'Ver clips');
+      ver.dataset.foco = `ver:${c}`;
+      ver.setAttribute('aria-expanded', String(abierta));
+      ver.setAttribute('aria-controls', `clips-${c}`);
+      ver.disabled = !!f;
+      ver.addEventListener('click', () => {
+        if (anim.expandidas.has(c)) anim.expandidas.delete(c); else anim.expandidas.add(c);
+        repintarSeccion('animaciones');
+      });
+      der.appendChild(ver);
+      cab.appendChild(der);
+      bloque.appendChild(cab);
+      if (cats[c]?.nota) bloque.appendChild(el('p', 'categoria-nota', cats[c].nota));
+      if (abierta) {
+        const lista = el('div', 'clips');
+        lista.id = `clips-${c}`;
+        for (const id of visibles) lista.appendChild(filaClip(id, clips[id], clipActivo(id), v => {
+          const clipsPrefs = { ...prefs.clips };
+          if (v === defectoClip(id)) delete clipsPrefs[id]; else clipsPrefs[id] = v;
+          guardarAnim({ clips: clipsPrefs });
+        }));
+        bloque.appendChild(lista);
+      }
+      t.appendChild(bloque);
+    }
+    cuerpo.appendChild(t);
+  }
+
+  if ((estado.propias.animaciones ?? []).length) {
+    const r = el('button', 'boton', 'Restablecer todas las animaciones');
+    r.dataset.foco = 'reset-todo';
+    r.disabled = !estado.conectado;
+    r.addEventListener('click', () => guardarAnim(Object.fromEntries(Object.keys(prefs).map(k => [k, null]))));
+    cuerpo.appendChild(r);
+  }
+}
+
+// [{cat, grupo, ids}] en el orden del catálogo; dentro, por etiqueta.
+function clipsPorCategoria(clips, cats) {
+  const grupos = new Map();
+  for (const [id, c] of Object.entries(clips)) {
+    if (!grupos.has(c.categoria)) grupos.set(c.categoria, []);
+    grupos.get(c.categoria).push(id);
+  }
+  return [...grupos].map(([cat, ids]) => ({
+    cat, grupo: cats[cat]?.etiqueta ?? cat,
+    ids: ids.sort((a, b) => clips[a].etiqueta.localeCompare(clips[b].etiqueta, 'es')),
+  })).sort((a, b) => (cats[a.cat]?.orden ?? 99) - (cats[b.cat]?.orden ?? 99));
+}
+
+function filaClip(id, c, activo, alCambiar) {
+  const fila = el('div', 'clip');
+  fila.appendChild(interruptor(activo, `clip:${id}`, c.etiqueta, alCambiar));
+  const titulo = el('div', 'titulo');
+  titulo.appendChild(el('span', 'etq', c.etiqueta));
+  if (c.medido?.durS != null) titulo.appendChild(el('span', 'dur', `${c.medido.durS.toFixed(1).replace('.', ',')} s`));
+  fila.appendChild(titulo);
+  const probar = el('button', 'boton', 'Probar');
+  probar.dataset.foco = `probar:${id}`;
+  probar.title = 'Reproducir este clip en el avatar ahora';
+  probar.disabled = !estado.conectado || estado.modo === 'overlay' || !!c.falta || !!c.error;
+  probar.addEventListener('click', () => {
+    ws.send(JSON.stringify({ tipo: 'debug_clip', nombre: id }));
+    ponerMensaje('animaciones', '_', `▶ ${c.etiqueta}: enviado al avatar`, 'ok');
+  });
+  fila.appendChild(probar);
+
+  const det = el('div', 'detalle');
+  const o = c.origen ?? {};
+  const desconocido = !o.autor || o.autor === 'desconocido';
+  const origen = el('span', 'insignia' + (desconocido ? ' desconocido' : ''),
+                    desconocido ? 'origen desconocido' : [o.autor, o.pack].filter(Boolean).join(' · '));
+  origen.title = [`Licencia: ${o.licencia ?? 'desconocida'}`, `Fuente: ${o.fuente ?? '—'}`, o.url,
+                  o.sha256Verificado === true ? 'SHA-256 verificado' : null, `Archivo: ${id}`].filter(Boolean).join('\n');
+  det.appendChild(origen);
+  if (c.falta) det.appendChild(el('span', 'insignia aviso', 'falta en disco'));
+  if (c.error) det.appendChild(el('span', 'insignia aviso', 'no se puede leer'));
+  for (const a of c.avisos ?? []) {
+    if (AVISOS[a]) det.appendChild(el('span', AVISOS_PROBLEMA.has(a) ? 'insignia aviso' : 'insignia', AVISOS[a]));
+  }
+  if (c.horas) det.appendChild(el('span', 'insignia', `solo de ${c.horas[0]} a ${c.horas[1]} h`));
+  if (c.peso != null && c.peso < 1) det.appendChild(el('span', 'insignia', 'raro'));
+  fila.appendChild(det);
+  if (c.nota) fila.appendChild(el('div', 'nota', c.nota));
+  return fila;
 }
 
 const inicial = PESTANAS.some(p => p.id === pestanaGuardada()) ? pestanaGuardada() : PESTANAS[0].id;

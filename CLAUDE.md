@@ -1163,7 +1163,7 @@ por un campo `tipo`:
 | cliente → Python | `debug_clip` | `{nombre}` | Depuración: dispara un clip VRMA por nombre — se re-difunde a todos (comando `clip` de `bench_chat.py`, ver "Animación de cuerpo con clips VRMA") |
 | cliente → Python | `prefs_get` | — | Pide las preferencias efectivas (respuesta `prefs_estado`, solo a quien pregunta) |
 | cliente → Python | `prefs_set` | `{seccion, cambios, id?}` | Aplica un parche de preferencias (ver "Preferencias del panel de control") |
-| Python → cliente | `prefs_estado` | `{prefs, propias}` | Todas las secciones, valores efectivos; `propias` = claves que vienen del panel, por sección |
+| Python → cliente | `prefs_estado` | `{prefs, propias, modo}` | Todas las secciones, valores efectivos; `propias` = claves que vienen del panel, por sección |
 | Python → cliente | `prefs_actualizadas` | `{seccion, prefs, propias, id}` | Un cambio aplicado — se difunde a TODOS (avatar y paneles) |
 | Python → cliente | `prefs_error` | `{seccion, mensaje, id}` | Parche rechazado — solo a quien lo mandó, no como `error` (eso es burbuja del chat) |
 | Python → cliente | `debug_clip` | `{nombre}` | El avatar corre ese clip una vez y vuelve al reposo |
@@ -2423,6 +2423,21 @@ Lanzador: `lanzadores/rem-panel.sh` / **Rem Panel** (no cierra ni reinicia `rem_
   un `id` y resuelve/rechaza al volver ese `id` (timeout 5 s); un cambio hecho por OTRO cliente llega
   como `prefs_actualizadas` sin `id` conocido y solo repinta. El resto de mensajes del WS (audio,
   estado, chat) se ignora.
+- **Pestaña Animaciones** (`pintarAnimaciones()`): lee `Animaciones/catalogo.json` (de nuevo en cada
+  reconexión) y calcula lo efectivo con las mismas reglas que el avatar. Tres tarjetas: **Ritmo**
+  (reposo entre gestos mín/máx, enfriamiento), **Emociones** (por estado: fichas con los clips, ×
+  para quitar, un `select` agrupado por categoría para agregar, Restablecer; sin clips = "solo la
+  cara") y **Gestos de reposo** (por categoría: interruptor, "N de M activos", peso y Ver clips; por
+  clip: interruptor, duración, origen —licencia/fuente/URL en el `title`—, avisos medidos en ámbar si
+  lo dejan fuera por defecto, horario, "raro", nota y **Probar**, que manda `debug_clip`). Buscador
+  por nombre, archivo o autor (despliega las categorías con coincidencias). Una excepción igual al
+  valor por defecto no se guarda; apagar/encender una categoría entera borra las excepciones de sus
+  clips; "Restablecer todas las animaciones" manda todo a `null`. En overlay (el servidor manda
+  `modo` en `prefs_estado`) avisa que ahí no hay clips y deshabilita Probar. Al repintar conserva el
+  scroll y el control con foco (`data-foco`). Verificado sin ventanas, con un banco de pruebas en un
+  `Gtk.OffscreenWindow` (servidor real + la página, pasos por JS, capturas del render): cada acción
+  deja en `preferencias.json` exactamente la excepción esperada, los errores del backend salen en la
+  línea de estado y el campo vuelve al valor real, sin scroll horizontal a 420 px.
 - El panel se identifica como `panel` (ver "Roles de cliente WS"): no cuenta como destinatario del
   estado/audio, así que con el avatar cerrado el aviso de "no llega a nadie" salta igual.
 

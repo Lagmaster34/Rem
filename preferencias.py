@@ -130,7 +130,7 @@ def _validar_clips(v):
 
 def _validar_pesos(v):
     return _dict_de(v, "pesos", _catalogo_anim().get("categorias", {}),
-                    lambda k, x: _numero(x, f"pesos.{k}", 0, 20))
+                    lambda k, x: _numero(x, f"Peso de {k}", 0, 20))
 
 
 def _validar_por_estado(v):
@@ -147,11 +147,11 @@ def _validar_por_estado(v):
 
 def _validar_intervalo(v):
     if not isinstance(v, dict) or set(v) != {"minS", "maxS"}:
-        raise PreferenciaInvalida("intervaloReposo: {minS, maxS}")
-    _numero(v["minS"], "intervaloReposo.minS", 1, 600)
-    _numero(v["maxS"], "intervaloReposo.maxS", 1, 600)
+        raise PreferenciaInvalida("reposo entre gestos: hace falta {minS, maxS}")
+    _numero(v["minS"], "Reposo entre gestos (mínimo, s)", 1, 600)
+    _numero(v["maxS"], "Reposo entre gestos (máximo, s)", 1, 600)
     if v["minS"] > v["maxS"]:
-        raise PreferenciaInvalida("intervaloReposo: minS no puede ser mayor que maxS")
+        raise PreferenciaInvalida("Reposo entre gestos: el mínimo no puede ser mayor que el máximo")
     return v
 
 
@@ -190,7 +190,7 @@ ESQUEMA: dict[str, dict[str, Campo]] = {
         "clips": Campo(_validar_clips, dict),
         "pesos": Campo(_validar_pesos, dict),
         "porEstado": Campo(_validar_por_estado, dict),
-        "enfriamientoMin": Campo(lambda v: _numero(v, "enfriamientoMin", 0, 120),
+        "enfriamientoMin": Campo(lambda v: _numero(v, "Enfriamiento de emociones (min)", 0, 120),
                                  lambda: _ajuste_anim("enfriamientoMin", 5)),
         "intervaloReposo": Campo(_validar_intervalo,
                                  lambda: _ajuste_anim("intervaloReposo", {"minS": 4, "maxS": 9})),

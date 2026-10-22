@@ -638,7 +638,7 @@ async def _ptt_detener(por_tope: bool = False):
 
 
 # ── Preferencias del panel de control (preferencias.py) ───────────────
-# prefs_get -> prefs_estado {prefs, propias}     (solo a quien pregunta)
+# prefs_get -> prefs_estado {prefs, propias, modo} (solo a quien pregunta)
 # prefs_set {seccion, cambios, id?} -> prefs_actualizadas {seccion, prefs, propias, id}
 #     (a TODOS: el avatar y cualquier otro panel abierto tienen que enterarse)
 #   o prefs_error {seccion, mensaje, id}          (solo a quien pidió)
@@ -648,8 +648,9 @@ async def _ptt_detener(por_tope: bool = False):
 # burbuja, y un parche rechazado es asunto del panel de control que lo mandó.
 async def _enviar_prefs_estado(websocket):
     import preferencias
+    # modo (ventana|overlay): el panel avisa que en overlay no hay clips VRMA.
     await websocket.send(json.dumps({"tipo": "prefs_estado", "prefs": preferencias.todas(),
-                                     "propias": preferencias.propias()}))
+                                     "propias": preferencias.propias(), "modo": _modo_actual}))
 
 
 async def _aplicar_prefs(websocket, seccion, cambios, peticion_id=None):
