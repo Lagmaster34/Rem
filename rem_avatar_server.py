@@ -50,6 +50,16 @@ logger = logging.getLogger(__name__)
 
 # ── Clientes WebSocket conectados ────────────────────────────────────
 _ws_clients = set()
+# Rol con que se identificó cada cliente ({"tipo": "hola", "rol": ...}, lo
+# primero que manda al conectar). Los mensajes se siguen difundiendo a TODOS;
+# el rol solo decide quién CUENTA como destinatario para el aviso de "no llegó
+# a nadie": un panel de control abierto no reproduce audio ni mueve el avatar,
+# así que con el avatar cerrado el aviso tiene que saltar igual. Un cliente sin
+# identificar (rem_ptt.py, que solo manda un ptt_* y se va) no cuenta.
+ROLES_WS = {"avatar", "panel", "debug"}
+_ws_roles = {}   # websocket -> rol (bajo _ws_lock, igual que _ws_clients)
+DESTINO_AVATAR = ("avatar",)            # estado, audio, debug_clip
+DESTINO_CHAT   = ("avatar", "debug")    # chat_delta/chat_done/modo_actual/error
 _ws_lock    = threading.Lock()
 _ws_loop    = None
 _ws_ready   = threading.Event()   # se activa cuando el loop WS está listo
@@ -75,23 +85,31 @@ def _avisar_sin_destinatarios(que: str):
     ahora = time.monotonic()
     if ahora - _ultimo_aviso_sin_clientes > 10.0:
         _ultimo_aviso_sin_clientes = ahora
-        logger.warning("[Avatar] %s: ningún cliente WS conectado — el mensaje no llega a nadie "
-                       "(¿está abierta la ventana de rem_chat.py?)", que)
+        logger.warning("[Avatar] %s: ningún cliente WS que lo use conectado — el mensaje no llega "
+                       "a nadie (¿está abierta la ventana de rem_chat.py?)", que)
 
 
-def _emitir_ws(payload: dict, que: str) -> int:
-    """Serializa y manda `payload` a todos los clientes WS. Devuelve a cuántos
-    clientes se despachó (0 si el servidor no está listo o no hay nadie
-    conectado — en ese caso avisa por log, con antirrebote). Único punto por
-    el que salen mensajes Python -> browser: estado, audio y todos los del
-    panel de chat (chat_delta/chat_done/modo_actual/error)."""
+def _clientes_ws(destino):
+    """(todos los clientes, cuántos de ellos tienen un rol de `destino`)."""
+    with _ws_lock:
+        clientes = set(_ws_clients)
+        utiles = sum(1 for ws in clientes if _ws_roles.get(ws) in destino)
+    return clientes, utiles
+
+
+def _emitir_ws(payload: dict, que: str, destino=DESTINO_AVATAR) -> int:
+    """Serializa y manda `payload` a todos los clientes WS. Devuelve cuántos de
+    ellos tienen un rol de `destino` (0 si el servidor no está listo o no hay
+    ninguno — en ese caso avisa por log, con antirrebote; se manda igual al
+    resto). Único punto por el que salen mensajes Python -> browser: estado,
+    audio y todos los del panel de chat (chat_delta/chat_done/modo_actual/error)."""
     if not _ws_ready.is_set() or _ws_loop is None:
         _avisar_sin_destinatarios(que)
         return 0
-    with _ws_lock:
-        clientes = set(_ws_clients)
-    if not clientes:
+    clientes, utiles = _clientes_ws(destino)
+    if not utiles:
         _avisar_sin_destinatarios(que)
+    if not clientes:
         return 0
     msg = json.dumps(payload)
     async def _enviar():
@@ -101,7 +119,7 @@ def _emitir_ws(payload: dict, que: str) -> int:
             except Exception:
                 pass
     asyncio.run_coroutine_threadsafe(_enviar(), _ws_loop)
-    return len(clientes)
+    return utiles
 
 
 def enviar_estado(estado: str) -> int:
@@ -119,10 +137,10 @@ def enviar_debug_clip(nombre: str) -> int:
                       f"debug_clip {nombre!r}")
 
 
-def _broadcast_ws(payload: dict) -> int:
+def _broadcast_ws(payload: dict, destino=DESTINO_CHAT) -> int:
     """Manda `payload` a todos los clientes WS conectados. Genérico — lo usan
     los mensajes del panel de chat (chat_delta/chat_done/modo_actual/error)."""
-    return _emitir_ws(payload, f"mensaje {payload.get('tipo', '?')!r}")
+    return _emitir_ws(payload, f"mensaje {payload.get('tipo', '?')!r}", destino)
 
 
 def _limpiar_audio_viejo():
@@ -141,9 +159,9 @@ def enviar_audio(ruta_wav: str, timeline: list) -> bool:
     junto al timeline de visemes, para que el navegador lo reproduzca y sincronice
     la boca.
 
-    Devuelve True si había al menos un cliente WS conectado (y por tanto se envió).
-    Si no hay clientes, no copia nada y devuelve False — quien llama debe usar el
-    fallback de sounddevice en ese caso.
+    Devuelve True si había al menos un AVATAR conectado (y por tanto se envió a
+    todos). Si no hay ninguno — aunque haya otros clientes, p. ej. el panel de
+    control —, no copia nada y devuelve False.
     """
     if not _ws_ready.is_set():
         _avisar_sin_destinatarios("audio")
@@ -153,9 +171,8 @@ def enviar_audio(ruta_wav: str, timeline: list) -> bool:
         _avisar_sin_destinatarios("audio")
         return False
 
-    with _ws_lock:
-        clientes = set(_ws_clients)
-    if not clientes:
+    _, avatares = _clientes_ws(DESTINO_AVATAR)
+    if not avatares:
         _avisar_sin_destinatarios("audio")
         return False
 
@@ -647,7 +664,8 @@ async def _aplicar_prefs(websocket, seccion, cambios, peticion_id=None):
                                          "mensaje": mensaje, "id": peticion_id}))
         return
     _broadcast_ws({"tipo": "prefs_actualizadas", "seccion": seccion, "prefs": efectivos,
-                   "propias": preferencias.propias().get(seccion, []), "id": peticion_id})
+                   "propias": preferencias.propias().get(seccion, []), "id": peticion_id},
+                  destino=("avatar", "panel"))
 
 
 # ── Servidor WebSocket ────────────────────────────────────────────────
@@ -664,7 +682,16 @@ async def _ws_handler(websocket):
                 continue
             tipo = data.get("tipo") if isinstance(data, dict) else None
 
-            if tipo == "chat_message":
+            if tipo == "hola":
+                rol = str(data.get("rol") or "")
+                if rol in ROLES_WS:
+                    with _ws_lock:
+                        _ws_roles[websocket] = rol
+                    logger.info("[Avatar] cliente WS identificado: %s", rol)
+                else:
+                    logger.warning("[Avatar] 'hola' con rol desconocido: %r (no cuenta como destinatario)", rol)
+
+            elif tipo == "chat_message":
                 texto = str(data.get("texto") or "").strip()
                 if texto:
                     # create_task, no await: así _ws_handler sigue leyendo el
@@ -744,6 +771,7 @@ async def _ws_handler(websocket):
     finally:
         with _ws_lock:
             _ws_clients.discard(websocket)
+            _ws_roles.pop(websocket, None)
         _ws_reproduciendo.discard(websocket)
 
 

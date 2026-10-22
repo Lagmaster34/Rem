@@ -3643,6 +3643,9 @@ let _ws = null;
   _ws = new WebSocket(`ws://localhost:${CONFIG.ws.port}`);
   _ws.onopen = () => {
     console.log('[WS] conectado');
+    // Rol para el servidor: solo los avatares cuentan como destinatarios del
+    // estado/audio (ver ROLES_WS en rem_avatar_server.py).
+    _ws.send(JSON.stringify({ tipo: 'hola', rol: 'avatar' }));
     _wsRetries = 0;
   };
   _ws.onmessage = e => {

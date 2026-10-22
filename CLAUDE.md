@@ -1145,6 +1145,7 @@ por un campo `tipo`:
 
 | Dirección | tipo | Payload | Qué hace |
 |---|---|---|---|
+| cliente → Python | `hola` | `{rol: "avatar"\|"panel"\|"debug"}` | Lo primero que manda cada cliente: su rol (ver "Roles de cliente WS" abajo) |
 | cliente → Python | `chat_message` | `{texto}` | Corre un turno completo contra el LLM activo |
 | cliente → Python | `cambiar_modo` | `{modo: "ia"\|"eco"}` | Cambia el provider de la sesión de chat compartida |
 | cliente → Python | `reset` | — | Limpia el historial de la sesión de chat compartida |
@@ -2428,6 +2429,26 @@ Lanzador: `lanzadores/rem-panel.sh` / **Rem Panel** (no cierra ni reinicia `rem_
   un `id` y resuelve/rechaza al volver ese `id` (timeout 5 s); un cambio hecho por OTRO cliente llega
   como `prefs_actualizadas` sin `id` conocido y solo repinta. El resto de mensajes del WS (audio,
   estado, chat) se ignora.
-- **Limitación conocida**: el panel cuenta como un cliente WS más. Los avisos de "nadie recibió el
-  estado/audio" (`_avisar_sin_destinatarios`) no saltan si el avatar está cerrado pero el panel abierto.
+- El panel se identifica como `panel` (ver "Roles de cliente WS"): no cuenta como destinatario del
+  estado/audio, así que con el avatar cerrado el aviso de "no llega a nadie" salta igual.
+
+## Roles de cliente WS
+
+Cada cliente manda `{"tipo": "hola", "rol": ...}` al conectar: `rem_avatar.html` → `avatar`,
+`rem_panel.html` → `panel`, `bench_chat.py` modo cliente → `debug`. `rem_ptt.py` no se identifica
+(manda un `ptt_*` y se va). El servidor guarda el rol en `_ws_roles` y lo borra al desconectar; un
+rol fuera de `ROLES_WS` se ignora con un aviso.
+
+**Los mensajes se siguen difundiendo a TODOS los clientes**: el rol solo decide quién cuenta como
+destinatario para `_avisar_sin_destinatarios()` y para el valor que devuelven `_emitir_ws()`/
+`_broadcast_ws()`/`enviar_audio()`. Estado, audio y `debug_clip` cuentan solo `avatar`
+(`DESTINO_AVATAR`); los mensajes del chat, `avatar` + `debug` (`DESTINO_CHAT`); `prefs_actualizadas`,
+`avatar` + `panel`. `enviar_audio()` devuelve `False` (y no copia el WAV) si no hay ningún avatar,
+aunque haya otros clientes. Un cliente sin identificar no cuenta.
+
+Verificado con el servidor real y clientes de cada rol: solo panel → estado 0, audio `False`, chat 0
+(con aviso); + un cliente sin identificar o con rol inválido → igual; panel + debug → chat 1; panel +
+avatar → estado 1, audio `True`; al desconectar el avatar vuelve a 0 y su rol se borra. Con
+`rem_chat.py` real, un `state idle` desde `bench_chat.py` cliente no dejó aviso: la ventana se contó
+como avatar.
 

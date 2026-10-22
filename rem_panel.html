@@ -326,6 +326,7 @@ function conectar() {
     estado.conectado = true;
     espera = 1000;
     ponerConexion('conectado', 'Conectado a Rem');
+    ws.send(JSON.stringify({ tipo: 'hola', rol: 'panel' }));
     ws.send(JSON.stringify({ tipo: 'prefs_get' }));
   });
   ws.addEventListener('message', (ev) => {

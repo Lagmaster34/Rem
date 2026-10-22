@@ -284,6 +284,7 @@ async def repl_cliente(args):
     log(f"servidor de avatar detectado — conectando como cliente WS a {WS_URI}")
     try:
         ws = await websockets.connect(WS_URI, open_timeout=5)
+        await ws.send(json.dumps({"tipo": "hola", "rol": "debug"}))
     except Exception as e:
         log(f"no se pudo conectar al WebSocket ({e}) — ¿el servidor sigue vivo?")
         return
