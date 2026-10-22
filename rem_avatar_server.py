@@ -616,18 +616,21 @@ async def _ptt_detener(por_tope: bool = False):
 
 
 # ── Preferencias del panel de control (preferencias.py) ───────────────
-# prefs_get -> prefs_estado {prefs}             (solo a quien pregunta)
-# prefs_set {seccion, cambios} -> prefs_actualizadas {seccion, prefs}  (a TODOS:
-#     el avatar y cualquier otro panel abierto tienen que enterarse)
-#                             o prefs_error {seccion, mensaje} (solo a quien pidió)
-# No es `error` a secas: ese lo muestra el panel de chat como burbuja, y un
-# parche rechazado es asunto del panel de control que lo mandó.
+# prefs_get -> prefs_estado {prefs, propias}     (solo a quien pregunta)
+# prefs_set {seccion, cambios, id?} -> prefs_actualizadas {seccion, prefs, propias, id}
+#     (a TODOS: el avatar y cualquier otro panel abierto tienen que enterarse)
+#   o prefs_error {seccion, mensaje, id}          (solo a quien pidió)
+# `id` es opcional y vuelve tal cual: el panel lo usa para saber qué control se
+# guardó o falló. `propias` = claves que vienen de preferencias.json (el resto
+# es config.toml). No es `error` a secas: ese lo muestra el panel de chat como
+# burbuja, y un parche rechazado es asunto del panel de control que lo mandó.
 async def _enviar_prefs_estado(websocket):
     import preferencias
-    await websocket.send(json.dumps({"tipo": "prefs_estado", "prefs": preferencias.todas()}))
+    await websocket.send(json.dumps({"tipo": "prefs_estado", "prefs": preferencias.todas(),
+                                     "propias": preferencias.propias()}))
 
 
-async def _aplicar_prefs(websocket, seccion, cambios):
+async def _aplicar_prefs(websocket, seccion, cambios, peticion_id=None):
     import preferencias
     try:
         # to_thread: escribe a disco y corre los oyentes de la sección, que no
@@ -641,9 +644,10 @@ async def _aplicar_prefs(websocket, seccion, cambios):
             else f"no se pudo guardar ({type(e).__name__}: {e})"
         logger.warning("[Prefs] prefs_set rechazado: %s", mensaje)
         await websocket.send(json.dumps({"tipo": "prefs_error", "seccion": seccion,
-                                         "mensaje": mensaje}))
+                                         "mensaje": mensaje, "id": peticion_id}))
         return
-    _broadcast_ws({"tipo": "prefs_actualizadas", "seccion": seccion, "prefs": efectivos})
+    _broadcast_ws({"tipo": "prefs_actualizadas", "seccion": seccion, "prefs": efectivos,
+                   "propias": preferencias.propias().get(seccion, []), "id": peticion_id})
 
 
 # ── Servidor WebSocket ────────────────────────────────────────────────
@@ -728,7 +732,8 @@ async def _ws_handler(websocket):
                 await _enviar_prefs_estado(websocket)
 
             elif tipo == "prefs_set":
-                await _aplicar_prefs(websocket, data.get("seccion"), data.get("cambios"))
+                await _aplicar_prefs(websocket, data.get("seccion"), data.get("cambios"),
+                                     data.get("id"))
 
             # cualquier otro tipo (o mensaje sin 'tipo') se ignora — el
             # cliente no manda nada más que el servidor necesite procesar.

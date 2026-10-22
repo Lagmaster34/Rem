@@ -77,7 +77,10 @@ if MODO == "overlay":
         sys.exit("[Chat] ERROR: el modo overlay necesita gtk-layer-shell "
                  "(sudo pacman -S gtk-layer-shell).")
 
-from gi.repository import Gtk, WebKit2, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib
+
+# Tras el entorno y GtkLayerShell: este módulo inicializa WebKit2/GDK al importarse.
+from webview_comun import cargar_con_retry, crear_webview, redirigir_salida_a_log
 
 ANCHO_DEFAULT = 1100
 ALTO_DEFAULT  = 620
@@ -123,86 +126,6 @@ def _precargar_stt():
     stt.precargar_stt()
 
 
-# ── WebView compartido por los dos modos ──────────────────────────────────
-def _crear_webview(transparente):
-    # Settings y WebsitePolicies armados en objetos APARTE, completos, ANTES de
-    # crear el WebView (ver CLAUDE.md, "Regresión repetida de la política de
-    # autoplay" — el orden de los set_* sobre un WebView ya creado rompió el
-    # autoplay dos veces antes de dar con esto).
-    settings = WebKit2.Settings()
-    settings.set_enable_webgl(True)
-    settings.set_enable_javascript(True)
-    try:
-        settings.set_hardware_acceleration_policy(WebKit2.HardwareAccelerationPolicy.ALWAYS)
-    except Exception:
-        pass
-
-    # El audio puede empezar a sonar sin que el usuario haya interactuado con
-    # la página todavía (primera respuesta de Rem apenas se abre la ventana).
-    try:
-        settings.set_media_playback_requires_user_gesture(False)
-        print("[Chat] media-playback-requires-user-gesture desactivado (autoplay permitido)")
-    except Exception as e:
-        print(f"[Chat] set_media_playback_requires_user_gesture no disponible en esta WebKit2 ({e})")
-
-    try:
-        settings.set_enable_write_console_messages_to_stdout(True)
-        settings.set_enable_developer_extras(True)
-        print("[Chat] console.* del frontend -> stdout (rem_chat.log), developer extras habilitados")
-    except Exception as e:
-        print(f"[Chat] no se pudo habilitar el volcado de consola ({e})")
-
-    # WebsitePolicies.autoplay = ALLOW: imprescindible, no alcanza con la
-    # Settings de arriba (WebKitGTK 2.52 tiene un mecanismo separado y más
-    # nuevo que es el que de verdad decide si HTMLMediaElement.play() se
-    # rechaza con NotAllowedError — ver CLAUDE.md). Sin esto no hay audio.
-    try:
-        policies = WebKit2.WebsitePolicies(autoplay=WebKit2.AutoplayPolicy.ALLOW)
-        print("[Chat] WebsitePolicies.autoplay = ALLOW")
-    except Exception as e:
-        policies = None
-        print(f"[Chat] WebsitePolicies no disponible en esta WebKit2 ({e})")
-
-    if policies is not None:
-        webview = WebKit2.WebView(settings=settings, website_policies=policies)
-    else:
-        webview = WebKit2.WebView.new_with_settings(settings)
-
-    if transparente:
-        webview.set_background_color(Gdk.RGBA(0, 0, 0, 0))
-    else:
-        # Fondo oscuro (no transparente) mientras carga la página, a tono con
-        # el suelo synthwave — evita un flash blanco antes de que
-        # rem_avatar.html pinte su propio fondo.
-        webview.set_background_color(Gdk.RGBA(0.02, 0.0, 0.06, 1.0))
-    return webview
-
-
-def _cargar_con_retry(webview, url):
-    """Carga con retry exponencial: el Network Process de WebKit2GTK 2.52.5
-    puede crashear en el peor momento (ver CLAUDE.md, "crash interno del
-    Network Process de WebKit")."""
-    intentos = [0]
-    MAX_INTENTOS = 10
-
-    def _cargar(_=None):
-        intentos[0] += 1
-        webview.load_uri(url)
-        return False
-
-    def _on_load_failed(wv, load_event, failing_uri, error, *_a):
-        if intentos[0] < MAX_INTENTOS:
-            espera = min(500 * (2 ** intentos[0]), 5000)
-            print(f"[Chat] Carga fallida (intento {intentos[0]}), reintentando en {espera}ms...")
-            GLib.timeout_add(espera, _cargar)
-        else:
-            print(f"[Chat] No se pudo cargar el avatar tras {MAX_INTENTOS} intentos")
-        return False
-
-    webview.connect('load-failed', _on_load_failed)
-    GLib.timeout_add(300, _cargar)
-
-
 # ── Modo ventana ──────────────────────────────────────────────────────────
 def _crear_ventana():
     win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
@@ -212,7 +135,7 @@ def _crear_ventana():
     # Decorada, opaca, con foco (set_decorated/accept_focus ya son True por
     # defecto en un Gtk.Window normal). Sin set_app_paintable ni visual RGBA:
     # sin eso el compositor ya la pinta opaca.
-    webview = _crear_webview(transparente=False)
+    webview = crear_webview(transparente=False)
     win.add(webview)
     return win, webview
 
@@ -347,7 +270,7 @@ def _crear_overlay():
     css.load_from_data(b"window, webview { background-color: transparent; background: transparent; }")
     Gtk.StyleContext.add_provider_for_screen(screen, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-    webview = _crear_webview(transparente=True)
+    webview = crear_webview(transparente=True)
     webview.connect('context-menu', lambda *a: True)
     win.add(webview)
 
@@ -373,16 +296,8 @@ def main():
     global _terminal
     _comprobar_instancia_unica()
 
-    # sys.stdout/stderr quedan con buffer de BLOQUE (no de línea) apenas se
-    # redirigen a un archivo/pipe en vez de una terminal real — sin esto,
-    # cualquier print() de este script puede quedarse en el buffer de Python
-    # sin escribirse a ningún lado hasta que el proceso cierre limpio (no
-    # pasa si se lo mata, el caso normal al probar/usar la ventana).
-    # reconfigure(line_buffering=True) lo deja como una terminal: cada línea
-    # se escribe al toque. Tiene que ir ANTES de cualquier print() de acá
-    # abajo, no solo antes del os.dup2() — si no, incluso flusheado a
-    # destiempo puede terminar escribiendo en rem_chat.log en vez de la
-    # terminal real donde se supone que hay que anunciar dónde quedó el log.
+    # line_buffering ya, ANTES de los print() de abajo: si no, alguno puede
+    # flushearse tarde y terminar en rem_chat.log en vez de la terminal real.
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
 
@@ -391,17 +306,7 @@ def main():
     print(f"[Chat] Modo: {MODO}")
     print(f"[Chat] Log: {LOG_PATH}  (tail -f para seguirlo)")
     print(f"[Chat] Inspector remoto: http://127.0.0.1:9222")
-    _terminal = os.fdopen(os.dup(sys.stderr.fileno()), 'w', buffering=1)
-    # os.dup2 sobre los file descriptors reales (1 y 2), no solo reasignar
-    # sys.stdout/sys.stderr: WebKit2 escribe su volcado de consola
-    # (set_enable_write_console_messages_to_stdout) directo al fd 1 nativo
-    # del proceso, sin pasar por el objeto sys.stdout de Python — reasignar
-    # solo ese objeto deja afuera justo lo que más importa capturar acá.
-    # rem_chat.py se lanza directo (no como subprocess), así que la
-    # redirección la hace el propio proceso.
-    log_file = open(LOG_PATH, 'w', buffering=1, encoding='utf-8')
-    os.dup2(log_file.fileno(), sys.stdout.fileno())
-    os.dup2(log_file.fileno(), sys.stderr.fileno())
+    _terminal = redirigir_salida_a_log(LOG_PATH)
 
     config.cargar_dotenv()
     print(f"[Chat] Modo: {MODO}")
@@ -438,7 +343,7 @@ def main():
     else:
         win, webview = _crear_ventana()
 
-    _cargar_con_retry(webview, rem_avatar_server.url_avatar(MODO))
+    cargar_con_retry(webview, rem_avatar_server.url_avatar(MODO))
 
     win.connect('destroy', Gtk.main_quit)
     # Cierre limpio con SIGTERM/SIGINT (pkill, Ctrl+C): la overlay no tiene

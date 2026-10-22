@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Rem Panel
+Comment=Panel de control de Rem (personalidad, animaciones, voz, modelo)
+Exec=@LANZADORES@/rem-panel.sh
+Icon=@ICONO@
+Terminal=false
+Categories=Utility;
+StartupNotify=false

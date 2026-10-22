@@ -236,6 +236,7 @@ La carpeta `lanzadores/` abre cada modo con doble clic o desde el lanzador de ap
 | `lanzadores/rem-ventana.sh` | **Rem Ventana** | `rem_chat.py --modo ventana` |
 | `lanzadores/rem-overlay.sh` | **Rem Overlay** | `rem_chat.py --modo overlay` (avatar sobre el escritorio + caja de texto) |
 | `lanzadores/rem-debug.sh` | **Rem Debug** | `bench_chat.py` en una terminal (`$TERMINAL`, o foot/kitty/alacritty) |
+| `lanzadores/rem-panel.sh` | **Rem Panel** | `rem_panel.py`: panel de control (necesita Rem abierto; no lo cierra ni lo reinicia) |
 | `lanzadores/rem-cerrar.sh` | **Rem Cerrar** | Cierra cualquier `rem_chat.py` abierto, ventana u overlay (SIGTERM, y SIGKILL a los 5 s) |
 
 Para que aparezcan en el lanzador de apps (Hyprland, rofi, wofi, etc.):

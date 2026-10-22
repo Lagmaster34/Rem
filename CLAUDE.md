@@ -43,6 +43,8 @@ no basta con copiar la carpeta.
 | `apply_shim.py` | Copia `fairseq_shim/` sobre el fairseq instalado en `venv/`. Ejecutar tras cualquier reinstalación de fairseq |
 | `llm/` | Capa de abstracción de LLM (contrato + providers). Ver "Capa de abstracción de LLM" más abajo |
 | `config.py` | Módulo compartido: carga `.env` y lee `config.toml`. Lo usan `rem_chat.py`/`bench_chat.py`/`llm/`/`habla.py` |
+| `rem_panel.py` / `rem_panel.html` | Panel de control: ventana GTK+WebKit aparte, cliente del servidor de `rem_chat.py`. Ver "Panel de control (`rem_panel.py`)" más abajo |
+| `webview_comun.py` | Piezas GTK+WebKit compartidas por `rem_chat.py` y `rem_panel.py`: `crear_webview()`, `cargar_con_retry()`, `redirigir_salida_a_log()` |
 | `preferencias.py` | Preferencias editables en vivo desde el panel de control, en `preferencias.json` por encima de `config.toml`. Ver "Preferencias del panel de control" más abajo |
 | `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — `[llm]`/`[llm.claude]`/`[app]`/`[overlay]`/`[stt]` |
 
@@ -329,6 +331,7 @@ la clave `"programas"` del JSON, que no existe en el schema que lee `personalida
 venv/bin/python rem_chat.py                    # LA APLICACIÓN — modo ventana (default de config.toml)
 venv/bin/python rem_chat.py --modo overlay     # LA APLICACIÓN — modo overlay (ver "Modo overlay" más abajo)
 venv/bin/python bench_chat.py                  # REPL de depuración (ver abajo)
+venv/bin/python rem_panel.py                   # panel de control (con Rem ya abierto)
 ```
 
 - **`rem_chat.py`** es la aplicación: llama a `rem_avatar_server.iniciar_servidor_avatar(permitir_reuso=False)`
@@ -1149,10 +1152,10 @@ por un campo `tipo`:
 | cliente → Python | `estado` | `{estado}` | Pide poner el avatar en ese estado — se valida y se re-difunde a todos (lo usa el comando `state` de `bench_chat.py` cliente) |
 | cliente → Python | `debug_clip` | `{nombre}` | Depuración: dispara un clip VRMA por nombre — se re-difunde a todos (comando `clip` de `bench_chat.py`, ver "Animación de cuerpo con clips VRMA") |
 | cliente → Python | `prefs_get` | — | Pide las preferencias efectivas (respuesta `prefs_estado`, solo a quien pregunta) |
-| cliente → Python | `prefs_set` | `{seccion, cambios}` | Aplica un parche de preferencias (ver "Preferencias del panel de control") |
-| Python → cliente | `prefs_estado` | `{prefs}` | Todas las secciones, valores efectivos |
-| Python → cliente | `prefs_actualizadas` | `{seccion, prefs}` | Un cambio aplicado — se difunde a TODOS (avatar y paneles) |
-| Python → cliente | `prefs_error` | `{seccion, mensaje}` | Parche rechazado — solo a quien lo mandó, no como `error` (eso es burbuja del chat) |
+| cliente → Python | `prefs_set` | `{seccion, cambios, id?}` | Aplica un parche de preferencias (ver "Preferencias del panel de control") |
+| Python → cliente | `prefs_estado` | `{prefs, propias}` | Todas las secciones, valores efectivos; `propias` = claves que vienen del panel, por sección |
+| Python → cliente | `prefs_actualizadas` | `{seccion, prefs, propias, id}` | Un cambio aplicado — se difunde a TODOS (avatar y paneles) |
+| Python → cliente | `prefs_error` | `{seccion, mensaje, id}` | Parche rechazado — solo a quien lo mandó, no como `error` (eso es burbuja del chat) |
 | Python → cliente | `debug_clip` | `{nombre}` | El avatar corre ese clip una vez y vuelve al reposo |
 | Python → cliente | `estado` | `{estado}` | Estado emocional/de habla del avatar |
 | Python → cliente | `audio` | `{url, timeline}` | WAV a reproducir + timeline de visemes |
@@ -2395,4 +2398,36 @@ código. `config.toml` sigue siendo la base versionada.
   llega a los dos y queda en `leer_config_voz()`; 8 parches inválidos (clave desconocida mezclada con
   una válida, rate fuera de rango, voz con basura, `../`, ruta absoluta, `.vrm` inexistente, sección
   desconocida, parche vacío) se rechazan sin tocar el archivo ni difundir nada.
+
+## Panel de control (`rem_panel.py`)
+
+Ventana GTK3+WebKit2 aparte (`Rem — Panel de control`, 900×640), **solo cliente**: no levanta
+servidor ni abre puertos. Carga `http://localhost:18765/rem_panel.html` del servidor de `rem_chat.py`
+y habla por el WS de siempre con los mensajes `prefs_*` (ver "Preferencias del panel de control").
+Lanzador: `lanzadores/rem-panel.sh` / **Rem Panel** (no cierra ni reinicia `rem_chat.py`).
+
+- **Necesita Rem abierto** (ventana u overlay): si el HTTP `:18765` no responde, diálogo de error +
+  mensaje a la terminal y sale con 1. Solo se sondea el HTTP: un connect/close crudo al WS deja un
+  traceback de handshake fallido (`EOFError`) en `rem_chat.log` — se vio al probar. Si el WS se cae
+  después, la página muestra "Sin conexión" y reintenta (backoff 1→8 s); verificado cerrando y
+  reabriendo `rem_chat.py` con el panel abierto.
+- **Instancia única** por `Gtk.Application` (`dev.rem.panel`): una segunda invocación hace
+  `register()` → `get_is_remote()` y sale tras traer al frente la primera, **antes** de abrir
+  `rem_panel.log` con `'w'` (si no, lo truncaba — mismo cuidado que `rem_chat.py`).
+- **Log** `rem_panel.log` (consola de la página incluida, vía `webview_comun.redirigir_salida_a_log()`)
+  e **inspector remoto en `:9223`** (fijo, no `setdefault`: `:9222` es de `rem_chat.py`).
+- **`webview_comun.py`**: `crear_webview()`/`cargar_con_retry()`/`redirigir_salida_a_log()` salieron
+  de `rem_chat.py` tal cual (mismo orden Settings → WebsitePolicies → WebView). Se importa después de
+  fijar el entorno y, en overlay, después de `GtkLayerShell`. Verificado: la ventana sigue con
+  `WebsitePolicies.autoplay = ALLOW`, `[WS] conectado` y el VRM cargado.
+- **Página** (`rem_panel.html`, vanilla, paleta del panel de chat): barra lateral con las pestañas
+  (Personalidad, Animaciones, Voz, Modelo; flechas para navegar, la última abierta se recuerda en
+  `localStorage`) y estado de conexión. Cada pestaña declara su `seccion` de `preferencias.ESQUEMA`
+  (`null` = todavía sin opciones). Hoy Voz y Modelo muestran cada valor efectivo con su origen
+  (`panel` / `config.toml`) y **Restablecer** (manda `null`). `aplicarCambio()` manda `prefs_set` con
+  un `id` y resuelve/rechaza al volver ese `id` (timeout 5 s); un cambio hecho por OTRO cliente llega
+  como `prefs_actualizadas` sin `id` conocido y solo repinta. El resto de mensajes del WS (audio,
+  estado, chat) se ignora.
+- **Limitación conocida**: el panel cuenta como un cliente WS más. Los avisos de "nadie recibió el
+  estado/audio" (`_avisar_sin_destinatarios`) no saltan si el avatar está cerrado pero el panel abierto.
 

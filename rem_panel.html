@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel de Rem</title>
+<style>
+  /* Misma paleta que el panel de chat de rem_avatar.html (fondo violeta muy
+     oscuro, acento cian del suelo synthwave), sin fuentes externas. */
+  :root {
+    --fondo: #05000f;
+    --fondo-panel: #070212;
+    --fondo-elev: #0c0820;
+    --borde: rgba(43,232,255,0.16);
+    --borde-fuerte: rgba(43,232,255,0.32);
+    --texto: #eaf6ff;
+    --texto-suave: #7d94a3;
+    --acento: #2be8ff;
+    --acento-texto: #04141a;
+    --ok: #5df2a6;
+    --error: #ff6b8a;
+    --aviso: #ffc65c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--fondo);
+    color: var(--texto);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    display: flex;
+  }
+
+  /* ── Barra lateral ─────────────────────────────────────────────── */
+  #lateral {
+    flex: 0 0 210px;
+    display: flex; flex-direction: column;
+    background: linear-gradient(165deg, #070212 0%, #04000c 70%);
+    border-right: 1px solid var(--borde);
+    padding: 18px 12px 14px;
+  }
+  #marca { padding: 0 8px 18px; }
+  #marca h1 { font-size: 17px; font-weight: 700; letter-spacing: .01em; }
+  #marca p { color: var(--texto-suave); font-size: 12px; margin-top: 2px; }
+  #pestanas { display: flex; flex-direction: column; gap: 2px; }
+  .pestana {
+    appearance: none; border: 1px solid transparent; background: transparent;
+    color: var(--texto-suave); font: inherit; font-weight: 600; text-align: left;
+    padding: 9px 12px; border-radius: 8px; cursor: pointer;
+    transition: background .15s ease, color .15s ease, border-color .15s ease;
+  }
+  .pestana:hover { color: var(--texto); background: rgba(255,255,255,0.03); }
+  .pestana:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+  .pestana[aria-selected="true"] {
+    color: var(--texto); background: rgba(43,232,255,0.08); border-color: var(--borde-fuerte);
+  }
+  #conexion {
+    margin-top: auto; display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,0.02);
+    color: var(--texto-suave); font-size: 12px;
+  }
+  #conexion .punto { width: 8px; height: 8px; border-radius: 50%; background: var(--aviso); flex: none; }
+  #conexion[data-estado="conectado"] .punto { background: var(--ok); box-shadow: 0 0 8px rgba(93,242,166,.6); }
+  #conexion[data-estado="desconectado"] .punto { background: var(--error); }
+
+  /* ── Contenido ─────────────────────────────────────────────────── */
+  #contenido { flex: 1 1 auto; overflow-y: auto; padding: 26px 32px 40px; min-width: 0; }
+  .vista[hidden] { display: none; }
+  .vista header { margin-bottom: 20px; max-width: 640px; }
+  .vista h2 { font-size: 20px; font-weight: 700; }
+  .vista header p { color: var(--texto-suave); margin-top: 4px; line-height: 1.45; }
+
+  .campos { display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
+  .campo {
+    display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center;
+    padding: 12px 14px; border-radius: 10px;
+    background: var(--fondo-elev); border: 1px solid var(--borde);
+  }
+  .campo .nombre { font-weight: 600; }
+  .campo .valor {
+    grid-column: 1; font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 13px;
+    color: var(--acento); overflow-wrap: anywhere;
+  }
+  .campo .acciones { grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: center; gap: 8px; }
+  .origen {
+    font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--borde); color: var(--texto-suave);
+  }
+  .origen.panel { color: var(--acento); border-color: var(--borde-fuerte); }
+  .boton {
+    appearance: none; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+    padding: 5px 12px; border-radius: 999px;
+    background: transparent; color: var(--texto); border: 1px solid var(--borde-fuerte);
+    transition: background .15s ease, opacity .15s ease;
+  }
+  .boton:hover:not(:disabled) { background: rgba(43,232,255,0.10); }
+  .boton:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+  .boton:disabled { opacity: .4; cursor: default; }
+  .campo .mensaje { grid-column: 1 / -1; font-size: 12px; min-height: 0; }
+  .campo .mensaje:empty { display: none; }
+  .mensaje.ok { color: var(--ok); }
+  .mensaje.error { color: var(--error); }
+
+  .vacio {
+    max-width: 640px; padding: 22px; border-radius: 10px;
+    border: 1px dashed var(--borde-fuerte); color: var(--texto-suave); line-height: 1.5;
+  }
+  #sin-conexion {
+    max-width: 640px; margin-bottom: 16px; padding: 10px 14px; border-radius: 8px;
+    background: rgba(255,107,138,0.08); border: 1px solid rgba(255,107,138,0.35); color: var(--error);
+  }
+  #sin-conexion[hidden] { display: none; }
+
+  @media (max-width: 620px) {
+    body { flex-direction: column; }
+    #lateral { flex: none; padding: 12px 16px; }
+    #marca { padding-bottom: 10px; }
+    #pestanas { flex-direction: row; overflow-x: auto; }
+    #conexion { margin-top: 10px; }
+    #contenido { padding: 18px 16px 32px; }
+  }
+</style>
+</head>
+<body>
+  <nav id="lateral">
+    <div id="marca">
+      <h1>Rem</h1>
+      <p>Panel de control</p>
+    </div>
+    <div id="pestanas" role="tablist" aria-orientation="vertical"></div>
+    <div id="conexion" data-estado="conectando" role="status">
+      <span class="punto"></span><span class="texto">Conectando…</span>
+    </div>
+  </nav>
+  <main id="contenido">
+    <div id="sin-conexion" hidden>Sin conexión con Rem. Los cambios no se pueden aplicar hasta que vuelva.</div>
+  </main>
+
+<script>
+'use strict';
+// Panel de control: cliente del WebSocket de rem_avatar_server.py. Las
+// preferencias viven en el backend (preferencias.py); esta página solo las
+// muestra y manda parches: prefs_get / prefs_set {seccion, cambios, id}. Lo
+// aplicado vuelve como prefs_actualizadas a TODOS los clientes (también a otro
+// panel abierto), así que la vista se repinta desde ahí, no desde lo enviado.
+
+const WS_URL = `ws://${location.hostname}:18766`;
+
+// Una entrada por pestaña. `seccion` = sección de preferencias.ESQUEMA que la
+// alimenta (null mientras la pestaña no tenga opciones todavía).
+const PESTANAS = [
+  { id: 'personalidad', titulo: 'Personalidad', seccion: null,
+    desc: 'Cómo habla Rem: tu nombre y el bloque del personaje. Las reglas de longitud, honestidad y herramientas no se editan.' },
+  { id: 'animaciones', titulo: 'Animaciones', seccion: null,
+    desc: 'Clips del avatar: gestos de reposo, su frecuencia y el clip de cada emoción.' },
+  { id: 'voz', titulo: 'Voz', seccion: 'voz',
+    desc: 'Voz de edge-tts y su velocidad. Un cambio suena desde la próxima frase.' },
+  { id: 'modelo', titulo: 'Modelo', seccion: 'modelo',
+    desc: 'Modelo VRM del avatar.' },
+];
+
+const ETIQUETAS = {
+  voz: { voz: 'Voz', rate: 'Velocidad' },
+  modelo: { vrm: 'Modelo VRM' },
+};
+
+const estado = {
+  prefs: {},       // {seccion: {clave: valor efectivo}}
+  propias: {},     // {seccion: [claves que vienen del panel]}
+  conectado: false,
+  mensajes: {},    // `${seccion}.${clave}` -> {texto, tipo}
+};
+
+// ── Pestañas ─────────────────────────────────────────────────────────
+const $pestanas = document.getElementById('pestanas');
+const $contenido = document.getElementById('contenido');
+const vistas = {};
+
+function guardarPestana(id) {
+  try { localStorage.setItem('rem_panel_pestana', id); } catch (_) {}
+}
+function pestanaGuardada() {
+  try { return localStorage.getItem('rem_panel_pestana'); } catch (_) { return null; }
+}
+
+for (const p of PESTANAS) {
+  const boton = document.createElement('button');
+  boton.className = 'pestana';
+  boton.id = `pestana-${p.id}`;
+  boton.textContent = p.titulo;
+  boton.setAttribute('role', 'tab');
+  boton.setAttribute('aria-controls', `vista-${p.id}`);
+  boton.addEventListener('click', () => activarPestana(p.id));
+  $pestanas.appendChild(boton);
+
+  const vista = document.createElement('section');
+  vista.className = 'vista';
+  vista.id = `vista-${p.id}`;
+  vista.setAttribute('role', 'tabpanel');
+  vista.setAttribute('aria-labelledby', boton.id);
+  vista.innerHTML = `<header><h2></h2><p></p></header><div class="cuerpo"></div>`;
+  vista.querySelector('h2').textContent = p.titulo;
+  vista.querySelector('header p').textContent = p.desc;
+  $contenido.appendChild(vista);
+  vistas[p.id] = vista;
+}
+
+function activarPestana(id) {
+  for (const p of PESTANAS) {
+    const activa = p.id === id;
+    document.getElementById(`pestana-${p.id}`).setAttribute('aria-selected', String(activa));
+    document.getElementById(`pestana-${p.id}`).tabIndex = activa ? 0 : -1;
+    vistas[p.id].hidden = !activa;
+  }
+  guardarPestana(id);
+  pintar(id);
+}
+
+// Flechas arriba/abajo entre pestañas (patrón tablist).
+$pestanas.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  const i = PESTANAS.findIndex(p => document.getElementById(`pestana-${p.id}`) === document.activeElement);
+  if (i < 0) return;
+  e.preventDefault();
+  const j = (i + (e.key === 'ArrowDown' ? 1 : -1) + PESTANAS.length) % PESTANAS.length;
+  activarPestana(PESTANAS[j].id);
+  document.getElementById(`pestana-${PESTANAS[j].id}`).focus();
+});
+
+// ── Pintado ──────────────────────────────────────────────────────────
+function pintar(id) {
+  const p = PESTANAS.find(x => x.id === id);
+  const cuerpo = vistas[id].querySelector('.cuerpo');
+  cuerpo.replaceChildren();
+  if (!p.seccion) {
+    const vacio = document.createElement('div');
+    vacio.className = 'vacio';
+    vacio.textContent = 'Esta pestaña todavía no tiene opciones.';
+    cuerpo.appendChild(vacio);
+    return;
+  }
+  const valores = estado.prefs[p.seccion];
+  if (!valores) {
+    const vacio = document.createElement('div');
+    vacio.className = 'vacio';
+    vacio.textContent = estado.conectado ? 'Cargando…' : 'Esperando la conexión con Rem…';
+    cuerpo.appendChild(vacio);
+    return;
+  }
+  const lista = document.createElement('div');
+  lista.className = 'campos';
+  const propias = new Set(estado.propias[p.seccion] || []);
+  for (const [clave, valor] of Object.entries(valores)) {
+    lista.appendChild(campo(p.seccion, clave, valor, propias.has(clave)));
+  }
+  cuerpo.appendChild(lista);
+}
+
+function campo(seccion, clave, valor, delPanel) {
+  const el = document.createElement('div');
+  el.className = 'campo';
+  el.innerHTML = `<span class="nombre"></span><span class="valor"></span>
+    <span class="acciones"><span class="origen"></span></span><span class="mensaje" aria-live="polite"></span>`;
+  el.querySelector('.nombre').textContent = ETIQUETAS[seccion]?.[clave] ?? clave;
+  el.querySelector('.valor').textContent = String(valor);
+  const origen = el.querySelector('.origen');
+  origen.textContent = delPanel ? 'panel' : 'config.toml';
+  origen.classList.toggle('panel', delPanel);
+  origen.title = delPanel ? 'Cambiado desde el panel (preferencias.json)'
+                          : 'Valor de config.toml (o el default del código)';
+  if (delPanel) {
+    const reset = document.createElement('button');
+    reset.className = 'boton';
+    reset.textContent = 'Restablecer';
+    reset.title = 'Volver al valor de config.toml';
+    reset.disabled = !estado.conectado;
+    // El error ya queda mostrado en el campo (aplicarCambio).
+    reset.addEventListener('click', () => aplicarCambio(seccion, { [clave]: null }, clave).catch(() => {}));
+    el.querySelector('.acciones').appendChild(reset);
+  }
+  const m = estado.mensajes[`${seccion}.${clave}`];
+  if (m) {
+    const $m = el.querySelector('.mensaje');
+    $m.textContent = m.texto;
+    $m.classList.add(m.tipo);
+  }
+  return el;
+}
+
+function pestanaActiva() {
+  return PESTANAS.find(p => !vistas[p.id].hidden)?.id;
+}
+function repintarSeccion(seccion) {
+  const id = pestanaActiva();
+  if (PESTANAS.find(p => p.id === id)?.seccion === seccion) pintar(id);
+}
+
+function ponerMensaje(seccion, clave, texto, tipo) {
+  const k = `${seccion}.${clave}`;
+  estado.mensajes[k] = { texto, tipo };
+  repintarSeccion(seccion);
+  // Un "guardado" se va solo; un error queda hasta el próximo intento.
+  if (tipo === 'ok') setTimeout(() => {
+    if (estado.mensajes[k]?.texto === texto) { delete estado.mensajes[k]; repintarSeccion(seccion); }
+  }, 2500);
+}
+
+// ── WebSocket ────────────────────────────────────────────────────────
+let ws = null;
+let espera = 1000;
+let contadorId = 0;
+const pendientes = new Map();   // id -> {resolve, reject, timer}
+
+function ponerConexion(est, texto) {
+  const $c = document.getElementById('conexion');
+  $c.dataset.estado = est;
+  $c.querySelector('.texto').textContent = texto;
+  document.getElementById('sin-conexion').hidden = est !== 'desconectado';
+}
+
+function conectar() {
+  ponerConexion('conectando', 'Conectando…');
+  ws = new WebSocket(WS_URL);
+  ws.addEventListener('open', () => {
+    console.log('[Panel] WS conectado');
+    estado.conectado = true;
+    espera = 1000;
+    ponerConexion('conectado', 'Conectado a Rem');
+    ws.send(JSON.stringify({ tipo: 'prefs_get' }));
+  });
+  ws.addEventListener('message', (ev) => {
+    let d;
+    try { d = JSON.parse(ev.data); } catch (_) { return; }
+    recibir(d);
+  });
+  ws.addEventListener('close', () => {
+    const habia = estado.conectado;
+    estado.conectado = false;
+    for (const [id, p] of pendientes) { clearTimeout(p.timer); p.reject(new Error('se perdió la conexión')); }
+    pendientes.clear();
+    ponerConexion('desconectado', `Sin conexión — reintento en ${Math.round(espera / 1000)} s`);
+    if (habia) console.warn('[Panel] WS desconectado');
+    pintar(pestanaActiva());
+    setTimeout(conectar, espera);
+    espera = Math.min(espera * 2, 8000);
+  });
+}
+
+function recibir(d) {
+  if (d.tipo === 'prefs_estado') {
+    estado.prefs = d.prefs || {};
+    estado.propias = d.propias || {};
+    pintar(pestanaActiva());
+  } else if (d.tipo === 'prefs_actualizadas') {
+    estado.prefs[d.seccion] = d.prefs;
+    estado.propias[d.seccion] = d.propias || [];
+    const p = pendientes.get(d.id);
+    if (p) { clearTimeout(p.timer); pendientes.delete(d.id); p.resolve(d.prefs); }
+    else repintarSeccion(d.seccion);   // lo cambió otro cliente
+  } else if (d.tipo === 'prefs_error') {
+    const p = pendientes.get(d.id);
+    if (p) { clearTimeout(p.timer); pendientes.delete(d.id); p.reject(new Error(d.mensaje)); }
+  }
+  // El resto (audio, estado, chat_delta...) es para el avatar: se ignora.
+}
+
+// Manda un parche y resuelve con los valores efectivos, o rechaza con el
+// mensaje del backend. `clave` = dónde mostrar el resultado.
+function aplicarCambio(seccion, cambios, clave) {
+  if (!estado.conectado) return Promise.reject(new Error('sin conexión'));
+  const id = `p${++contadorId}`;
+  const promesa = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { pendientes.delete(id); reject(new Error('Rem no respondió')); }, 5000);
+    pendientes.set(id, { resolve, reject, timer });
+  });
+  ws.send(JSON.stringify({ tipo: 'prefs_set', seccion, cambios, id }));
+  return promesa.then(
+    (prefs) => { ponerMensaje(seccion, clave, 'Guardado', 'ok'); return prefs; },
+    (err) => { ponerMensaje(seccion, clave, err.message, 'error'); throw err; },
+  );
+}
+
+const inicial = PESTANAS.some(p => p.id === pestanaGuardada()) ? pestanaGuardada() : PESTANAS[0].id;
+activarPestana(inicial);
+conectar();
+</script>
+</body>
+</html>

@@ -171,6 +171,15 @@ def todas() -> dict:
     return {seccion: obtener(seccion) for seccion in ESQUEMA}
 
 
+def propias() -> dict:
+    """Las claves que vienen de preferencias.json (cambiadas desde el panel),
+    por sección: {"voz": ["rate"], ...}. El panel las marca y ofrece volver a
+    config.toml; el resto sale de config.toml o del default."""
+    with _lock:
+        datos = _cargar()
+        return {seccion: sorted(datos.get(seccion, {})) for seccion in ESQUEMA}
+
+
 def aplicar(seccion: str, cambios: dict) -> dict:
     """Valida el parche entero, lo guarda y avisa a los oyentes de la sección.
     Devuelve los valores efectivos resultantes. Lanza PreferenciaInvalida sin
