@@ -34,8 +34,8 @@ Comandos dentro del REPL:
     open                 — abre el avatar en el navegador por defecto
     quit                 — cierra limpiamente (o Ctrl+D / Ctrl+C)
 
-Modo "ia" habla con el provider configurado (llm.get_provider() — Claude,
-Groq u Ollama según .env/config.toml), con el contexto dinámico real
+Modo "ia" habla con el provider configurado (llm.get_provider() — Ollama o
+Claude según .env/config.toml), con el contexto dinámico real
 (fecha/hora/estado de la PC) antepuesto a cada mensaje. Modo "eco"
 (llm.echo.EchoProvider) no llama a ningún modelo: repite tal cual el último
 mensaje, sin ese contexto — el modo eco existe para que Rem diga

@@ -52,7 +52,7 @@ def precargar_prefijo(tools=None):
     caché de Ollama y el primer turno tras una (re)carga no lo pague. `tools`
     tienen que ser las mismas que ofrecerá el panel (acciones.tools_disponibles()
     del modo activo): en el template del modelo van dentro del bloque system,
-    y si difieren el prefijo ya no coincide. No hace nada con Claude/Groq."""
+    y si difieren el prefijo ya no coincide. No hace nada con Claude."""
     import llm
     llm.precargar_provider(personalidad.construir_prompt_sistema(),
                            _prefijo_fijo(personalidad.cargar_memoria_larga()), tools)
@@ -173,7 +173,7 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
     # Orden final: system → ejemplos de tono → memoria larga → historial, con
     # el contexto dinámico pegado solo al último mensaje. Todo lo que cambia
     # queda detrás de system + ejemplos, que son idénticos byte a byte en cada
-    # turno (el prefijo que reusan las cachés de Ollama/Groq/Claude). El
+    # turno (el prefijo que reusan las cachés de Ollama/Claude). El
     # contexto va en el último mensaje y no antes del historial: si fuera
     # antes, cada turno que lo trae invalidaría también todo el historial.
     # En eco no va nada de esto: no hay modelo del otro lado.

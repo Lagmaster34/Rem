@@ -1,6 +1,6 @@
 """ClaudeProvider — implementación del contrato LLMProvider sobre la API de
-Anthropic (Claude), con streaming real vía AsyncAnthropic. Groq queda como
-fallback (ver llm/groq.py y get_provider()).
+Anthropic (Claude), con streaming real vía AsyncAnthropic. El provider por
+defecto es Ollama (llm/local.py, ver get_provider()).
 
 Elección de modelo: Claude Sonnet 5 (familia intermedia), no el modelo tope
 (Opus 5 / Fable 5). Para un asistente conversacional de escritorio como Rem
@@ -27,12 +27,15 @@ _MAX_TOKENS_DEFAULT = 1024  # respuesta conversacional corta, no una tarea agén
 
 
 class ClaudeProvider(LLMProvider):
-    """Mismo patrón de cliente perezoso por loop que GroqProvider (ver la
-    nota ahí): AsyncAnthropic envuelve un cliente HTTP async también, y uno
-    que llega a abrir una conexión real queda atado al loop en el que corrió
-    esa primera vez. Si este provider se usa como singleton y se lo llama
-    desde un loop nuevo (p. ej. un asyncio.run() por llamada),
-    reusar el cliente viejo revienta con "Event loop is closed"."""
+    """El cliente AsyncAnthropic (httpx por debajo) NO se crea en __init__: un
+    httpx.AsyncClient que llega a abrir una conexión real queda con su pool
+    interno atado al event loop que estaba corriendo en ese momento. Si este
+    provider se usa como singleton y alguien lo llama desde un loop nuevo —
+    p. ej. un asyncio.run() descartable por turno — reusar ese cliente
+    revienta con "RuntimeError: Event loop is closed" en cuanto intenta reusar
+    la conexión pooleada del loop viejo (reproducido con httpx.AsyncClient
+    puro, sin mocks: falla en el segundo request, no en el primero). Por eso
+    el cliente se crea perezoso, por loop — ver _obtener_cliente()."""
 
     def __init__(self, api_key: str, model: str = _MODELO_DEFAULT,
                  max_tokens: int = _MAX_TOKENS_DEFAULT, timeout: float = 30.0):
@@ -99,9 +102,8 @@ class ClaudeProvider(LLMProvider):
                 for t in tools
             ]
 
-        # Igual que en Groq: el retry solo cubre conectar y obtener el
-        # stream, no una respuesta que ya empezó a llegar y se corta a
-        # mitad de camino (ver la nota en groq.py).
+        # El retry solo cubre conectar y obtener el stream, no una respuesta
+        # que ya empezó a llegar y se corta a mitad de camino (ver llm/_retry.py).
         stream = await reintentar_con_backoff(
             lambda: client.messages.create(**kwargs), _MAX_REINTENTOS, "Claude",
         )

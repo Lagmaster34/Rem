@@ -1,5 +1,5 @@
 """Contrato común para cualquier backend de voz a texto (faster-whisper local,
-Whisper en la API de Groq...). Mismo criterio que llm/base.py: el resto del
+otro motor...). Mismo criterio que llm/base.py: el resto del
 código habla con STTProvider y no sabe cuál hay detrás.
 
 Sincrónico a propósito, a diferencia de LLMProvider: transcribir() es una
@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-SAMPLE_RATE = 16000  # Hz — el que esperan tanto faster-whisper como la API de Groq
+SAMPLE_RATE = 16000  # Hz — el que espera faster-whisper
 
 
 class STTProvider(ABC):

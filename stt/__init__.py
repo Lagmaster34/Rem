@@ -1,5 +1,5 @@
 """Capa de abstracción de voz a texto (STT): contrato común (base.py) + un
-provider por backend (local.py = faster-whisper, groq.py). get_stt_provider()
+provider por backend (local.py = faster-whisper). get_stt_provider()
 decide cuál instanciar según configuración — mismo esquema que llm/."""
 import os
 import threading
@@ -58,22 +58,7 @@ def get_stt_provider() -> STTProvider:
             initial_prompt=str(c.get("initial_prompt", "")) or None,
         )
 
-    if proveedor == "groq":
-        from .groq import GroqSTTProvider
-        api_key = os.environ.get("GROQ_API_KEY", "").strip()
-        if not api_key:
-            raise RuntimeError(
-                "Proveedor STT 'groq' seleccionado pero falta GROQ_API_KEY en el "
-                "entorno (revisá tu .env)."
-            )
-        c = dict(stt_config.get("groq", {}))
-        return GroqSTTProvider(
-            api_key=api_key,
-            model=str(c.get("model", "whisper-large-v3-turbo")),
-            language=str(c.get("language", "es")),
-        )
-
-    raise ValueError(f"Proveedor de STT desconocido: '{proveedor}'. Implementados: 'local', 'groq'.")
+    raise ValueError(f"Proveedor de STT desconocido: '{proveedor}'. Implementado: 'local'.")
 
 
 _compartido = None

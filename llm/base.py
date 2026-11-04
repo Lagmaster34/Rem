@@ -1,4 +1,4 @@
-"""Contrato común para cualquier backend de LLM (Groq, Claude, un modelo local...).
+"""Contrato común para cualquier backend de LLM (Ollama local, Claude...).
 
 Async nativo: los consumidores (chat_sesion.procesar_turno(), desde el loop
 del servidor WS o del REPL de bench_chat.py) ya corren dentro de un event loop.
@@ -16,7 +16,7 @@ class Message:
     content: str
     # Marca el fin de un prefijo estable (p. ej. el último ejemplo de tono,
     # ver chat_sesion.py). Solo ClaudeProvider lo usa: pone ahí un punto de
-    # caché explícito. Ollama/Groq cachean por prefijo solos y lo ignoran.
+    # caché explícito. Ollama cachea por prefijo solo y lo ignora.
     fin_prefijo_cache: bool = False
 
 
@@ -67,7 +67,7 @@ class LLMProvider(ABC):
 
     El system prompt viaja como parámetro explícito de `stream_chat`, NUNCA
     dentro de `messages`. Motivo: Claude lo lleva como campo de nivel superior
-    (`system=`) y los endpoints OpenAI-compatible (Groq incluido) lo esperan
+    (`system=`) y los endpoints OpenAI-compatible lo esperan
     como un mensaje más del array con `role="system"`. Si lo metiéramos en la
     lista de `messages`, cada provider tendría que extraerlo de ahí para
     dárselo a su API en el formato que le corresponda — y ese paso de ida y

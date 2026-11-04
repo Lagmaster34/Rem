@@ -219,12 +219,6 @@ def url_avatar(modo: str = "ventana") -> str:
     return f"http://localhost:{HTTP_PORT}/rem_avatar.html?{qs}"
 
 
-def enviar_estado_emocional(emocion: str):
-    """Envía un estado emocional al avatar. Válidos: happy, sad, angry, surprised."""
-    if emocion in ESTADOS_VALIDOS:
-        enviar_estado(emocion)
-
-
 # ── Servidor HTTP — solo acepta conexiones de localhost ───────────────
 class _LocalHandler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
@@ -314,10 +308,6 @@ _chat_cola_habla = None
 _chat_worker_habla_task = None
 
 
-def voz_chat_activa() -> bool:
-    return _chat_voz_activa
-
-
 def set_voz_chat_activa(activa: bool) -> None:
     global _chat_voz_activa
     _chat_voz_activa = bool(activa)
@@ -371,7 +361,7 @@ async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None):
     """Maneja un chat_message del panel: corre el turno completo contra el
     LLM (chat_sesion.procesar_turno()) emitiendo chat_delta por cada
     fragmento tal como llega, y si la voz del panel está activa (ver
-    voz_chat_activa()/set_voz_chat_activa()) también encola cada oración
+    _chat_voz_activa/set_voz_chat_activa()) también encola cada oración
     para hablar (Piper -> enviar_audio, mismo pipeline que el REPL de
     bench_chat.py, ver habla.py) apenas dividir_en_oraciones() la completa.
     Mueve el estado del avatar a 'thinking' antes del primer fragmento y a

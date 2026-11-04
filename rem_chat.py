@@ -321,7 +321,7 @@ def main():
     threading.Thread(target=_precargar_stt, daemon=True).start()
     # El LLM local también: sin esto el primer turno paga la carga del modelo
     # (~6,7s medidos con Ollama) y la evaluación del prefijo fijo (system +
-    # tools + ejemplos de tono). No hace nada con Claude/Groq.
+    # tools + ejemplos de tono). No hace nada con Claude.
     import acciones
     import chat_sesion
     threading.Thread(target=chat_sesion.precargar_prefijo,

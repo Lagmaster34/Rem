@@ -2,7 +2,7 @@
 
 Asistente de escritorio con la personalidad de **Rem (Re:Zero)**: avatar 3D VRM flotando sobre el escritorio, voz de Yoru con Piper TTS local, lipsync sincronizado y capacidad de ejecutar tareas en la PC.
 
-Corre **100% local, sin coste y sin internet** con un modelo Qwen3.5-4B en Ollama (LLM), faster-whisper (oído) y Piper (voz), o contra la API de Claude / Groq si se prefiere.
+Corre **100% local, sin coste y sin internet** con un modelo Qwen3.5-4B en Ollama (LLM), faster-whisper (oído) y Piper (voz), o contra la API de Claude si se prefiere.
 
 > **Estado:** funcional de punta a punta desde el 25 ago 2026 (LLM → personalidad → TTS → lipsync → avatar; desde nov 2026 la voz es Piper en vez de edge-tts + RVC). La aplicación es `rem_chat.py` (ventana con panel de chat, u overlay con push-to-talk); el viejo asistente Tkinter (`Rem.py`) se eliminó.
 
@@ -69,7 +69,7 @@ La capa LLM está abstraída: se elige el proveedor en `config.toml`.
 
 ```toml
 [llm]
-provider = "local"   # local | claude | groq
+provider = "ollama"   # ollama | claude
 ```
 
 Override por entorno: `REM_LLM_PROVIDER=claude`.
@@ -109,10 +109,6 @@ Modelo `claude-sonnet-5`, con el system prompt cacheado (`cache_control` efímer
 
 > La suscripción Pro de Claude.ai **no** incluye créditos de API. Sin saldo, la API responde 400 `credit balance is too low`.
 
-### Opción C — Groq
-
-Sigue soportado (`llm/groq.py`, `AsyncGroq` con streaming), pero ya no es el camino principal.
-
 ---
 
 ## 🎙️ Voz
@@ -131,7 +127,7 @@ El avatar sigue siendo el de Rem.
 - Probar: `venv/bin/python lipsync.py "una frase"`.
 
 Antes: edge-tts (`es-VE-PaolaNeural`) + RVC (`Rem_600e_6600s`). Se eliminó por completo (código y
-dependencias, incluido torch); el historial está en git hasta `bb410ce`. Los archivos de RVC
+dependencias, incluido torch); el historial está en git hasta el commit del 2026-10-22 «feat: pestaña Animaciones del panel de control». Los archivos de RVC
 (`models/Rem_600e_6600s/`, `hubert_base.pt`, `rmvpe.pt`, ~420 MB) ya no se usan.
 
 ---
@@ -191,7 +187,6 @@ llm/
   base.py                 # ABC LLMProvider + Message / ToolSpec / Chunk / ToolCall
   local.py                # Ollama
   claude.py               # API de Anthropic
-  groq.py
   echo.py                 # EchoProvider — sin modelo, repite el último mensaje (modo eco)
   sentence_splitter.py    # empuja cada oración al TTS en cuanto se completa
   _retry.py
@@ -314,7 +309,7 @@ venv/bin/python rem_chat.py   # consola del frontend volcada a rem_chat.log; ins
 ## 🗺️ Pendiente
 
 1. **Ventana GTK (`rem_chat.py`) con panel de chat — hecha.** El overlay transparente (`rem_overlay.py`) se eliminó: `rem_chat.py` lo sustituye por completo.
-2. **`Rem.py` / Tkinter — eliminado.** Lo que no se portó (extracción automática de memoria larga, el resto del catálogo de acciones) queda en el historial de git (`58abc8e`).
+2. **`Rem.py` / Tkinter — eliminado.** Lo que no se portó (extracción automática de memoria larga, el resto del catálogo de acciones) queda en el historial de git (commit del 2026-09-22, «feat: portar 4 herramientas del ejecutor de acciones a rem_chat (tool calling nativo)»).
 3. Extracción de memoria larga en `rem_chat.py`: hoy la memoria larga se lee pero nada la actualiza (antes lo hacía `extraer_memoria_importante()` en `Rem.py`).
 
 ### Dirección de la personalidad

@@ -29,8 +29,8 @@ _OPTIONS_DEFAULT = {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0, "
 
 
 class OllamaProvider(LLMProvider):
-    """Mismo patrón de cliente perezoso por loop que GroqProvider/ClaudeProvider
-    (ver la nota en groq.py): httpx.AsyncClient queda atado al loop en el que
+    """Mismo patrón de cliente perezoso por loop que ClaudeProvider (ver la
+    nota ahí): httpx.AsyncClient queda atado al loop en el que
     abrió su primera conexión real, así que se recrea si el loop cambió."""
 
     def __init__(self, base_url: str = _BASE_URL_DEFAULT, model: str = _MODELO_DEFAULT,
@@ -146,9 +146,9 @@ class OllamaProvider(LLMProvider):
             resp.raise_for_status()
             return resp
 
-        # Igual que en Groq/Claude: el retry solo cubre conectar y obtener el
+        # Igual que en Claude: el retry solo cubre conectar y obtener el
         # stream, no una respuesta que ya empezó a llegar y se corta a mitad
-        # de camino (ver la nota en groq.py).
+        # de camino (ver llm/_retry.py).
         resp = await reintentar_con_backoff(_conectar, _MAX_REINTENTOS, "Ollama")
 
         finish_reason = None
@@ -169,7 +169,7 @@ class OllamaProvider(LLMProvider):
                         gpu_inicio_task = asyncio.create_task(asyncio.to_thread(_energia.estado_gpu))
                     yield TextDelta(contenido)
 
-                # A diferencia de Groq/Claude, acá los tool_calls llegan
+                # A diferencia de Claude, acá los tool_calls llegan
                 # completos (argumentos ya como dict), sin fragmentar entre
                 # chunks — más simple, no hace falta acumular ni parsear.
                 # La API nativa tampoco manda un id por tool call, así que se

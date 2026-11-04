@@ -7,6 +7,11 @@ loguea tipo + causa (__cause__) de cada intento, y al agotar los reintentos se
 envuelve en un RuntimeError encadenado (`raise ... from`) para que el
 traceback completo — incluida la causa raíz — quede visible en vez de perderse
 detrás de un "error de conexión" genérico.
+
+Solo se envuelve CONECTAR y obtener el stream: si la conexión ya empezó a
+entregar texto y se corta a mitad de camino, reintentar reharía la respuesta
+desde cero y duplicaría lo que el consumidor ya recibió — en ese caso es más
+honesto dejar que la excepción se propague sin reintentar.
 """
 import asyncio
 

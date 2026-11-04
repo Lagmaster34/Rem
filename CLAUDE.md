@@ -16,9 +16,9 @@ no basta con copiar la carpeta.
 ## Stack técnico
 | Capa | Tecnología |
 |------|-----------|
-| LLM | Claude (Anthropic) — `claude-sonnet-5` por defecto. Groq queda como fallback (`llm/groq.py`) |
+| LLM | Ollama local (Qwen3.5-4B) por defecto; Claude (`claude-sonnet-5`, API de Anthropic) como alternativa |
 | TTS | Piper (`piper-tts` 1.8, CPU) con la voz de Yoru (`[tts].modelo`, por defecto `models/piper/`). Ver "Voz de Yoru (Piper)" |
-| STT | `faster-whisper` local (`stt/`), push-to-talk. Groq Whisper como alternativa |
+| STT | `faster-whisper` local (`stt/`), push-to-talk |
 | GUI | GTK3 + WebKit2 (`rem_chat.py`) — la ventana del avatar con panel de chat, u overlay |
 | Avatar 3D | Three.js + `@pixiv/three-vrm` + `@pixiv/three-vrm-animation` en WebGL, vendorizados en `vendor/esm/` |
 | Ventana | GTK3 + WebKit2, `venv/bin/python` (PyGObject/pycairo instalados ahí, ver "El venv sí puede tener GTK" más abajo) |
@@ -36,7 +36,7 @@ no basta con copiar la carpeta.
 | `chat_sesion.py` | `SesionChat` + `procesar_turno()` — estado de una conversación y el turno "en crudo" contra el LLM, compartido entre `bench_chat.py` y el panel/caja de chat de `rem_chat.py`. Ver "Panel de chat" más abajo |
 | `habla.py` | Pipeline de voz de salida de un turno (Piper -> timeline -> `enviar_audio()`), compartido entre `bench_chat.py` y `rem_chat.py`. Ver "Voz de Yoru (Piper)" |
 | `lipsync.py` | Alineaciones fonema→audio de Piper → timeline de visemes. Ver "Lipsync desde las duraciones del propio modelo" |
-| `stt/` | Capa de abstracción de voz de ENTRADA (STT): contrato + providers (`local.py` = faster-whisper, `groq.py`). Ver "Modo overlay: push-to-talk" más abajo |
+| `stt/` | Capa de abstracción de voz de ENTRADA (STT): contrato + provider (`local.py` = faster-whisper). Ver "Modo overlay: push-to-talk" más abajo |
 | `rem_ptt.py` | CLI del push-to-talk: `rem_ptt.py start\|stop` manda `ptt_start`/`ptt_stop` al servidor por WS — pensado para atarlo a una tecla mantenida en Hyprland |
 | `llm/` | Capa de abstracción de LLM (contrato + providers). Ver "Capa de abstracción de LLM" más abajo |
 | `config.py` | Módulo compartido: carga `.env` y lee `config.toml`. Lo usan `rem_chat.py`/`bench_chat.py`/`llm/`/`habla.py` |
@@ -48,9 +48,10 @@ no basta con copiar la carpeta.
 | `vendor/` | three.js / three-vrm servidos en local (espejo de esm.sh) para que el avatar cargue sin internet. Ver `vendor/README.md` |
 
 ## Capa de abstracción de LLM (`llm/`)
-Contrato común para poder cambiar de backend (Claude, Groq, Ollama local) sin tocar a los
-consumidores (`chat_sesion.procesar_turno()`). Proveedor activo: **Claude** (`llm/claude.py`), con **Groq
-como fallback** (`llm/groq.py`) — ver `get_provider()` más abajo.
+Contrato común para poder cambiar de backend (Ollama local, Claude) sin tocar a los
+consumidores (`chat_sesion.procesar_turno()`). Proveedor por defecto: **Ollama** (`llm/local.py`);
+**Claude** (`llm/claude.py`) como alternativa — ver `get_provider()` más abajo. (Groq existió como
+fallback; se eliminó el 2026-11-04; el último commit que lo tiene es «Saca del repo modelos de terceros (RVC y rem.vrm) e ignóralos».)
 
 - `llm/base.py`: tipos normalizados (`Message`, `ToolSpec`, `ToolCall`, `Chunk` = `TextDelta` |
   `ToolCallChunk` | `Done`) y el ABC `LLMProvider` con `stream_chat(system, messages, tools=None)
@@ -60,13 +61,11 @@ como fallback** (`llm/groq.py`) — ver `get_provider()` más abajo.
   dárselo a su API en el formato que le corresponde, y ese paso de ida y vuelta es justo donde se
   rompe el prompt caching (ver "Nada volátil en el system prompt" más arriba).
 - `llm/_retry.py`: `reintentar_con_backoff()` — retry con backoff exponencial compartido por
-  `groq.py`, `claude.py` y `local.py`. Solo cubre conectar y obtener el stream (si la conexión se
+  `claude.py` y `local.py`. Solo cubre conectar y obtener el stream (si la conexión se
   corta a mitad de la respuesta ya no reintenta: reintentar ahí rehace la respuesta desde cero y
   duplicaría texto que el consumidor ya recibió). Loguea tipo + `__cause__` de cada intento (no solo
   `str(e)`), y al agotar los reintentos lanza `RuntimeError(...) from ultimo_error` — la excepción
   original queda encadenada, no se pierde detrás de un mensaje genérico.
-- `llm/groq.py`: `GroqProvider`, streaming real vía `AsyncGroq`. Reensambla tool_calls fragmentadas
-  por índice de red antes de emitirlas.
 - `llm/local.py`: `OllamaProvider`, sobre la API **nativa** de Ollama (`/api/chat` vía `httpx`
   crudo, streaming NDJSON) — no la compatible con OpenAI (`/v1/chat/completions`), que no acepta
   `think` ni `keep_alive`. Sin API key: corre local. Modelo por defecto
@@ -119,12 +118,12 @@ como fallback** (`llm/groq.py`) — ver `get_provider()` más abajo.
   - Cada `Done` loguea `cache_creation_input_tokens`/`cache_read_input_tokens` por turno, para
     poder verificar a simple vista que el cache realmente pega.
 - `llm/__init__.py`: `get_provider()` — decide el provider por `REM_LLM_PROVIDER` (env) >
-  `[llm].provider` en `config.toml` > `"groq"` por defecto (hoy `config.toml` fija `"claude"`;
-  `"ollama"` corre 100% local, sin API key). Lee `config.toml` a través de
+  `[llm].provider` en `config.toml` > `"ollama"` por defecto (100% local, sin API key; hoy
+  `config.toml` también fija `"ollama"`). Lee `config.toml` a través de
   `config.leer_config_toml()` (ver más abajo). Si falta la API key del provider elegido
-  (`ANTHROPIC_API_KEY`/`GROQ_API_KEY`), **falla acá mismo con un `RuntimeError` explícito** en vez
+  (`ANTHROPIC_API_KEY` para Claude), **falla acá mismo con un `RuntimeError` explícito** en vez
   de dejar que reviente recién en la primera petición con un error de conexión genérico — mismo
-  criterio que `GroqProvider`/`ClaudeProvider` rechazando una `api_key` vacía en su propio
+  criterio que `ClaudeProvider` rechazando una `api_key` vacía en su propio
   `__init__` (`OllamaProvider` no tiene ese chequeo, no necesita key). Falla con `ValueError` claro
   si se pide un provider que no existe.
 - `llm/sentence_splitter.py`: `dividir_en_oraciones()` consume un `AsyncIterator[Chunk]` y emite
@@ -133,8 +132,8 @@ como fallback** (`llm/groq.py`) — ver `get_provider()` más abajo.
   `chat_sesion.procesar_turno()` para encolar cada oración hacia la voz apenas está lista (ver
   "SentenceSplitter conectado" más abajo).
 
-**Cliente perezoso por event loop (Groq y Claude)**: ni `GroqProvider` ni `ClaudeProvider` crean su
-cliente HTTP (`AsyncGroq`/`AsyncAnthropic`, ambos httpx por debajo) en `__init__` — lo arman recién
+**Cliente perezoso por event loop (Claude y Ollama)**: ni `ClaudeProvider` ni `OllamaProvider` crean su
+cliente HTTP (`AsyncAnthropic`/`httpx.AsyncClient`) en `__init__` — lo arman recién
 en el primer uso real, y lo recrean si el event loop actual cambió respecto al de la última llamada
 (`_obtener_cliente()`). Motivo: un cliente httpx async que llega a abrir una conexión real queda con
 su pool interno atado al loop que estaba corriendo en ese momento; si el provider se usara como
@@ -213,19 +212,16 @@ agrega o quita una tool, actualizar esa regla, o el modelo va a prometer accione
 ## Configuración (.env en la raíz del proyecto)
 ```
 ANTHROPIC_API_KEY=tu_api_key_de_anthropic
-GROQ_API_KEY=tu_api_key_de_groq
 NOMBRE_USUARIO=Esteban
 ```
-`ANTHROPIC_API_KEY` es la que usa el provider activo (`claude`, ver `config.toml`); `GROQ_API_KEY`
-solo hace falta si `[llm].provider`/`REM_LLM_PROVIDER` se cambia a `"groq"`. `get_provider()` falla
-al arrancar con un mensaje explícito si falta la key del provider elegido — ver "Capa de
-abstracción de LLM" más arriba.
+`ANTHROPIC_API_KEY` solo hace falta si `[llm].provider`/`REM_LLM_PROVIDER` es `"claude"`; con
+`"ollama"` (el default) no hace falta ninguna key. `get_provider()` falla al arrancar con un mensaje
+explícito si falta la key del provider elegido — ver "Capa de abstracción de LLM" más arriba.
 La voz de salida no va en `.env`: es el modelo Piper de `config.toml` → `[tts]`.
-Todas las variables tienen valores por defecto en el código. Solo la API key del provider activo
-(`ANTHROPIC_API_KEY` por defecto) es obligatoria.
+Todas las variables tienen valores por defecto en el código; ninguna es obligatoria con Ollama.
 
 ## Nada volátil en el system prompt (para que el prompt caching funcione)
-El caching de prompts en los proveedores de inferencia (Groq incluido) exige que el prefijo sea
+El caching de prompts en los proveedores de inferencia (Ollama y Claude) exige que el prefijo sea
 idéntico byte a byte entre llamadas para reusar el cache — cualquier cambio en el system prompt
 (fecha, hora, estado de la PC, etc.) rompe el cache en cada turno y obliga a pagar el prompt
 completo siempre. Por eso:
@@ -282,7 +278,7 @@ Lo que queda en el árbol es lo que usan las tools de `acciones.py` (ver "Accion
 rem_chat" más abajo); el ejecutor completo del viejo `Rem.py` (`ejecutar_comando` con whitelist y
 `_args_permitidos()`, `_git_permitido()`/`_systemctl_permitido()`, mover/copiar/eliminar con
 `_mover_a_papelera()`, `descargar_archivo()` saneado, el diálogo `confirmar_accion()`) **se eliminó
-con él** — sigue en el historial de git (último commit que lo tiene: `58abc8e`), con su auditoría.
+con él** — sigue en el historial de git (último commit que lo tiene: 2026-09-22, «feat: portar 4 herramientas del ejecutor de acciones a rem_chat (tool calling nativo)»), con su auditoría.
 Si se porta algo de ahí, portar también su validación, no solo la acción.
 
 - `_ruta_segura(ruta, permitir_raiz=False)` (`acciones.py`): valida que la ruta esté dentro de
@@ -430,8 +426,8 @@ de siempre (`{t, viseme, apertura, viseme_vrm, peso_vrm}`, el frontend no cambi�
   Así funcionaba antes y se dejó igual; unificarlas es un cambio aparte, que habría que probar.
 - **Llamadas de red en tiempo de ejecución, revisadas** (Python + HTML):
   - Ollama (`127.0.0.1:11434`) — local.
-  - Claude/Groq (`llm/claude.py`, `llm/groq.py`, `stt/groq.py`) — solo si se eligen como provider;
-    con `ollama` + `stt local` no se tocan.
+  - Claude (`llm/claude.py`) — solo si se elige como provider; con `ollama` + `stt local` no se
+    toca. (Groq también estaba en esta lista; se eliminó después.)
   - **faster-whisper**: `WhisperModel("small")` pasaba por `huggingface_hub.snapshot_download`, que
     **consulta el Hub en cada arranque** aunque el modelo esté en caché (y sin red espera a que
     falle). Arreglado en `stt/local.py`: primero `local_files_only=True`; solo si el modelo no está
@@ -482,7 +478,7 @@ hablando con la voz de Yoru y la boca moviéndose.
 
 **Historia (RVC/edge-tts)**: lo que había —A/B de voces de edge-tts (`es-VE-PaolaNeural` `-8%`),
 la `rr` imperfecta del modelo RVC japonés, la calibración de `num_gpu` para hacerle sitio a RVC, el
-fix de `generate_from_cache()`, el lock de RVC y su precarga— está en git hasta el commit `bb410ce`
+fix de `generate_from_cache()`, el lock de RVC y su precarga— está en git hasta el commit del 2026-10-22 «feat: pestaña Animaciones del panel de control»
 (CLAUDE.md, `habla.py`, `test_voz.py`). El `SentenceSplitter` sigue igual: cada oración se encola
 apenas está completa y un worker por consumidor la sintetiza mientras la anterior suena.
 
@@ -1089,7 +1085,7 @@ por un campo `tipo`:
 | cliente → Python | `chat_message` | `{texto}` | Corre un turno completo contra el LLM activo |
 | cliente → Python | `cambiar_modo` | `{modo: "ia"\|"eco"}` | Cambia el provider de la sesión de chat compartida |
 | cliente → Python | `reset` | — | Limpia el historial de la sesión de chat compartida |
-| cliente → Python | `voz` | `{activa: bool}` | Interruptor de voz del panel (`voz_chat_activa()`) |
+| cliente → Python | `voz` | `{activa: bool}` | Interruptor de voz del panel (`set_voz_chat_activa()`) |
 | cliente → Python | `estado` | `{estado}` | Pide poner el avatar en ese estado — se valida y se re-difunde a todos (lo usa el comando `state` de `bench_chat.py` cliente) |
 | cliente → Python | `debug_clip` | `{nombre}` | Depuración: dispara un clip VRMA por nombre — se re-difunde a todos (comando `clip` de `bench_chat.py`, ver "Animación de cuerpo con clips VRMA") |
 | cliente → Python | `prefs_get` | — | Pide las preferencias efectivas (respuesta `prefs_estado`, solo a quien pregunta) |
@@ -1187,7 +1183,7 @@ a propósito: cada turno se habla desde la cola de quien lo disparó, así que u
 un lado nunca termina también encolado en el worker del otro — ver más abajo, "verificado en vivo",
 por qué esto importa para no duplicar audio.
 
-**Interruptor de voz del panel** (`voz_chat_activa()`/`set_voz_chat_activa()` en
+**Interruptor de voz del panel** (`_chat_voz_activa`/`set_voz_chat_activa()` en
 `rem_avatar_server.py`, mensaje WS `{tipo: "voz", activa: bool}`): equivalente a `voz on|off` del
 REPL, pero **independiente** — no hay sincronización entre los dos, cada uno controla si SUS
 PROPIOS turnos hablan. Arranca en `True` (a diferencia de `voz_activa` del REPL, que arranca en
@@ -1882,8 +1878,7 @@ visible).
 
 Paquete `stt/` (mismo patrón que `llm/`): `base.py` (`STTProvider`, ABC — `transcribir(audio:
 np.ndarray) -> str`, sincrónico a propósito, ver su docstring), `local.py`
-(`LocalSTTProvider`, faster-whisper), `groq.py` (`GroqSTTProvider`, Whisper por la API de Groq — 
-implementado por trivial, **sin verificar en vivo** con una API key real en esta máquina),
+(`LocalSTTProvider`, faster-whisper; el único provider desde que se quitó el de Groq),
 `microfono.py` (`Grabador`, captura con `sounddevice`/PortAudio sobre PipeWire, abierto SOLO entre
 `iniciar()`/`detener()`), `__init__.py` (`get_stt_provider()`/`obtener_stt()` — instancia única por
 proceso, mismo criterio que `llm.get_provider()`: `REM_STT_PROVIDER` (env) > `[stt].provider` en
@@ -2042,7 +2037,7 @@ STT. Con Ollama llama a `OllamaProvider.precargar()` — una petición a `/api/c
 vacío (Ollama carga el modelo y responde `done_reason: "load"`, sin generar). Tiene que llevar las
 MISMAS `options` (`num_gpu`, `num_ctx`...) y `keep_alive` que las peticiones reales: Ollama recarga
 el modelo si cambian las opciones de carga, y una precarga con otros valores no serviría. Con
-Claude/Groq no hace nada. No bloqueante: si falla solo lo loguea (`[LLM] precarga falló`). Medido: el
+Claude no hace nada. No bloqueante: si falla solo lo loguea (`[LLM] precarga falló`). Medido: el
 modelo carga en ~4 s en paralelo con RVC y Whisper, sin OOM de VRAM (3238 MiB usados con los tres), y
 el primer turno reporta `carga del modelo: 1ms` (antes ~6,7 s). Ojo: `keep_alive = "10m"` sigue
 descargando el modelo tras 10 min sin uso, y el primer turno de después vuelve a pagar la carga; la
@@ -2167,7 +2162,7 @@ con modismos ya conocido). `calcular` ×3 con 12×7, 15 % de 240 y 3 GiB en MiB:
 turnos; tras la precarga, cada turno evalúa ~2330 tok en 244-459 ms (en frío: 2271 ms).
 
 El resto del catálogo viejo (`ejecutar_comando`, mover/copiar/eliminar, volumen, captura, etc.) se
-eliminó con `Rem.py` (recuperable de `58abc8e`). Si se porta algo de ahí:
+eliminó con `Rem.py` (recuperable del commit del 2026-09-22, «feat: portar 4 herramientas del ejecutor de acciones a rem_chat (tool calling nativo)»). Si se porta algo de ahí:
 - **Auditoría de seguridad propia del nuevo contexto**, no solo mover código: en rem_chat la entrada
   también llega por VOZ (STT), es decir, texto que puede venir mal transcrito o de audio ajeno; la
   confirmación tiene que funcionar en GTK/overlay (¿cómo confirma una acción destructiva una
@@ -2188,7 +2183,7 @@ system (fijo) → EJEMPLOS_TONO → memoria larga (si hay) → historial → [co
 ```
 
 - **system + ejemplos es idéntico byte a byte en cada turno** — es el prefijo que reusan las cachés.
-  Ollama/Groq cachean por prefijo solos; para Claude, el último ejemplo lleva
+  Ollama cachea por prefijo solo; para Claude, el último ejemplo lleva
   `Message.fin_prefijo_cache=True` y `ClaudeProvider` pone ahí un segundo `cache_control` (el del
   system solo cubría tools + system).
 - **La memoria larga no va en el system prompt** (`construir_bloque_memoria()`, como mensaje aparte

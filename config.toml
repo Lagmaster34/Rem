@@ -2,7 +2,7 @@
 
 [llm]
 # Proveedor activo. Override: variable de entorno REM_LLM_PROVIDER.
-# Valores: "ollama" (local) | "claude" (API de Anthropic) | "groq" (fallback)
+# Valores: "ollama" (local, por defecto) | "claude" (API de Anthropic)
 provider = "ollama"
 
 
@@ -57,11 +57,6 @@ model      = "claude-sonnet-5"
 max_tokens = 1024
 
 
-[llm.groq]
-# Fallback gratuito. Requiere GROQ_API_KEY en .env.
-model = "llama-3.3-70b-versatile"
-
-
 [tts]
 # Voz de salida: Piper, 100% local y en CPU (rem_chat.py y bench_chat.py).
 # Ruta relativa a la raíz del proyecto; la config del modelo va al lado con el
@@ -112,7 +107,7 @@ zona_exclusiva = 0
 
 [stt]
 # Voz de entrada (push-to-talk). Override: variable REM_STT_PROVIDER.
-# "local" → faster-whisper en CPU | "groq" → Whisper por la API de Groq.
+# "local" → faster-whisper en CPU (el único implementado).
 provider = "local"
 # Tope de una grabación, por si se pierde el ptt_stop (tecla soltada fuera
 # de foco, proceso muerto...). Al vencer se corta y se procesa lo grabado.
@@ -144,12 +139,6 @@ beam_size    = 1
 cpu_threads  = 0
 # Sesga el vocabulario hacia los nombres propios/técnicos que Rem oye seguido.
 initial_prompt = "Conversación con Rem, una asistente virtual. Vocabulario: Rem, Esteban, Ollama, Claude, Anthropic, Hyprland, Arch Linux, Python, PipeWire, GTK, WebKit, Whisper, Piper, VRM."
-
-
-[stt.groq]
-# Requiere GROQ_API_KEY en .env. Sin verificar en vivo en esta máquina.
-model = "whisper-large-v3-turbo"
-language = "es"
 
 
 [contexto]

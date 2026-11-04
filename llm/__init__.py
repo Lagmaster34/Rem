@@ -1,5 +1,5 @@
 """Capa de abstracción de LLM: contrato común (base.py) + un provider por
-backend (groq.py, claude.py, local.py). get_provider() decide cuál instanciar
+backend (local.py = Ollama, claude.py, echo.py). get_provider() decide cuál instanciar
 según configuración, sin que el resto del código sepa cuál es."""
 import os
 
@@ -21,30 +21,15 @@ def _leer_config_llm() -> dict:
 
 def get_provider() -> LLMProvider:
     """Decide qué LLMProvider instanciar. Precedencia: REM_LLM_PROVIDER (env)
-    > [llm].provider en config.toml > "groq" por defecto.
+    > [llm].provider en config.toml > "ollama" por defecto.
     Falla acá (al arrancar) si falta la API key del provider elegido, en vez
     de dejar que reviente recién en la primera petición con un error de
     conexión genérico."""
     llm_config = _leer_config_llm()
     proveedor = (
         os.environ.get("REM_LLM_PROVIDER", "").strip().lower()
-        or str(llm_config.get("provider", "groq")).strip().lower()
+        or str(llm_config.get("provider", "ollama")).strip().lower()
     )
-
-    if proveedor == "groq":
-        from .groq import GroqProvider
-        api_key = os.environ.get("GROQ_API_KEY", "").strip()
-        if not api_key:
-            raise RuntimeError(
-                "Proveedor 'groq' seleccionado pero falta GROQ_API_KEY en el entorno "
-                "(revisá tu .env). Sin esto Groq fallaría recién en la primera "
-                "petición con un error de conexión genérico — mejor fallar acá."
-            )
-        groq_config = dict(llm_config.get("groq", {}))
-        return GroqProvider(
-            api_key=api_key,
-            model=str(groq_config.get("model", "llama-3.3-70b-versatile")),
-        )
 
     if proveedor == "claude":
         from .claude import ClaudeProvider
@@ -87,7 +72,7 @@ def get_provider() -> LLMProvider:
 
     raise ValueError(
         f"Proveedor de LLM desconocido: '{proveedor}'. "
-        "Implementados: 'groq', 'claude', 'ollama', 'echo'."
+        "Implementados: 'ollama', 'claude', 'echo'."
     )
 
 
@@ -98,7 +83,7 @@ def precargar_provider(system: str | None = None, messages: list | None = None,
     prefijo system + `messages` + `tools` para que quede en su caché — ver
     chat_sesion.precargar_prefijo(), que es quien lo llama al arrancar
     rem_chat.py, igual que habla.precargar_tts() y stt.precargar_stt()). Los
-    providers remotos (Claude/Groq) no tienen nada que precargar. No
+    providers remotos (Claude) no tienen nada que precargar. No
     bloqueante: un fallo (Ollama apagado, falta la API key) solo se loguea; el
     error real volverá a aparecer, visible, en el primer turno."""
     try:

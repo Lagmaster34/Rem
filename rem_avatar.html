@@ -1390,13 +1390,6 @@ function actualizarHablaEnergia(dt) {
 let _viaLipsync = 'expressionManager';
 const VRM_VISEME_KEYS = ['aa', 'ee', 'ih', 'oh', 'ou'];
 
-// Normaliza nombres de morph target para comparar sin depender de mayúsculas/
-// puntuación exacta (defensivo: GLTFLoader usa los nombres crudos de
-// extras.targetNames sin sanitizar, pero no cuesta nada ser tolerante).
-function _normalizarNombreMorph(s) {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
 function localizarMallaFacial() {
   _visemeSlots = {};
   for (const nombre of VISEME_NAMES) _visemeSlots[nombre] = [];

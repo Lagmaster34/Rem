@@ -105,12 +105,11 @@ síntesis.
 
 ## 6. Configurar el archivo `.env` (opcional)
 
-Solo hace falta si usas un LLM por API en vez de Ollama:
+Solo hace falta si usas Claude (por API) en vez de Ollama:
 
 ```bash
 cat > .env << 'EOF'
 ANTHROPIC_API_KEY=tu_clave_aqui
-GROQ_API_KEY=tu_clave_aqui
 EOF
 ```
 
@@ -164,7 +163,7 @@ Usá siempre `venv/bin/python`, no el `python` del sistema.
 rem_chat.py             ← LA APLICACIÓN: levanta el servidor y abre la ventana
   ├── Piper (habla.py)  ← voz de Yoru, local en CPU, + timeline de visemes (lipsync.py)
   ├── faster-whisper    ← push-to-talk (stt/), local en CPU
-  ├── llm/ (Ollama/Claude/Groq) ← lenguaje
+  ├── llm/ (Ollama/Claude) ← lenguaje
   └── rem_avatar_server.py
         ├── HTTP :18765 → sirve rem_avatar.html + vendor/ + VRM + Animaciones/*.vrma + WAV
         ├── WS   :18766 → bidireccional: estado/audio/chat  <->  chat_message/estado/modo/voz
