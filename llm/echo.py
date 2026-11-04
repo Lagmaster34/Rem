@@ -1,6 +1,6 @@
 """EchoProvider — no llama a ningún modelo. Devuelve tal cual el último
 mensaje del usuario, para que Rem repita con su voz lo que se escriba, sin
-IA de por medio: sirve para probar TTS/RVC/lipsync/avatar de punta a punta
+IA de por medio: sirve para probar TTS/lipsync/avatar de punta a punta
 sin gastar tokens de un LLM real ni depender de que haya red o API key.
 
 Ignora `system` y `tools` a propósito — no hay ningún modelo del otro lado

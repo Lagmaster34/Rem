@@ -46,24 +46,13 @@ def leer_modelo_avatar() -> str:
     return preferencias.obtener("modelo")["vrm"]
 
 
-def leer_dispositivo_rvc() -> str:
-    """Dispositivo para RVC: "cpu" o "cuda", desde config.toml [rvc].device
-    (default "cuda"). Cualquier valor que no sea exactamente "cpu" se trata
-    como "cuda" — ver la nota en CLAUDE.md sobre la calibración de num_gpu
-    que le hizo sitio a RVC en la misma GPU que el LLM local (Ollama)."""
-    rvc_config = leer_config_toml().get("rvc", {})
-    valor = str(rvc_config.get("device", "cuda")).strip().lower()
-    return "cpu" if valor == "cpu" else "cuda"
-
-
-def leer_config_voz() -> tuple[str, str]:
-    """(voz, rate) de edge-tts para habla.py: la preferencia del panel
-    (preferencias.json -> voz) o, si no hay, config.toml [voz]. Default = la
-    combinación ganadora del A/B (es-VE-PaolaNeural, -8%, ver CLAUDE.md). Se
-    llama por frase, así que un cambio desde el panel suena en la siguiente."""
-    import preferencias
-    cfg = preferencias.obtener("voz")
-    return cfg["voz"], cfg["rate"]
+def leer_modelo_tts() -> str:
+    """Ruta ABSOLUTA del modelo Piper (.onnx) de la voz de salida, desde
+    config.toml [tts].modelo (relativa a la raíz del proyecto; default la voz
+    de Yoru). Su config (.onnx.json, con el sample rate) va al lado, con el
+    mismo nombre + ".json" — es la convención de Piper."""
+    ruta = str(leer_config_toml().get("tts", {}).get("modelo", "models/yoru_piper/model.onnx")).strip()
+    return ruta if os.path.isabs(ruta) else os.path.join(BASE_DIR, ruta)
 
 
 def leer_modo_app() -> str:

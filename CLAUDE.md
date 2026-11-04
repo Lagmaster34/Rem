@@ -2,7 +2,8 @@
 
 ## Qué es este proyecto
 Asistente personal de IA con personalidad de Rem de Re:Zero. Corre en **Linux (Arch)**.  
-Habla, escucha, recuerda, ejecuta acciones en el sistema y muestra un avatar 3D animado en el escritorio.
+Habla (voz de Yoru, Piper local), escucha, recuerda, ejecuta acciones en el sistema y muestra un avatar
+3D animado en el escritorio. Con Ollama + STT local funciona sin internet (ver "Voz de Yoru (Piper)").
 
 ## Ruta del proyecto
 El proyecto vive en `/mnt/extra/rem/Rem` (movido desde `/home/esteban/Proyectos/Rem de re zero/Rem`,
@@ -16,13 +17,11 @@ no basta con copiar la carpeta.
 | Capa | Tecnología |
 |------|-----------|
 | LLM | Claude (Anthropic) — `claude-sonnet-5` por defecto. Groq queda como fallback (`llm/groq.py`) |
-| TTS | `edge-tts` (Microsoft Neural, voz `es-VE-PaolaNeural`, rate `-8%`) |
-| Voice conversion | `infer-rvc-python` + modelo `Rem_600e_6600s` |
+| TTS | Piper (`piper-tts` 1.8, CPU) con la voz de Yoru (`models/yoru_piper/`). Ver "Voz de Yoru (Piper)" |
 | STT | `faster-whisper` local (`stt/`), push-to-talk. Groq Whisper como alternativa |
 | GUI | GTK3 + WebKit2 (`rem_chat.py`) — la ventana del avatar con panel de chat, u overlay |
-| Avatar 3D | Three.js + `@pixiv/three-vrm` + `@pixiv/three-vrm-animation` en WebGL |
+| Avatar 3D | Three.js + `@pixiv/three-vrm` + `@pixiv/three-vrm-animation` en WebGL, vendorizados en `vendor/esm/` |
 | Ventana | GTK3 + WebKit2, `venv/bin/python` (PyGObject/pycairo instalados ahí, ver "El venv sí puede tener GTK" más abajo) |
-| fairseq | v0.12.2 con shim de compatibilidad (`fairseq_shim/`) |
 
 ## Archivos principales
 | Archivo | Qué hace |
@@ -35,19 +34,18 @@ no basta con copiar la carpeta.
 | `personalidad.py` / `ejemplos_tono.py` | System prompt + contexto dinámico / turnos few-shot del tono. Ver "Ejemplos de tono (few-shot)" |
 | `Animaciones/` | Clips `.vrma` del avatar — no van al repo, se descargan a mano. Ver `Animaciones/README.md` y "Animación de cuerpo con clips VRMA" más abajo |
 | `chat_sesion.py` | `SesionChat` + `procesar_turno()` — estado de una conversación y el turno "en crudo" contra el LLM, compartido entre `bench_chat.py` y el panel/caja de chat de `rem_chat.py`. Ver "Panel de chat" más abajo |
-| `habla.py` | Pipeline de voz de salida de un turno (TTS -> RVC -> `enviar_audio()`), compartido entre `bench_chat.py` y `rem_chat.py`. Ver "Voz en la ventana de chat" más abajo |
+| `habla.py` | Pipeline de voz de salida de un turno (Piper -> timeline -> `enviar_audio()`), compartido entre `bench_chat.py` y `rem_chat.py`. Ver "Voz de Yoru (Piper)" |
+| `lipsync.py` | Alineaciones fonema→audio de Piper → timeline de visemes. Ver "Lipsync desde las duraciones del propio modelo" |
 | `stt/` | Capa de abstracción de voz de ENTRADA (STT): contrato + providers (`local.py` = faster-whisper, `groq.py`). Ver "Modo overlay: push-to-talk" más abajo |
 | `rem_ptt.py` | CLI del push-to-talk: `rem_ptt.py start\|stop` manda `ptt_start`/`ptt_stop` al servidor por WS — pensado para atarlo a una tecla mantenida en Hyprland |
-| `fairseq_shim/__init__.py` | Shim que reemplaza el `__init__.py` de fairseq para compatibilidad PyTorch |
-| `fairseq_shim/checkpoint_utils.py` | Fork de fairseq con `torch.load(weights_only=False)` |
-| `apply_shim.py` | Copia `fairseq_shim/` sobre el fairseq instalado en `venv/`. Ejecutar tras cualquier reinstalación de fairseq |
 | `llm/` | Capa de abstracción de LLM (contrato + providers). Ver "Capa de abstracción de LLM" más abajo |
 | `config.py` | Módulo compartido: carga `.env` y lee `config.toml`. Lo usan `rem_chat.py`/`bench_chat.py`/`llm/`/`habla.py` |
 | `rem_panel.py` / `rem_panel.html` | Panel de control: ventana GTK+WebKit aparte, cliente del servidor de `rem_chat.py`. Ver "Panel de control (`rem_panel.py`)" más abajo |
 | `webview_comun.py` | Piezas GTK+WebKit compartidas por `rem_chat.py` y `rem_panel.py`: `crear_webview()`, `cargar_con_retry()`, `redirigir_salida_a_log()` |
 | `preferencias.py` | Preferencias editables en vivo desde el panel de control, en `preferencias.json` por encima de `config.toml`. Ver "Preferencias del panel de control" más abajo |
 | `catalogo_animaciones.py` | Genera/actualiza `Animaciones/catalogo.json`: mide cada `.vrma` y conserva lo curado. Ver "Catálogo de animaciones" |
-| `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — `[llm]`/`[llm.claude]`/`[app]`/`[overlay]`/`[stt]` |
+| `config.toml` | Config no sensible versionada en git (a diferencia de `.env`, que tiene los secretos) — `[llm]`/`[llm.claude]`/`[tts]`/`[app]`/`[overlay]`/`[stt]` |
+| `vendor/` | three.js / three-vrm servidos en local (espejo de esm.sh) para que el avatar cargue sin internet. Ver `vendor/README.md` |
 
 ## Capa de abstracción de LLM (`llm/`)
 Contrato común para poder cambiar de backend (Claude, Groq, Ollama local) sin tocar a los
@@ -165,7 +163,7 @@ corriendo — ver "Puntos de entrada" abajo.
 lo es) y lo emite tal cual como un único `TextDelta`, ignorando `system` y `tools` por completo, y
 cierra con `Done(reason="stop")`. Sin estado, sin cliente HTTP, sin API key — nada que inicializar.
 Registrado en el factory (`llm/__init__.py`) como provider `"echo"`, sin requerir configuración.
-Sirve para que Rem repita con su voz lo que se escriba, sin IA de por medio: prueba TTS/RVC/lipsync/
+Sirve para que Rem repita con su voz lo que se escriba, sin IA de por medio: prueba TTS/lipsync/
 avatar de punta a punta sin gastar tokens ni depender de que haya red o API key.
 
 **`SesionChat` (en `bench_chat.py`)** agrupa `modo`/`provider`/`historial` y expone
@@ -194,7 +192,7 @@ ningún LLM — exactamente lo que cubre el modo eco de `bench_chat.py`, y más 
 estado emocional del avatar) y `open` (abre el navegador en cualquier momento de la sesión, no solo
 al arrancar) — los dos se portaron a `bench_chat.py` antes de borrar `bench.py`. Diferencia menor de
 comportamiento que no se portó: `bench.py`'s `say` sintetizaba el texto completo como una sola unidad
-TTS/RVC; `bench_chat.py` siempre pasa por `dividir_en_oraciones()`, así que un texto con varias
+TTS; `bench_chat.py` siempre pasa por `dividir_en_oraciones()`, así que un texto con varias
 oraciones se parte en llamadas `_decir()` separadas — sin efecto perceptible con texto normal, solo
 importa para probar la síntesis de una frase larga sin cortes.
 
@@ -222,7 +220,7 @@ NOMBRE_USUARIO=Esteban
 solo hace falta si `[llm].provider`/`REM_LLM_PROVIDER` se cambia a `"groq"`. `get_provider()` falla
 al arrancar con un mensaje explícito si falta la key del provider elegido — ver "Capa de
 abstracción de LLM" más arriba.
-La voz de salida no va en `.env`: está en `config.toml` → `[voz]`.
+La voz de salida no va en `.env`: es el modelo Piper de `config.toml` → `[tts]`.
 Todas las variables tienen valores por defecto en el código. Solo la API key del provider activo
 (`ANTHROPIC_API_KEY` por defecto) es obligatoria.
 
@@ -261,10 +259,8 @@ usuario escribe o habla.
 ## Archivos pesados (ignorados por git, descargar manualmente)
 | Archivo | Tamaño | Fuente |
 |---------|--------|--------|
-| `rmvpe.pt` | ~173 MB | HuggingFace |
-| `hubert_base.pt` | ~181 MB | HuggingFace |
-| `models/Rem_600e_6600s/Rem_600e_6600s.pth` | — | Google Drive (ver README) |
-| `models/Rem_600e_6600s/Rem.index` | — | Google Drive (ver README) |
+| Modelo de voz Piper (`.onnx` + `.onnx.json`) | — | Pon tu propio modelo Piper en la ruta de `[tts].modelo` de `config.toml`. Nunca se versiona |
+| `rmvpe.pt`, `hubert_base.pt`, `models/Rem_600e_6600s/` | 173 + 181 + 66 MB | **Ya no se usan** (eran de RVC); siguen en disco |
 | `rem.vrm` | — | Incluido en el repo |
 | `Animaciones/VRMA_MotionPack/*.vrma` | — | `tk256ailab/vrm-viewer` (MIT) + pack VRoid Project — ver `Animaciones/README.md` |
 
@@ -272,13 +268,13 @@ usuario escribe o habla.
 
 ```
 rem_chat.py — hilo principal (Gtk.main())
-├── habla.precargar_rvc (daemon thread, inicio) — carga + calienta RVC en background
+├── habla.precargar_tts (daemon thread, inicio) — carga + calienta la voz Piper en background
 ├── WebView (WebKit2)                    — rem_avatar.html?modo=ventana
 └── rem_avatar_server.iniciar_servidor_avatar():
       ├── AvatarHTTP (daemon thread)     — sirve archivos en :18765
       └── AvatarWS   (daemon thread)     — asyncio loop, WebSocket bidireccional en :18766
             ├── _procesar_mensaje_chat() — turno de LLM (create_task), emite chat_delta/done
-            └── _chat_worker_habla_task  — cola de voz del panel (TTS→RVC→enviar_audio)
+            └── _chat_worker_habla_task  — cola de voz del panel (Piper→enviar_audio)
 ```
 
 ## Seguridad de acciones del sistema
@@ -352,208 +348,143 @@ venv/bin/python rem_panel.py                   # panel de control (con Rem ya ab
     `enviar_estado()`/`_broadcast_ws()` devuelven el nº de clientes y logean un aviso (con
     antirrebote) cuando es 0.
 
-**El intérprete correcto es siempre `venv/bin/python` (Python 3.10.14, con torch/fairseq/RVC
+**El intérprete correcto es siempre `venv/bin/python` (Python 3.10.14, con piper/faster-whisper/PyGObject
 instalados) — nunca el `python`/`python3` del sistema.** Esto incluye a `rem_chat.py`: el `python3`
 del sistema no tiene ningún rol especial en el proyecto (ver "El venv sí puede tener GTK" más abajo)
 — PyGObject/pycairo están en `requirements.txt` igual que el resto.
 
 ## Problemas conocidos
-- **fairseq + PyTorch moderno**: los archivos en `fairseq_shim/` solucionan la incompatibilidad. Ver `INSTALL.md`.
-  Después de cualquier `pip install fairseq` (reinstalación, venv nuevo, etc.) hay que volver a aplicar
-  el shim con `venv/bin/python apply_shim.py` — si no, `torch.load()` fallará al cargar checkpoints
-  porque le falta `weights_only=False`.
-- **RVC tarda en cargar**: los 30-60s solo aplican si cae a CPU (`only_cpu=True` o sin CUDA disponible). Con GPU (CUDA disponible) la carga es prácticamente instantánea, ~0,7s medidos en esta máquina. El TTS funciona sin RVC (sin conversión de voz).
+- **La boca no se mueve / `lipsync SIN alineación` en el log**: falta el paquete `onnx` (extra
+  `piper-tts[alignment]`), que parchea el modelo en memoria para exponer las duraciones. Sin él la
+  voz suena igual, pero el timeline cae al reparto parejo.
 - **La ventana del avatar no aparece**: verificar `webkit2gtk-4.1` instalado; correr `venv/bin/python rem_chat.py` en una terminal y mirar `rem_chat.log` (consola del frontend volcada ahí). Inspector remoto en `http://127.0.0.1:9222`.
 - **Error de audio**: verificar que PipeWire esté corriendo (`systemctl --user status pipewire`).
 
-## Configuración de voz ganadora (comparación A/B)
-`[voz]` voz `es-VE-PaolaNeural`, rate `-8%`, `pitch_lvl=4`, `index_influence=0.75` — probado con
-`test_voz.py --voz ... --rate ...` contra varias voces de edge-tts y comparado el resultado tras
-pasar por RVC.
+## Voz de Yoru (Piper): sin edge-tts ni RVC, 100% local
 
-**Por qué esta combinación**: RVC transfiere el timbre del modelo (`Rem_600e_6600s`) pero no la
-prosodia — el ritmo y la entonación de la voz de origen sobreviven la conversión casi intactos. Por
-eso la voz de origen se elige por su **ritmo**, no por lo bien que suene cruda (`es-MX-DaliaNeural`
-sonaba bien sin convertir, pero su cadencia no encajaba tan bien después de RVC). El `rate=-8%`
-(más lenta que el default) mejora la fidelidad de la conversión: RVC tiene más margen por fonema
-para trackear el pitch (`rmvpe`) correctamente cuando el audio de entrada no está acelerado.
+La voz de salida es **Piper** (`piper-tts==1.8.0`). El modelo no viene con el repo: pon tu propio
+modelo Piper (`.onnx` + `.onnx.json`) en la ruta de `[tts].modelo` de `config.toml`. Los modelos de
+voz no se versionan nunca (`.gitignore` + `hooks/`). edge-tts (red, Microsoft) y RVC (`infer-rvc-python` + fairseq + torch, GPU) se eliminaron
+por completo. El avatar sigue siendo el de Rem. Ruta del modelo: `config.toml` → `[tts].modelo`
+(`config.leer_modelo_tts()`). **Parámetros de síntesis = los del `.onnx.json` tal cual**
+(`noise_scale` 0,667, `length_scale` 1,0, `noise_w` 0,8, sin volumen): no tocarlos.
 
-## Limitación conocida: la `rr` vibrante suena imperfecta
-El modelo RVC (`Rem_600e_6600s`) se entrenó con audio en japonés, un idioma sin el fonema vibrante
-múltiple `/r/` (rr) del español — el modelo nunca aprendió a reproducirlo con fidelidad, así que en
-palabras como "perro" o "corre" la conversión suena forzada/distorsionada.
+- **`habla.py`**: `PiperVoice` se carga UNA vez por proceso (`_voz`) y se reusa; síntesis en CPU
+  (`onnxruntime`, `CPUExecutionProvider`). `sintetizar(texto)` → `(audio int16, sample_rate,
+  timeline, con_alineacion)`; el sample rate sale del `.onnx.json` (vía `AudioChunk.sample_rate`,
+  22050 Hz con este modelo), nunca fijo. `decir()` la corre en `asyncio.to_thread` y escribe un WAV
+  PCM16 que va por `enviar_audio()` igual que antes. `precargar_tts()` (rem_chat.py siempre,
+  bench_chat.py standalone) carga + calienta con "Hola." en un hilo de fondo (~1,1 s + ~0,1 s).
+- **`_voz_lock` se quedó, a propósito** (no es el lock de RVC): serializa la carga (precarga vs.
+  primer turno) y cada síntesis, porque el fonemizador de Piper (espeak-ng vía
+  `piper/espeakbridge.so`) es estado C global del proceso y puede haber dos workers (REPL y panel)
+  sintetizando a la vez. Cada síntesis dura ~0,03-0,6 s: serializar no se nota.
+- **Ya no hay sección `voz` en `preferencias.py`** (era `voz`/`rate` de edge-tts) ni
+  `config.leer_config_voz()`/`leer_dispositivo_rvc()`. La pestaña Voz del panel quedó con
+  `seccion: null` (sin opciones, como Personalidad). Un `preferencias.json` viejo con `voz` se
+  ignora con un aviso (sección desconocida), sin romper nada.
 
-Se intentó compensar bajando `index_influence` a 0.5, 0.3 y 0 (menos guiado por el index, más
-libertad para el propio modelo) y no mejoró — a esos niveles se pierde timbre de Rem sin ganar
-fidelidad en la `rr`, porque el problema no es de mezcla index/modelo sino que el modelo mismo no
-tiene ese fonema en su espacio de entrenamiento. La solución real sería reentrenar el modelo con
-audio de doblaje latino (que sí tiene `rr` vibrante), no ajustar parámetros de inferencia.
+### Lipsync desde las duraciones del propio modelo (no estimadas)
 
-## Rendimiento medido (agosto 2026)
-Medido en esta máquina (RTX 3050 Laptop, torch 2.3.1+cu121) con `test_voz.py`:
-- `edge-tts`: ~1,5s por frase larga
-- conversión RVC: ~3,3s para 12,2s de audio (factor 0,27× tiempo real, con GPU)
-- salida de RVC: 40000 Hz
-- configuración usada: `pitch_lvl=4`, `index_influence=0.75`
+**Investigado antes de diseñar: piper-tts 1.8 SÍ expone alineaciones fonema→audio.**
+`PiperVoice.synthesize(texto, include_alignments=True)` devuelve por `AudioChunk` (uno por oración
+que detecta espeak) `phoneme_alignments: [PhonemeAlignment(phoneme, phoneme_ids, num_samples)]`. Sale
+de la salida de duraciones de VITS (el tensor `w_ceil`, nodo `Ceil`). **Este modelo no la trae de
+fábrica** (solo la salida `output`); `PiperVoice.load(..., include_alignments=True)` la agrega
+parcheando el grafo **en memoria** con el paquete `onnx` (extra `piper-tts[alignment]`) — el `.onnx`
+en disco no se toca (el SHA-256 sigue igual al de `manifest.json`). Costo: la carga pasa de ~0,5 a
+~0,75 s. Verificado: la suma de `num_samples` de un chunk **coincide exacta** con la longitud de su
+audio, y en 30 oraciones reales de la prueba sin red hubo 0 chunks sin alineación.
 
-## RVC vuelve a GPU: calibración de num_gpu para hacerle sitio
-Se probó primero mover RVC a CPU cuando el LLM local (`ollama`) satura la VRAM (ver historial más
-abajo), pero medido en vivo con el `SentenceSplitter` ya conectado (ver más abajo) CPU no alcanza:
-una frase corta tardó **~13,6s** en convertir en CPU frente a ~3-5s en GPU — casi 4,5× tiempo real,
-así que la cola de conversión no le sigue el ritmo a la generación y la latencia termina peor que
-sin el splitter. La solución real no era mover RVC a CPU, sino bajarle capas al LLM en GPU
-(`num_gpu` de Ollama) para hacerle sitio a RVC en la misma tarjeta.
+`lipsync.construir_timeline(chunks)` (puro, no carga Piper) convierte esas alineaciones al timeline
+de siempre (`{t, viseme, apertura, viseme_vrm, peso_vrm}`, el frontend no cambió):
+- IPA de espeak-ng → fonema interno (`_IPA_A_FONEMA`): `ð` (d suave) y `θ` → `th` (nuevo, viseme
+  `vrc.v_th`, que los dos perfiles de modelo ya declaraban pero el mapeo grafémico nunca emitía);
+  `β`→b, `ɣ`→g, `ɾ`→r, `ʝ`/`ʎ`→y, `ʃ`→ch, semivocales `j`/`w`→i/u. Las africadas llegan partidas
+  (`tʃ` = `t`,`ʃ`).
+- Las marcas de acento/longitud (`ˈ ˌ ː`) tienen duración propia en el modelo pero no son una boca:
+  su tiempo se le da al fonema siguiente (el evento arranca donde arranca el acento).
+- `^`/`$` (BOS/EOS) y la puntuación → silencio. Un espacio solo es silencio si dura más de
+  `ESPACIO_PAUSA_S` (0,12 s); si no, es habla continua y se mantiene el fonema anterior. Silencios
+  seguidos se colapsan.
+- Respaldo si un chunk vuelve sin alineación (Piper la descarta si no cuadra, o falta `onnx`): los
+  fonemas IPA de ese chunk repartidos parejo en su duración real; `decir()` lo loguea
+  (`lipsync SIN alineación`). El viejo conversor grafema→fonema (`texto_a_fonemas()`) se eliminó: el
+  IPA del propio Piper es mejor dato.
+- Verificado contra la energía real del WAV (RMS por ventana de 20 ms, 3 frases): tramos de vocal
+  0,14-0,23, consonante ~0,14, **silencio 0,003-0,067** — el timeline cae donde está el sonido. Y
+  con capturas de la cara durante una frase: la boca abre/cierra/redondea cuadro a cuadro.
+- `venv/bin/python lipsync.py ["frase"]` sintetiza e imprime fonemas, alineación y timeline.
+- Ojo: `espeak.voice = "es"` del modelo es español peninsular (sale `θ` para c/z). Es lo que trae el
+  modelo; no se tocó.
 
-**Calibración empírica** (RTX 3050, 4 GB VRAM; modelo Qwen3.5-4B Q4_K_M, 32 capas —
-`qwen35.block_count` vía `/api/show`). Para cada `num_gpu` candidato: se descargó el modelo
-(`keep_alive: 0`), se recargó con ese `num_gpu` + una generación de 100 tokens (`num_predict: 100`,
-`num_ctx: 4096`), se midió VRAM con `nvidia-smi` y tokens/s (`eval_count`/`eval_duration`), y se
-intentó una conversión RVC real en CUDA:
+### Sin internet: módulos JS vendorizados y llamadas de red
 
-| num_gpu | VRAM modelo | tok/s | RVC (cuda) |
-|---------|-------------|-------|------------|
-| 32 (default de Ollama, todas las capas) | ~2994 MiB | ~40,7 | **FALLA siempre** — CUDA out of memory |
-| 28 | ~2714 MiB | ~25,8 | **marginal** — a veces OK, a veces cudaMalloc failed |
-| **24** (valor actual) | ~2430 MiB | ~20,7 | OK — robusto |
-| 20 | ~2156 MiB | ~16,9 | OK |
-| 16 | ~1872 MiB | ~12,9 | OK |
-| 12 | ~1596 MiB | ~12,3 | OK |
-| 8  | ~1312 MiB | ~10,3 | OK |
-| 4  | ~1061 MiB | ~8,3  | OK |
-| 0 (CPU puro) | ~153 MiB | ~4,7 | OK |
+- **`rem_avatar.html` ya no importa de esm.sh**: `vendor/esm/` es un espejo exacto de los bundles
+  que esm.sh servía (regenerable con `vendor/espejo_esm.py`, ver `vendor/README.md`), servido por el
+  HTTP de `rem_avatar_server.py` (sirve todo `BASE_DIR`; `.mjs`/`.js` salen como `text/javascript`).
+- **Hallazgo al vendorizar: la página carga DOS copias de three.** `three@0.169.0` (página +
+  `GLTFLoader`) y `three@0.164.1`, que es lo que esm.sh le resolvía al peer `^0.164.1` de
+  `@pixiv/three-vrm@2.1.3` y `@pixiv/three-vrm-animation@2.1.3` (`@pixiv/three-vrm@2` sin fijar
+  resolvía a 2.1.3). three lo avisa en consola (`Multiple instances of Three.js being imported`).
+  Así funcionaba antes y se dejó igual; unificarlas es un cambio aparte, que habría que probar.
+- **Llamadas de red en tiempo de ejecución, revisadas** (Python + HTML):
+  - Ollama (`127.0.0.1:11434`) — local.
+  - Claude/Groq (`llm/claude.py`, `llm/groq.py`, `stt/groq.py`) — solo si se eligen como provider;
+    con `ollama` + `stt local` no se tocan.
+  - **faster-whisper**: `WhisperModel("small")` pasaba por `huggingface_hub.snapshot_download`, que
+    **consulta el Hub en cada arranque** aunque el modelo esté en caché (y sin red espera a que
+    falle). Arreglado en `stt/local.py`: primero `local_files_only=True`; solo si el modelo no está
+    se descarga (una vez, con aviso en el log). En esta máquina no estaba descargado: se bajó una vez
+    (~150 s) y desde ahí carga en ~0,6-1 s sin red.
+  - `buscar_en_navegador` (tool) y `bench_chat.py --open` abren el navegador — acción del usuario.
+  - `bench_chat.py` sondea `http://localhost:18765` — local.
+  - Nada más: los bundles vendorizados solo contienen URLs como texto (licencias, el namespace XHTML).
 
-En `num_gpu=32` el resultado de `rvc(...)` vuelve vacío, no una excepción visible — mismo mecanismo
-de `infer_rvc_python` que traga excepciones de su hilo interno (ver más abajo). Se confirmó que es
-un **OOM real, no la carrera intermitente**: repetido 4 veces seguidas con el modelo ya cargado en
-`num_gpu=32`, las 4 veces salió vacío y las 4 veces el subproceso mostraba `CUDA out of memory` en
-stderr — pese a que la VRAM libre en reposo (~1100 MiB) parecía alcanzarle a los ~790 MiB que RVC
-necesita, el pico real durante la conversión (fragmentación + el propio LLM sin liberar su
-allocator) lo excede.
+### Prueba sin red y mediciones (2026-11-04, con corriente, GPU P0)
 
-`num_gpu=28` se creyó robusto en su momento (conversión repetida, frase corta y de ~13s, sin
-fallar). **Corrección posterior**: 28 empezó a fallar de forma intermitente
-(`cudaMalloc failed: out of memory`) — bajado a **24**. Se sospechó que la ventana (`rem_chat.py`,
-canvas grande y opaco) consumía más VRAM que el overlay con el que se calibró, pero **medido con
-`nvidia-smi` el canvas aporta solo ~5 MiB** (WebKit no acelera el WebGL por GPU en esta máquina, lo
-rasteriza por software — ver `CONFIG.render` en "Presupuesto de VRAM del render" más abajo). La
-causa real de 28 es la misma que hacía fallar a 32: el margen ya justo entre el modelo y el **pico**
-de VRAM de RVC durante la conversión (fragmentación + allocator de Ollama). 24 (~2430 MiB modelo)
-deja margen de sobra; cuesta ~20% de tok/s frente a 28 pero no revienta.
-Configurado en `config.toml` → `[llm.ollama].num_gpu = 24`, pasado en cada petición vía
-`get_provider()` → `OllamaProvider._options["num_gpu"]` (se reenvía tal cual en el payload, sin
-lista blanca de claves). **No volver a 28 sin medir de nuevo con `nvidia-smi`** — ver el comentario
-extenso en la tabla de `config.toml`.
+**Sin red de verdad**: no se apagó el wifi (la sesión de Claude Code que hizo la prueba lo
+necesita); en su lugar `rem_chat.py --modo ventana` corrió dentro de `unshare -rn` (namespace de red
+con SOLO loopback: `esm.sh` no resuelve, `curl` falla), con Ollama alcanzable por un puente `socat`
+sobre un socket unix (Wayland/PipeWire también son sockets unix). Resultado: ventana abierta, VRM y
+clips cargados desde `vendor/`, WS conectado, Whisper cargado de caché, modo eco y modo ia (Ollama)
+hablando con la voz de Yoru y la boca moviéndose.
 
-`device` en `config.toml` → `[rvc]` vuelve a `"cuda"` por defecto (`"cpu"` sigue disponible: sirve
-si el provider activo no es `ollama`, o para liberar toda la GPU por algún otro motivo) — vía
-`config.leer_dispositivo_rvc()`, aplicado en `habla.py` (rem_chat y bench_chat) y `test_voz.py`
-(los dos construyen su `BaseLoader` con `only_cpu=(dispositivo == "cpu")`). Verificado en vivo
-end-to-end: LLM → `SentenceSplitter` → RVC en CUDA, dos oraciones de una respuesta real, ambas
-convertidas sin OOM.
+- **Síntesis por oración** (30 oraciones): 0,028-0,623 s, media 0,149 s; **factor 0,033-0,135×
+  tiempo real** (media 0,059×). Ejemplos: 0,68 s de audio en 0,028 s; 6,99 s en 0,62 s.
+- **Primer audio — eco**: 0,06-0,18 s desde el mensaje. **ia**: 0,72-3,06 s, dominado por cuánto
+  tarda el LLM en completar la primera oración (3,06 s = una primera oración de 130 caracteres), no
+  por Piper.
+- **Ollama** (`num_gpu = 24` sin tocar, prompt ~2600-3000 tok): **15,2-18,1 tok/s** (8 turnos;
+  media ~16,2). Más bajo que los 20,7 de la tabla de calibración, que se midió con 100 tokens y
+  `num_ctx` sin llenar.
+- **VRAM** (`nvidia-smi`, muestreo cada 0,5 s durante los turnos): **2322 MiB usados de 4096**, de
+  los que 2312 MiB son `llama-server` de Ollama. Piper, Whisper y WebKit: 0 en la NVIDIA. Quedan
+  ~1770 MiB libres: hay margen para subir `num_gpu` (32 eran ~2994 MiB), pero **no se tocó**
+  todavía.
+- venv: 6,5 GB → 812 MB tras desinstalar lo de RVC.
 
-## SentenceSplitter conectado en bench_chat.py
-`llm/sentence_splitter.py` estaba construido y testeado pero sin ningún consumidor real. Ahora
-`bench_chat.py._chat()` lo usa así: consume `provider.stream_chat()` con un pequeño tee
-(`_pasar_por()`, ya que un async generator es de un solo consumidor) que por un lado imprime el
-texto y registra `Done`/tool_calls tal como antes, y por otro alimenta `dividir_en_oraciones()` —
-cada oración completa se encola (`asyncio.Queue`) apenas está lista, sin esperar el resto de la
-respuesta. Un único worker (`_worker_habla()`, una tarea de fondo creada al arrancar el REPL)
-consume esa cola en orden y llama a `_decir()` por oración.
+### Qué se eliminó
 
-- La conversión RVC dentro de `_decir()` corre en `asyncio.to_thread()`: es una llamada
-  bloqueante, y si corriera en el loop principal frenaría también al productor (`_chat()` leyendo
-  el siguiente chunk del LLM) — exactamente lo que se quiere solapar. `enviar_audio()` no espera a
-  que termine de reproducirse, solo despacha — por eso alcanza con un worker secuencial (no hace
-  falta paralelismo real entre oraciones) para lograr el solape: mientras la oración N sí ya está
-  sonando en el frontend, el worker sigue de largo con la N+1.
-- Medido en vivo (modelo Ollama a ~13 tok/s, RVC en CPU): una respuesta de 3 oraciones/67 tokens
-  tardó ~24s en generarse completa, pero el primer audio salió a los ~43s en un caso (RVC en CPU es
-  más lento que la generación) — la métrica que importa acá es la comparación entre "tiempo hasta
-  el primer audio" y "tiempo total", ambas logueadas por turno (`_TurnoHabla`), para poder decidir
-  después si el solape compensa según qué tan lento esté RVC ese día.
-- **Bug real encontrado en vivo, no de este código**: `infer_rvc_python`'s `BaseLoader.__call__`
-  spawnea un hilo interno (`threading.Thread(target=self.infer)`) por archivo y lo joinea
-  (`run_threads`) antes de devolver — pero si esa excepción ocurre en el frame de la excepción no
-  se re-lanza, así que el error queda parcialmente silenciado: se vio consistentemente en pruebas
-  aisladas mínimas que replican exactamente el patrón de `_decir()` (con y sin `asyncio.to_thread`)
-  **sin** reproducirlo, y de forma intermitente en el flujo real de `bench_chat.py` con RVC llamado
-  varias veces por turno (una vez por oración) — no se identificó la causa exacta de la carrera,
-  solo que existe y es intermitente. Cuando pasa, `__call__` devuelve una lista vacía en vez de
-  lanzar, así que `_decir()` ya lo tolera (cae a la voz cruda de edge-tts sin convertir para esa
-  oración en particular, no se cae ni se traba el pipeline) — se agregó un log explícito
-  (`"RVC no devolvió resultado — hablando sin convertir"`) para que ese fallback silencioso se note.
-  **Confirmado después, durante la calibración de `num_gpu`** (ver "RVC vuelve a GPU" más arriba):
-  un resultado vacío no implica necesariamente esta carrera intermitente — un CUDA out of memory
-  real pasa por el mismo camino silencioso (el hilo interno lo traga igual), y solo se distingue
-  mirando `stderr` del proceso. Con `num_gpu=28` ya calibrado esto no debería dispararse por falta
-  de VRAM, pero si vuelve a aparecer el log de fallback, no asumir que es "la carrera de siempre"
-  sin antes descartar OOM.
+- Código: `cargar_rvc`/`_obtener_rvc`/`_convertir_rvc`/`precargar_rvc`/`_rvc_lock`, la conversión
+  mp3→wav 16 kHz, `lipsync.sintetizar_con_timings()` (edge-tts) y `texto_a_fonemas()`, `test_voz.py`
+  (A/B edge-tts vs RVC), `apply_shim.py` y `fairseq_shim/`, `bench_chat.py --no-rvc`, `[rvc]` y
+  `[voz]` de `config.toml`, la sección `voz` de preferencias.
+- Dependencias (89, en `requirements.txt` y desinstaladas del venv): edge-tts, infer-rvc-python,
+  fairseq, torch/torchaudio/torchcrepe/triton + los 12 `nvidia-*-cu12`, faiss-cpu, librosa, gradio,
+  scipy, etc. — todo lo que solo colgaba de esas. **torch no lo usaba nada más**: faster-whisper va
+  sobre ctranslate2 + onnxruntime. Entraron `piper-tts`, `onnx` (+ `ml-dtypes`, `pathvalidate`).
+  Quedan en el venv, fuera de `requirements.txt`, restos del viejo `Rem.py` (`pyautogui`,
+  `opencv-python`, `speechrecognition`, `pyaudio`...) que nada importa — `pip check` se queja de
+  `pyscreeze` (sin `pillow`); no se tocaron.
+- **Archivos que quedan en disco sin uso** (no se borraron, ~420 MB): `models/Rem_600e_6600s/`
+  66 MB, `hubert_base.pt` 181 MB, `rmvpe.pt` 173 MB.
 
-## Precarga de RVC y fin de la recarga del .pth en cada frase
-Dos problemas medidos en vivo con el `SentenceSplitter` ya conectado (ver arriba): el primer audio
-de una sesión tardaba ~16,5s (carga de RVC + primera conversión en frío) mientras el usuario
-esperaba, y el log mostraba `Loading .../Rem_600e_6600s.pth` antes de **cada** conversión — con el
-splitter mandando una oración a la vez, eso es una recarga del modelo por oración, no por respuesta.
-
-**Causa de la recarga**: `BaseLoader.__call__()` (el método que `bench_chat.py` usaba)
-guarda el tag de la última conversión en `cache_params`, una **variable local** que se reinicializa
-a `None` al entrar a `__call__()` — así que aunque el tag (`"rem"`) nunca cambia entre llamadas,
-la condición `cache_params != id_tag` es `True` siempre, y `load_trained_model()` (con su
-`torch.load()` del `.pth` y la relectura del `.index` vía faiss) se repite en cada conversión.
-`BaseLoader` expone un método distinto para esto — `generate_from_cache(audio_data, tag)` — que
-guarda el estado equivalente en `self.cache_model`/`self.model_vc` (atributos de instancia, no
-variables locales) y compara con `!=` antes de recargar: como la config de `"rem"` nunca cambia
-tras el `apply_conf()` inicial, la carga real solo ocurre una vez por instancia de `BaseLoader`.
-`bench_chat.py` ahora llama a `generate_from_cache(audio_data=<ruta_wav>, tag="rem")`
-en vez de `__call__(audio_files=[...], type_output="wav")` — con `type_output` fijo en `"array"`
-dentro de ese método, devuelve `(audio_int16, sample_rate)` directo en vez de escribir un archivo,
-así que `_decir()` lo escribe a wav con `sf.write()` antes de mandarlo a `enviar_audio()`.
-
-**Beneficio colateral**: `__call__()` corre `self.infer()` dentro de un `threading.Thread` propio
-que solo se joinea (`run_threads`) — si `infer()` lanza, esa excepción no se propaga al hilo
-llamador (comportamiento estándar de `threading.Thread`), y por eso el bug de la carrera
-intermitente documentado arriba ("RVC no devolvió resultado") se manifestaba como una lista vacía
-en vez de una excepción visible. `generate_from_cache()` llama a `self.infer()` **directo**, sin
-hilo interno — un fallo real de RVC (OOM de CUDA, lo que sea) ahora llega a `_decir()` como una
-excepción de verdad, con su mensaje, en vez de desaparecer en silencio. `_decir()` sigue
-tolerándolo igual que antes (`except Exception` alrededor de la conversión, cae a la voz cruda de
-edge-tts sin convertir para esa oración), pero ahora el log de fallback trae el motivo real.
-
-**Precarga en el arranque**: `habla.precargar_rvc()` carga RVC y hace
-una conversión de calentamiento descartable (frase fija `"Hola."`) en un hilo de fondo
-(`threading.Thread(daemon=True)`), lanzado antes de levantar el servidor HTTP/WS para solaparse con
-ese arranque en vez de sumarse después. Lo hacen `rem_chat.py` (siempre) y `bench_chat.py` en modo
-standalone (salvo `--no-rvc`). Así,
-para cuando el usuario escribe su primer `chat` real, tanto la carga del modelo (`import
-torch`/`faiss`, `Config()`) como el primer `generate_from_cache()` en frío (el más caro: incluye
-`torch.load()` del `.pth`, cargar el estimador de pitch `RMVPE` y leer el `.index`) ya se pagaron
-en background.
-
-**Bug de concurrencia encontrado al combinar ambos cambios, y su arreglo**: `BaseLoader` no es
-thread-safe entre llamadas concurrentes — ni `generate_from_cache()` ni la carga perezosa del
-estimador de pitch (`self.model_pitch_estimator`) tienen lock propio. Con el hilo de precarga y una
-petición real llegando casi al mismo tiempo (probado en vivo mandando un `chat` a los 2s de
-arrancar, antes de que la precarga terminara), **ambos hilos vieron el cache vacío a la vez** y
-recargaron el `.pth` y el `RMVPE` por duplicado (`Loading .../Rem_600e_6600s.pth` y `Loading vocal
-pitch estimator model` aparecían dos veces seguidas en el log). Arreglado serializando **toda**
-llamada a RVC — tanto la carga inicial (`_obtener_rvc()`) como cada conversión
-(`generate_from_cache()`, ahora envuelta en `_convertir_rvc()`) — detrás de un único
-`threading.Lock()` (`_rvc_lock`). No hay costo real: las dos rutas comparten la misma GPU/CPU, así
-que no había paralelismo que ganar corriéndolas a la vez, solo una carrera a evitar. Verificado en
-vivo tras el fix: una sola aparición de cada línea `Loading`, sin duplicados, en varias corridas
-seguidas de `bench_chat.py`.
-
-**Medido en vivo, esta máquina, GPU** (`bench_chat.py`, con la precarga corriendo de fondo mientras el
-REPL ya está disponible):
-- Carga del objeto `BaseLoader` (`import torch`/`faiss` + `Config()`): ~3,2-6,2s (varía entre
-  corridas, primer import de estas libs en el proceso).
-- Calentamiento completo (síntesis TTS de la frase de descarte + `generate_from_cache()` en frío,
-  incluyendo `torch.load()` del `.pth`, carga del `RMVPE` y lectura del `.index`): ~9-13s.
-- **Primera conversión real del usuario, después de que la precarga ya terminó**: **0,88s** — misma
-  velocidad que las conversiones subsiguientes (antes del fix, la primera conversión de la sesión
-  costaba ~11-16s, todo pagado en el momento en que el usuario ya está esperando la respuesta).
-- El prompt del REPL queda disponible de inmediato, antes de que termine la precarga (corre en un
-  hilo de fondo, ver más arriba) — no bloquea el arranque.
+**Historia (RVC/edge-tts)**: lo que había —A/B de voces de edge-tts (`es-VE-PaolaNeural` `-8%`),
+la `rr` imperfecta del modelo RVC japonés, la calibración de `num_gpu` para hacerle sitio a RVC, el
+fix de `generate_from_cache()`, el lock de RVC y su precarga— está en git hasta el commit `bb410ce`
+(CLAUDE.md, `habla.py`, `test_voz.py`). El `SentenceSplitter` sigue igual: cada oración se encola
+apenas está completa y un worker por consumidor la sintetiza mientras la anterior suena.
 
 ## Datos del modelo rem.vrm
 Extraído con `dump_vrm.py`. `rem.vrm` es **VRM 0.x** (usa `extensions.VRM`, no `VRMC_vrm`).
@@ -1065,7 +996,7 @@ Rem se crea recién con el PRIMER `chat_delta` (no al mandar el mensaje), así e
 propio — dispara los mismos `enviar_estado()` que ya mueven el cuerpo de Rem (thinking al arrancar
 el turno, talking con el primer fragmento, idle al terminar o si algo falla), así que el indicador
 de texto del panel (con un punto que pulsa) y la pose/gesticulación del avatar quedan
-sincronizados sin necesidad de audio real — este panel es solo texto, no pasa por TTS/RVC/lipsync
+sincronizados sin necesidad de audio real — este panel es solo texto, no pasa por TTS/lipsync
 en absoluto (el pipeline de voz no se tocó).
 
 ## Paleta de comandos "/" en el panel de chat
@@ -1179,7 +1110,7 @@ por un campo `tipo`:
 `procesar_turno()` es una versión "en crudo" del turno: emite cada `TextDelta` tal como llega vía
 un callback `on_delta`, sin agrupar por oración — a propósito distinta de `_chat()` en
 `bench_chat.py`, que sigue intacta (agrupa con `dividir_en_oraciones()` para encolar hacia
-TTS/RVC/avatar). No se tocó `_chat()` ni nada del pipeline de voz: el panel de chat es un consumidor
+TTS/avatar). No se tocó `_chat()` ni nada del pipeline de voz: el panel de chat es un consumidor
 nuevo y separado, no un reemplazo.
 
 **La sesión de chat es un singleton compartido, no uno por consumidor**: `rem_avatar_server.
@@ -1225,14 +1156,11 @@ unificó la parte común (armar el turno, consumir el stream, hablar por oració
 `chat_sesion.procesar_turno()`, y el pipeline de voz en sí (antes atado al REPL) se extrajo a
 `habla.py`.
 
-**`habla.py`**: `cargar_rvc()`/`precargar_rvc()`/`decir()`/`worker_habla()`/`TurnoHabla`, todo lo
-que antes vivía en `bench_chat.py` con el prefijo `_` (`_obtener_rvc`, `_decir`, `_worker_habla`,
-`_TurnoHabla`, etc.) — mismos cuerpos, solo movidos y sin el guion bajo en lo que ahora es API
-pública del módulo. `_rvc_cache`/`_rvc_lock` siguen siendo module-level (una sola instancia de RVC
-por proceso, cargada una vez) — importante porque ahora hay DOS consumidores posibles en el mismo
-proceso (la cola del REPL y la del panel, ver más abajo) que no deben cargar el modelo por
-duplicado ni pisarse entre conversiones concurrentes, mismo motivo que ya tenía el lock antes de
-este cambio.
+**`habla.py`**: `precargar_tts()`/`sintetizar()`/`decir()`/`worker_habla()`/`TurnoHabla`, salido
+de `bench_chat.py` (antes con el prefijo `_`). `_voz`/`_voz_lock` son module-level (una sola
+PiperVoice por proceso) — importante porque hay DOS consumidores posibles en el mismo proceso (la
+cola del REPL y la del panel, ver más abajo) que no deben cargar el modelo por duplicado ni
+fonemizar a la vez (ver "Voz de Yoru (Piper)").
 
 **`chat_sesion.procesar_turno()` ahora cubre los dos casos** (con y sin voz) vía parámetros
 opcionales: `on_delta` (cada fragmento de texto, como antes), `on_tool_call` (preservado por si
@@ -1268,14 +1196,13 @@ para silenciarla, no para tener que activarla primero. Es puramente local en el 
 diferencia de `cambiar_modo`, no hay confirmación del backend ni un tipo `voz_actual` que
 sincronizar (un on/off no puede fallar, y no hay ningún otro cliente cuyo estado deba reflejar).
 
-**`rem_chat.py` ahora también precarga RVC al arrancar** (`habla.precargar_rvc()` en un hilo de
-fondo, antes de `iniciar_servidor_avatar()`, mismo patrón que `bench_chat.py`) — sin flag `--no-rvc`
-propio: a diferencia del REPL (donde la voz es opcional, detrás de `voz on`), en la ventana es una
+**`rem_chat.py` precarga la voz al arrancar** (`habla.precargar_tts()` en un hilo de fondo, antes
+de `iniciar_servidor_avatar()`, mismo patrón que `bench_chat.py`): en la ventana la voz es una
 capacidad de primera clase, así que siempre precarga.
 
 **Verificado en vivo, los cuatro escenarios**:
 1. Panel con voz activa, modo eco: `chat_message` por WS produjo exactamente una línea `hablando:
-   "..."` en el log, conversión RVC, `enviado por WebSocket`, y el navegador real (`rem_chat.py`)
+   "..."` en el log, la síntesis (en su día, conversión RVC), `enviado por WebSocket`, y el navegador real (`rem_chat.py`)
    registró `[Lipsync] mensaje de audio recibido` + `play() resuelto` — la ventana efectivamente
    habla.
 2. Interruptor en `False`: el mismo `chat_message` completó `chat_delta`/`chat_done` normalmente
@@ -1473,8 +1400,8 @@ del repertorio por el resto de la sesión (`_clipsFallidos`).
 
 ### Librería: `@pixiv/three-vrm-animation@2.1.3` (solo el loader plugin)
 
-- Versión emparejada con `@pixiv/three-vrm@2` (mismo `three-vrm-core`, mismo módulo `three` vía
-  esm.sh). Subir todo a `@3` rompería la integración fina con internals de v2 (`expr._binds`,
+- Versión emparejada con `@pixiv/three-vrm@2.1.3` (mismo `three-vrm-core`). Comparten el three
+  0.164.1, no el 0.169.0 de la página — ver "Sin internet: módulos JS vendorizados". Subir todo a `@3` rompería la integración fina con internals de v2 (`expr._binds`,
   `vrm.lookAt.applier.rangeMap*`).
 - Se usa **solo `VRMAnimationLoaderPlugin`** (registrado en el mismo `GLTFLoader` que carga
   `/rem.vrm` — es inerte para un `.vrm`). Hace el parseo + retargetizado real de rotaciones (rig
@@ -1681,8 +1608,8 @@ clip que toque — siempre con crossfade, nunca corte.
 solo ~5 MiB de VRAM NVIDIA** — WebKit no acelera el WebGL por GPU acá, lo rasteriza por software
 (`WebKitWebProcess` ~2,6 GB de RAM, 0 en `nvidia-smi`). O sea estas mitigaciones bajan CPU/RAM y
 suben FPS del render por software, pero **no liberan VRAM para el LLM** — el `num_gpu` de
-`config.toml` no depende de esto (ver el comentario de la tabla ahí: 24 es seguro, 28 es marginal
-por el pico de RVC en la conversión, no por la ventana).
+`config.toml` no depende de esto (24/28 se limitaban por el pico de VRAM de RVC en la conversión, no
+por la ventana; RVC ya no existe — ver "Voz de Yoru (Piper)").
 
 Los clips **no tocan expresiones ni mirada**: si un `.vrma` nuevo trae pistas de expresión/mirada,
 `clipDeVrma()` las ignora (usa solo `humanoidTracks`), y si anima `leftEye`/`rightEye`/`jaw` esos
@@ -1962,9 +1889,8 @@ implementado por trivial, **sin verificar en vivo** con una API key real en esta
 proceso, mismo criterio que `llm.get_provider()`: `REM_STT_PROVIDER` (env) > `[stt].provider` en
 `config.toml` > `"local"`).
 
-**`local` (default) corre en CPU a propósito** — mismo motivo que RVC comparte la GPU con Ollama
-(ver "RVC vuelve a GPU" más arriba): la VRAM (4 GB) ya está justa entre el LLM local y RVC, no hay
-margen para un tercer modelo. `config.toml` -> `[stt.local]`: `model="small"`,
+**`local` (default) corre en CPU a propósito**: la VRAM (4 GB) es para el LLM local (cuando se
+decidió, la compartía con RVC, que ya no existe). `config.toml` -> `[stt.local]`: `model="small"`,
 `compute_type="int8"`, `device="cpu"`, `language="es"`, `beam_size=1` (decodificación voraz, la más
 rápida — ver la comparación de latencia más abajo), `initial_prompt` con vocabulario del proyecto
 (Rem, Ollama, Claude, Hyprland, etc., para sesgar nombres propios/técnicos). `WhisperModel.transcribe()`
@@ -1972,10 +1898,10 @@ corre con `vad_filter=True` (recorta silencio antes de decodificar — sin esto 
 sobre pausas/ruido de fondo) y `condition_on_previous_text=False` (cada push-to-talk es un
 enunciado suelto; arrastrar texto previo como contexto solo propaga alucinaciones).
 
-**Precarga igual que RVC**: `rem_chat.py` lanza `stt.precargar_stt()` en un hilo daemon, ANTES de
+**Precarga igual que la voz**: `rem_chat.py` lanza `stt.precargar_stt()` en un hilo daemon, ANTES de
 levantar el servidor, en los dos modos (la voz de entrada es de primera clase, sin flag para
-omitirla — mismo criterio que la precarga de RVC). `LocalSTTProvider._lock` (un `threading.Lock`)
-serializa carga y transcripciones — mismo motivo que `habla._rvc_lock`: la precarga en hilo de
+omitirla — mismo criterio que la precarga de la voz). `LocalSTTProvider._lock` (un `threading.Lock`)
+serializa carga y transcripciones — mismo motivo que `habla._voz_lock`: la precarga en hilo de
 fondo y un primer `ptt_stop` real pueden coincidir.
 
 **Push-to-talk end-to-end**: `rem_ptt.py start|stop` (proceso corto, pensado para atarse a una
@@ -1995,7 +1921,7 @@ proceso `rem_ptt.py stop` muerto).
 
 **Decisión — `ptt_start` mientras Rem habla: SE IGNORA, no la interrumpe.** Documentado en el
 propio código (comentario extenso sobre `_ptt_motivo_ocupada()`): interrumpir exigiría cancelar el
-turno de LLM en curso, vaciar la cola de síntesis (TTS/RVC corre en un hilo que no se puede
+turno de LLM en curso, vaciar la cola de síntesis (Piper corre en un hilo que no se puede
 cancelar a mitad) y cortar el `<audio>` del frontend, coordinado entre procesos — mucha superficie
 para un beneficio dudoso. Ignorar garantiza lo que sí importa: **el micrófono nunca está abierto
 mientras suena la voz de Rem**, así que no puede grabarse a sí misma. `_ptt_motivo_ocupada()`
@@ -2111,7 +2037,7 @@ pero **la interacción concreta con el lanzador de caelestia no se probó**. Res
 
 ## Precarga de Ollama al arrancar, y por qué el tok/s real varía tanto
 
-**Precarga**: `rem_chat.py` lanza `llm.precargar_provider()` en un hilo de fondo junto a las de RVC y
+**Precarga**: `rem_chat.py` lanza `llm.precargar_provider()` en un hilo de fondo junto a las de la voz y
 STT. Con Ollama llama a `OllamaProvider.precargar()` — una petición a `/api/chat` con `messages`
 vacío (Ollama carga el modelo y responde `done_reason: "load"`, sin generar). Tiene que llevar las
 MISMAS `options` (`num_gpu`, `num_ctx`...) y `keep_alive` que las peticiones reales: Ollama recarga
@@ -2343,17 +2269,6 @@ El viejo par `abrime el firefox` → "De una, ya te lo abro." se quitó: **sin**
 abrí." sin abrir nada. Lo reemplaza un par donde Rem se niega a algo que no puede hacer
 (`instalame el discord`).
 
-## Voz de salida configurable (`config.toml` → `[voz]`)
-
-`habla.py` (rem_chat y bench_chat) lee voz/rate de `[voz]` vía `config.leer_config_voz()` (default
-`es-VE-PaolaNeural`, `-8%`). Antes usaba los valores fijos de `lipsync.py`; las variables
-`VOZ_REM`/`TTS_RATE` de `.env` solo las leía el viejo `Rem.py` y ya no existen. A/B contra `es-CO-SalomeNeural` en
-`pruebas_voz/tono_paisa/` (ignorado por git): Salomé sale ~10-14% más rápida al mismo `rate`
-(6,0 vs 7,0 s; 9,8 vs 10,8 s; 11,1 vs 12,3 s) — si se adopta, probar un `rate` más bajo, por lo que ya
-se midió de RVC y el ritmo de la voz de origen. Muestras 4-6 de esa carpeta: Salomé a `-15%` (crudo y
-RVC) con 3 respuestas reales del bench emocional. Da ~95 ms/carácter en 2 de 3 (Paola a `-8%`: ~97-99;
-Salomé a `-8%`: ~85-89) y ~80 en la otra. El default sigue siendo Paola `-8%`.
-
 ## Preferencias del panel de control (`preferencias.py`)
 
 Base del panel de control (ventana GTK+WebKit aparte, en construcción: pestañas Personalidad,
@@ -2362,8 +2277,8 @@ guarda solo lo cambiado desde el panel; prioridad `preferencias.json` > `config.
 código. `config.toml` sigue siendo la base versionada.
 
 - **Esquema por sección** (`ESQUEMA`): cada clave con su validador y su valor base (leído de
-  `config.toml` directo, no por `config.leer_*()`, que ya devuelven el valor efectivo). Hoy: `voz`
-  (`voz`, `rate`), `modelo` (`vrm`) y `animaciones` (ver abajo). Cada pestaña agrega su sección al
+  `config.toml` directo, no por `config.leer_*()`, que ya devuelven el valor efectivo). Hoy: `modelo`
+  (`vrm`) y `animaciones` (ver abajo); la sección `voz` (edge-tts) se eliminó con él. Cada pestaña agrega su sección al
   implementarse. **Cada clave se reemplaza entera** en un parche (no hay fusión profunda de
   objetos): quien cambie `porEstado.happy` tiene que mandar el `porEstado` completo.
 - **`aplicar(seccion, cambios)`** valida el parche ENTERO antes de tocar nada: una clave desconocida
@@ -2373,9 +2288,8 @@ código. `config.toml` sigue siendo la base versionada.
 - **Concurrencia**: la cache del JSON se invalida por mtime (lo puede leer otro proceso, p. ej.
   `bench_chat.py` standalone) y la escritura es atómica (`.tmp` + `os.replace`) bajo un lock. Un JSON
   roto o con valores que ya no validan no tumba la app: se ignora lo inválido con un aviso.
-- **Quién aplica**: lo que se lee en cada uso no necesita nada — `config.leer_config_voz()` (por
-  frase, en `habla.decir()`) y `config.leer_modelo_avatar()` (en `url_avatar()`) ya pasan por acá, así
-  que un cambio de voz suena en la frase siguiente. Lo que hay que avisar se registra con
+- **Quién aplica**: lo que se lee en cada uso no necesita nada — `config.leer_modelo_avatar()` (en
+  `url_avatar()`) ya pasa por acá. Lo que hay que avisar se registra con
   `al_cambiar(seccion, callback)`; corre en un hilo aparte (`asyncio.to_thread` en el servidor) y un
   oyente que falla no deshace lo guardado.
 - **Sección `animaciones`**, validada contra `Animaciones/catalogo.json` (cacheado por mtime):
@@ -2389,8 +2303,8 @@ código. `config.toml` sigue siendo la base versionada.
   idles), `porEstado.happy = [VRMA_02]`, `sad = []` (solo la cara), `enfriamientoMin = 0` (`Shout` dos
   veces seguidas) y el reset (vuelta a 115 y 4–9 s).
 - **Protocolo**: `prefs_get`/`prefs_set` → `prefs_estado`/`prefs_actualizadas`/`prefs_error` (ver la
-  tabla de "WebSocket bidireccional"). Verificado con el servidor real y dos clientes WS: un cambio
-  llega a los dos y queda en `leer_config_voz()`; 8 parches inválidos (clave desconocida mezclada con
+  tabla de "WebSocket bidireccional"). Verificado (cuando existía la sección `voz`) con el servidor real y dos
+  clientes WS: un cambio llega a los dos y queda aplicado; 8 parches inválidos (clave desconocida mezclada con
   una válida, rate fuera de rango, voz con basura, `../`, ruta absoluta, `.vrm` inexistente, sección
   desconocida, parche vacío) se rechazan sin tocar el archivo ni difundir nada.
 
@@ -2418,7 +2332,7 @@ Lanzador: `lanzadores/rem-panel.sh` / **Rem Panel** (no cierra ni reinicia `rem_
 - **Página** (`rem_panel.html`, vanilla, paleta del panel de chat): barra lateral con las pestañas
   (Personalidad, Animaciones, Voz, Modelo; flechas para navegar, la última abierta se recuerda en
   `localStorage`) y estado de conexión. Cada pestaña declara su `seccion` de `preferencias.ESQUEMA`
-  (`null` = todavía sin opciones). Hoy Voz y Modelo muestran cada valor efectivo con su origen
+  (`null` = todavía sin opciones; Voz es `null` desde Piper). Hoy Modelo muestra cada valor efectivo con su origen
   (`panel` / `config.toml`) y **Restablecer** (manda `null`). `aplicarCambio()` manda `prefs_set` con
   un `id` y resuelve/rechaza al volver ese `id` (timeout 5 s); un cambio hecho por OTRO cliente llega
   como `prefs_actualizadas` sin `id` conocido y solo repinta. El resto de mensajes del WS (audio,

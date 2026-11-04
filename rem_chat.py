@@ -15,7 +15,7 @@ Sin --modo se usa config.toml -> [app].modo (default "ventana"). Si ya hay una
 instancia corriendo (puertos :18765/:18766 ocupados) sale con un error claro
 en vez de abrir una segunda presentación pegada a un servidor ajeno.
 
-Al arrancar también precarga RVC y el modelo de STT (faster-whisper) en hilos
+Al arrancar también precarga la voz (Piper) y el modelo de STT (faster-whisper) en hilos
 de fondo, y llama a rem_avatar_server.iniciar_servidor_avatar().
 
 Corre con el venv (venv/bin/python rem_chat.py): PyGObject/pycairo se
@@ -312,13 +312,12 @@ def main():
     print(f"[Chat] Modo: {MODO}")
 
     # Precargas en hilos de fondo, antes de levantar el servidor — se solapan
-    # con ese arranque en vez de sumarse después. RVC: ver CLAUDE.md,
-    # "Precarga de RVC y fin de la recarga del .pth en cada frase". STT: el
-    # modelo de faster-whisper se carga una sola vez aquí, igual que RVC. La
+    # con ese arranque en vez de sumarse después. Voz: la PiperVoice se carga
+    # una sola vez (habla._voz). STT: el modelo de faster-whisper, igual. La
     # voz (salida y entrada) es una capacidad de primera clase en los dos
     # modos: no hay flag para omitirlas.
     import habla
-    threading.Thread(target=habla.precargar_rvc, daemon=True).start()
+    threading.Thread(target=habla.precargar_tts, daemon=True).start()
     threading.Thread(target=_precargar_stt, daemon=True).start()
     # El LLM local también: sin esto el primer turno paga la carga del modelo
     # (~6,7s medidos con Ollama) y la evaluación del prefijo fijo (system +

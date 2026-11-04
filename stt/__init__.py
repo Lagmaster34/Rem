@@ -92,7 +92,7 @@ def obtener_stt() -> STTProvider:
 
 def precargar_stt() -> None:
     """Carga (y calienta) el modelo en el hilo que lo llame — lanzada en un
-    hilo de fondo al arrancar por rem_chat.py, igual que habla.precargar_rvc().
+    hilo de fondo al arrancar por rem_chat.py, igual que habla.precargar_tts().
     No bloqueante: si falla (falta la API key, no hay red para bajar el modelo
     la primera vez...) solo lo loguea; el error real volverá a aparecer,
     visible, en el primer push-to-talk."""

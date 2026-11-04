@@ -126,7 +126,7 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
       futuro que sí pase tools no lo pierda en silencio).
     - cola_habla: si no es None, cada oración completa (dividir_en_
       oraciones()) se encola ahí para hablar (ver habla.py: worker_habla()
-      la consume y hace TTS -> RVC -> enviar_audio()) apenas está lista, sin
+      la consume y hace Piper -> enviar_audio()) apenas está lista, sin
       esperar el resto de la respuesta. None (default) no habla nada — la
       sesión sigue funcionando solo como texto.
 

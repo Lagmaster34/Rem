@@ -9,7 +9,7 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Audio de pruebas / salidas de TTS-RVC
+# Audio de pruebas / salidas de TTS
 *.mp3
 *.wav
 pruebas_voz/
@@ -26,6 +26,9 @@ rem.vrm
 # de cada uno) — nunca se versionan, igual que rem.vrm arriba.
 *.glb
 models/*.vrm
+
+# Modelos de voz Piper: nunca se versionan (ver hooks/).
+models/yoru_piper/
 
 # Clips de animación VRMA (descargar manualmente — ver Animaciones/README.md).
 # El README sí se versiona; los .vrma y el pack descargado, no.

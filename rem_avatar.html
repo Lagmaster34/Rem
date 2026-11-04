@@ -308,15 +308,20 @@
 </head>
 <body>
 <script type="module">
-import * as THREE from 'https://esm.sh/three@0.169.0';
-import { GLTFLoader }    from 'https://esm.sh/three@0.169.0/examples/jsm/loaders/GLTFLoader.js';
-import { VRMLoaderPlugin, VRMUtils } from 'https://esm.sh/@pixiv/three-vrm@2';
+// Módulos vendorizados en vendor/esm/ (espejo exacto de lo que servía esm.sh,
+// ver vendor/README.md): la página carga sin internet. OJO: three-vrm y
+// three-vrm-animation traen SU propio three (0.164.1, el que esm.sh les
+// resolvía por su peer ^0.164.1), distinto del 0.169.0 de la página — así
+// funcionaba ya antes de vendorizar, y se dejó igual a propósito.
+import * as THREE from '/vendor/esm/three@0.169.0.js';
+import { GLTFLoader }    from '/vendor/esm/three@0.169.0/examples/jsm/loaders/GLTFLoader.js';
+import { VRMLoaderPlugin, VRMUtils } from '/vendor/esm/@pixiv/three-vrm@2.1.3.js';
 // Solo el loader plugin (parser + retargetizador de rotaciones al rig del modelo).
 // NO se usa createVRMAnimationClip: ese además arma pistas de expresión/mirada y
 // auto-crea un VRMLookAtQuaternionProxy en la escena — acá los clips solo mueven
 // huesos de cuerpo (ver "ANIMACIÓN POR CLIPS VRMA" más abajo). Versión 2.1.3:
-// empareja con @pixiv/three-vrm@2 (mismo three-vrm-core, mismo módulo three vía esm.sh).
-import { VRMAnimationLoaderPlugin } from 'https://esm.sh/@pixiv/three-vrm-animation@2.1.3';
+// empareja con @pixiv/three-vrm@2.1.3 (mismo three-vrm-core).
+import { VRMAnimationLoaderPlugin } from '/vendor/esm/@pixiv/three-vrm-animation@2.1.3.js';
 
 // Dos modos, elegidos por ?modo= (lo arma rem_avatar_server.url_avatar() según
 // rem_chat.py --modo), nunca los dos a la vez:
@@ -522,8 +527,8 @@ const CONFIG = {
       anchorX: 0.5,           // centrada horizontalmente
     },
   },
-  // Presupuesto de render — la ventana comparte los 4 GB de VRAM con Ollama +
-  // RVC (ver config.toml [llm.ollama].num_gpu). Bajar estos valores libera
+  // Presupuesto de render — la ventana comparte los 4 GB de VRAM con Ollama
+  // (ver config.toml [llm.ollama].num_gpu). Bajar estos valores libera
   // VRAM para el LLM a costa de nitidez.
   render: {
     pixelRatioMax:   1.0,      // tope del devicePixelRatio (era 1.5)
@@ -949,7 +954,7 @@ function recalcularEncuadre() {
 // SUELO DE CUADRÍCULA SYNTHWAVE
 // ═══════════════════════════════════════════════════
 // GridHelper + Fog — nada de reflejos ni post-procesado (la GPU de esta
-// máquina ya anda justa compartiendo VRAM con RVC/el LLM local, ver
+// máquina ya anda justa compartiendo VRAM con el LLM local, ver
 // CLAUDE.md). La niebla es lo que da la sensación de perspectiva hacia un
 // horizonte, no geometría extra: las líneas lejanas se funden con
 // colorFondo en vez de dibujarse nítidas hasta el infinito.
@@ -1312,8 +1317,8 @@ _audioEl.addEventListener('playing', () => {
 });
 _audioEl.addEventListener('ended', _avanzarCola);
 // MediaError.code: 1=ABORTED 2=NETWORK 3=DECODE 4=SRC_NOT_SUPPORTED.
-// code=3 confirmaría que WebKit no puede decodificar el WAV (RVC produce
-// 40000 Hz, un sample rate inusual) — distinto de un NotAllowedError de
+// code=3 confirmaría que WebKit no puede decodificar el WAV (el sample rate
+// lo pone el modelo de Piper — 22050 Hz con la voz de Yoru) — distinto de un NotAllowedError de
 // play(), que sería la política de autoplay todavía activa.
 const _MEDIA_ERROR_NOMBRES = { 1: 'ABORTED', 2: 'NETWORK', 3: 'DECODE', 4: 'SRC_NOT_SUPPORTED' };
 _audioEl.addEventListener('error', () => {

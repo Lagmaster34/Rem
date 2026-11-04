@@ -1,8 +1,7 @@
 """LocalSTTProvider — faster-whisper (CTranslate2) corriendo en CPU.
 
-EN CPU a propósito: la VRAM de esta máquina (RTX 3050, 4 GB) ya está llena con
-Ollama + RVC (ver CLAUDE.md, "RVC vuelve a GPU: calibración de num_gpu"), así
-que el STT no toca la GPU. Modelo, cuantización, idioma y vocabulario salen de
+EN CPU a propósito: la VRAM de esta máquina (RTX 3050, 4 GB) es para Ollama
+(ver config.toml [llm.ollama].num_gpu), así que el STT no toca la GPU. Modelo, cuantización, idioma y vocabulario salen de
 config.toml [stt.local].
 """
 import threading
@@ -39,7 +38,7 @@ class LocalSTTProvider(STTProvider):
         self._modelo = None
         # Serializa carga y transcripciones: la precarga (hilo de fondo al
         # arrancar) y un primer ptt_stop pueden coincidir — mismo motivo que
-        # habla._rvc_lock. WhisperModel tampoco está pensado para llamadas
+        # habla._voz_lock. WhisperModel tampoco está pensado para llamadas
         # concurrentes sobre la misma instancia.
         self._lock = threading.Lock()
 
@@ -49,10 +48,17 @@ class LocalSTTProvider(STTProvider):
             from faster_whisper import WhisperModel
             rss0 = _rss_mb()
             t0 = time.perf_counter()
-            self._modelo = WhisperModel(
-                self.model, device=self.device, compute_type=self.compute_type,
-                cpu_threads=self.cpu_threads,
-            )
+            opciones = dict(device=self.device, compute_type=self.compute_type,
+                            cpu_threads=self.cpu_threads)
+            # Primero solo la caché local: sin esto, huggingface_hub consulta
+            # el Hub en CADA arranque aunque el modelo ya esté descargado (y
+            # sin red espera a que falle). A la red solo se sale si falta.
+            try:
+                self._modelo = WhisperModel(self.model, local_files_only=True, **opciones)
+            except Exception as e:
+                _log(f"faster-whisper '{self.model}' no está en la caché local ({type(e).__name__}) "
+                     f"— descargándolo una vez del Hub de Hugging Face")
+                self._modelo = WhisperModel(self.model, **opciones)
             _log(f"faster-whisper '{self.model}' ({self.compute_type}, {self.device}) cargado en "
                  f"{time.perf_counter() - t0:.1f}s — RAM del proceso {rss0:.0f} -> {_rss_mb():.0f} MiB")
         return self._modelo

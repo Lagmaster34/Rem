@@ -97,7 +97,7 @@ def precargar_provider(system: str | None = None, messages: list | None = None,
     Ollama: cargar el modelo en memoria y, si se pasa `system`, evaluar el
     prefijo system + `messages` + `tools` para que quede en su caché — ver
     chat_sesion.precargar_prefijo(), que es quien lo llama al arrancar
-    rem_chat.py, igual que habla.precargar_rvc() y stt.precargar_stt()). Los
+    rem_chat.py, igual que habla.precargar_tts() y stt.precargar_stt()). Los
     providers remotos (Claude/Groq) no tienen nada que precargar. No
     bloqueante: un fallo (Ollama apagado, falta la API key) solo se loguea; el
     error real volverá a aparecer, visible, en el primer turno."""

@@ -1,117 +1,17 @@
 """Lipsync real basado en fonemas para el avatar de Rem.
 
-Pipeline: texto → edge-tts (audio + WordBoundary por palabra) → fonemas por
-reglas (grafema→fonema español) → timeline de visemes VRChat/Oculus con
-apertura de mandíbula, listo para mandar al frontend por WebSocket.
+Pipeline: texto → Piper (audio + alineación fonema→muestras de audio) →
+fonemas IPA de espeak-ng → timeline de visemes VRChat/Oculus con apertura de
+mandíbula, listo para mandar al frontend por WebSocket.
 
-Sin dependencias externas: solo stdlib + edge_tts (ya usado por el proyecto).
+Las duraciones salen del PROPIO modelo (la salida de duraciones por fonema de
+VITS que Piper 1.8 expone con `include_alignments`, ver habla.py), no de un
+reparto estimado: la suma de muestras de un chunk coincide exacta con la
+longitud de su audio. Este módulo no carga Piper: recibe los AudioChunk ya
+sintetizados.
 """
 
-import edge_tts
-
-# edge-tts reporta offset/duration en "ticks" de 100 nanosegundos
-# (mismo formato que .NET TimeSpan): 10_000_000 ticks = 1 segundo.
-TICKS_POR_SEGUNDO = 10_000_000
-
-# es-VE-PaolaNeural + rate -8%: configuración ganadora de una comparación A/B
-# (ver CLAUDE.md, "Configuración de voz ganadora").
-VOZ_DEFAULT = "es-VE-PaolaNeural"
-RATE_DEFAULT = "-8%"
-
-
-async def sintetizar_con_timings(texto, voz=VOZ_DEFAULT, rate=RATE_DEFAULT):
-    """Sintetiza `texto` con edge-tts y devuelve (bytes_mp3, palabras_con_timings).
-
-    palabras_con_timings: [{"palabra": str, "inicio": float, "fin": float}, ...]
-    inicio/fin en segundos, relativos al comienzo del audio.
-    """
-    communicate = edge_tts.Communicate(texto, voz, rate=rate, boundary="WordBoundary")
-
-    audio_chunks = []
-    palabras = []
-
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            audio_chunks.append(chunk["data"])
-        elif chunk["type"] == "WordBoundary":
-            inicio = chunk["offset"] / TICKS_POR_SEGUNDO
-            duracion = chunk["duration"] / TICKS_POR_SEGUNDO
-            palabras.append({
-                "palabra": chunk["text"],
-                "inicio": inicio,
-                "fin": inicio + duracion,
-            })
-
-    return b"".join(audio_chunks), palabras
-
-
-# ── Grafema → fonema (español, por reglas) ──────────────────────────────
-_VOCALES_ACENTUADAS = {"á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ü": "u"}
-
-
-def _normalizar(c):
-    return _VOCALES_ACENTUADAS.get(c, c)
-
-
-def texto_a_fonemas(palabra):
-    """Convierte una palabra en español a una lista de fonemas, por reglas.
-
-    Maneja los dígrafos (ch, ll, rr, qu, gu ante e/i) antes que las letras
-    sueltas para que no se procesen letra por letra por error.
-    """
-    p = palabra.lower()
-    n = len(p)
-    fonemas = []
-    i = 0
-
-    while i < n:
-        c2 = p[i:i + 2]
-        sig = _normalizar(p[i + 2]) if i + 2 < n else ""
-
-        # Dígrafos primero
-        if c2 == "ch":
-            fonemas.append("ch"); i += 2; continue
-        if c2 == "ll":
-            fonemas.append("y"); i += 2; continue
-        if c2 == "rr":
-            fonemas.append("r"); i += 2; continue
-        if c2 == "qu" and sig in "ei":
-            fonemas.append("k"); i += 2; continue
-        if c2 == "gu" and sig in "ei":
-            fonemas.append("g"); i += 2; continue
-
-        c = _normalizar(p[i])
-        sig1 = _normalizar(p[i + 1]) if i + 1 < n else ""
-
-        if c in "aeiou":
-            fonemas.append(c)
-        elif c == "c":
-            fonemas.append("s" if sig1 in "ei" else "k")
-        elif c == "g":
-            fonemas.append("x" if sig1 in "ei" else "g")
-        elif c == "j":
-            fonemas.append("x")
-        elif c == "v":
-            fonemas.append("b")
-        elif c == "z":
-            fonemas.append("s")
-        elif c == "h":
-            pass  # muda, no genera fonema
-        elif c == "y":
-            es_final = (i == n - 1)
-            fonemas.append("i" if es_final else "y")
-        elif c == "ñ":
-            fonemas.append("n")
-        elif c.isalpha():
-            fonemas.append(c)  # consonantes regulares: b,d,f,k,l,m,n,p,r,s,t...
-        # no alfabético (puntuación, espacios, dígitos) → se ignora
-
-        i += 1
-
-    return fonemas
-
-
-# ── Fonema → viseme (morph targets VRChat/Oculus presentes en rem.vrm) ──
+# ── Fonema → viseme (vocabulario canónico "vrc.v_*" del frontend) ───────
 FONEMA_A_VISEME = {
     "a": "vrc.v_aa",
     "e": "vrc.v_e",
@@ -121,6 +21,7 @@ FONEMA_A_VISEME = {
     "p": "vrc.v_pp", "b": "vrc.v_pp", "m": "vrc.v_pp",
     "f": "vrc.v_ff",
     "s": "vrc.v_ss",
+    "th": "vrc.v_th",
     "t": "vrc.v_dd", "d": "vrc.v_dd",
     "k": "vrc.v_kk", "g": "vrc.v_kk", "x": "vrc.v_kk",
     "n": "vrc.v_nn", "l": "vrc.v_nn",
@@ -142,7 +43,7 @@ _APERTURA_SILENCIO = 0.0
 FONEMA_A_VISEME_VRM = {
     "a": ("aa", 1.0), "e": ("ee", 1.0), "i": ("ih", 1.0), "o": ("oh", 1.0), "u": ("ou", 1.0),
     "p": (None, 0.0), "b": (None, 0.0), "m": (None, 0.0),
-    "f": ("ih", 0.3), "s": ("ih", 0.3), "z": ("ih", 0.3),
+    "f": ("ih", 0.3), "s": ("ih", 0.3), "th": ("ih", 0.3),
     "n": ("ih", 0.2), "l": ("ih", 0.2), "t": ("ih", 0.2), "d": ("ih", 0.2),
     "k": ("aa", 0.3), "g": ("aa", 0.3), "x": ("aa", 0.3),
     "r": ("ih", 0.25),
@@ -150,6 +51,34 @@ FONEMA_A_VISEME_VRM = {
     "silencio": (None, 0.0),
 }
 _VISEME_VRM_DEFAULT = (None, 0.0)
+
+# ── IPA de espeak-ng (español) → fonema interno ─────────────────────────
+# espeak-ng parte las africadas en dos símbolos (tʃ → "t", "ʃ"), así que no
+# hacen falta entradas de dos caracteres.
+_IPA_A_FONEMA = {
+    "a": "a", "ɐ": "a", "æ": "a", "ɑ": "a",
+    "e": "e", "ɛ": "e", "ə": "e",
+    "i": "i", "ɪ": "i", "j": "i",   # j = semivocal ("funθjon"): boca de i
+    "o": "o", "ɔ": "o",
+    "u": "u", "ʊ": "u", "w": "u",   # w = semivocal: boca de u
+    "p": "p", "b": "b", "β": "b", "m": "m", "ɱ": "m",
+    "f": "f", "v": "f",
+    "θ": "th", "ð": "th",           # ð = la d suave intervocálica ("moðelo")
+    "s": "s", "z": "s",
+    "t": "t", "d": "d",
+    "k": "k", "c": "k", "g": "g", "ɡ": "g", "ɣ": "g", "x": "x", "χ": "x", "h": "x",
+    "n": "n", "ɲ": "n", "ŋ": "n", "ɴ": "n", "l": "l",
+    "r": "r", "ɾ": "r", "ɹ": "r", "ʀ": "r",
+    "ʃ": "ch", "ʒ": "y", "ʝ": "y", "ʎ": "y", "ɟ": "y",
+}
+# Marcas de acento/longitud y diacríticos: el modelo les asigna duración
+# propia (es el arranque del fonema siguiente), pero no son una forma de boca.
+_MODIFICADORES = set("ˈˌːˑ̪̃͡")
+# Pausas: BOS/EOS de Piper y puntuación — boca cerrada.
+_PAUSAS = set("^$_,.;:!?¡¿—–-…()\"'")
+# Un espacio entre palabras es un silencio real solo si dura más que esto; si
+# no, es habla continua y se mantiene el fonema anterior.
+ESPACIO_PAUSA_S = 0.12
 
 
 def _construir_evento(t, fonema):
@@ -164,9 +93,24 @@ def _construir_evento(t, fonema):
     }
 
 
-def construir_timeline(palabras_con_timings):
-    """Reparte los fonemas de cada palabra uniformemente en su intervalo de tiempo
-    e inserta silencios en los huecos entre palabras.
+def _segmentos(chunk):
+    """[(símbolo IPA, nº de muestras)] de un AudioChunk de Piper. Con
+    alineación, las duraciones reales del modelo. Sin ella (el modelo no se
+    pudo parchear, o Piper descartó la alineación de este chunk), los fonemas
+    del chunk repartidos parejo en su duración real — sin modificadores, que no
+    son sonidos propios."""
+    if chunk.phoneme_alignments:
+        return [(a.phoneme, int(a.num_samples)) for a in chunk.phoneme_alignments]
+    simbolos = [p for p in chunk.phonemes if p not in _MODIFICADORES]
+    if not simbolos:
+        return [("_", len(chunk.audio_float_array))]
+    paso = len(chunk.audio_float_array) / len(simbolos)
+    return [(p, paso) for p in simbolos]
+
+
+def construir_timeline(chunks):
+    """Timeline de visemes de los AudioChunk de una síntesis de Piper, en el
+    orden en que se concatenan en el WAV (sin silencio entre chunks).
 
     Cada evento trae dos mapeos en paralelo, para que el frontend elija cuál usar
     según lo que exponga el modelo cargado:
@@ -174,49 +118,66 @@ def construir_timeline(palabras_con_timings):
       - "viseme_vrm"/"peso_vrm": preset estándar de VRM (aa/ee/ih/oh/ou vía
         expressionManager), con peso parcial para consonantes sin viseme propio.
 
-    Devuelve una lista ordenada por "t".
+    Devuelve (timeline ordenado por "t", con_alineacion) — con_alineacion es
+    False si algún chunk tuvo que caer al reparto parejo.
     """
     timeline = []
-    t_cursor = 0.0
+    muestras = 0.0
+    con_alineacion = True
+    sr = chunks[0].sample_rate if chunks else 1
 
-    for palabra_info in palabras_con_timings:
-        inicio = palabra_info["inicio"]
-        fin = palabra_info["fin"]
+    def emitir(t, fonema):
+        # Silencios seguidos se colapsan en uno solo.
+        if fonema == "silencio" and timeline and timeline[-1]["viseme"] == "vrc.v_sil":
+            return
+        timeline.append(_construir_evento(t, fonema))
 
-        if inicio > t_cursor:
-            timeline.append(_construir_evento(t_cursor, "silencio"))
+    for chunk in chunks:
+        if not chunk.phoneme_alignments:
+            con_alineacion = False
+        inicio_pendiente = None  # arranque de un fonema precedido por un acento
+        for simbolo, n in _segmentos(chunk):
+            t = muestras / sr
+            if simbolo in _MODIFICADORES:
+                if inicio_pendiente is None:
+                    inicio_pendiente = t
+            elif simbolo == " ":
+                if n / sr > ESPACIO_PAUSA_S:
+                    emitir(t, "silencio")
+                inicio_pendiente = None
+            elif simbolo in _PAUSAS:
+                emitir(t, "silencio")
+                inicio_pendiente = None
+            else:
+                fonema = _IPA_A_FONEMA.get(simbolo, simbolo)
+                emitir(inicio_pendiente if inicio_pendiente is not None else t, fonema)
+                inicio_pendiente = None
+            muestras += n
 
-        fonemas = texto_a_fonemas(palabra_info["palabra"])
-        if fonemas:
-            duracion = (fin - inicio) / len(fonemas)
-            for idx, fonema in enumerate(fonemas):
-                timeline.append(_construir_evento(inicio + idx * duracion, fonema))
-
-        t_cursor = fin
-
-    timeline.append(_construir_evento(t_cursor, "silencio"))
-    return timeline
+    emitir(muestras / sr, "silencio")
+    return timeline, con_alineacion
 
 
 if __name__ == "__main__":
-    import asyncio
+    import sys
+    import time
 
-    FRASE = "Hola, amo. ¿Cómo estás hoy?"
+    from piper import PiperVoice
 
-    async def _prueba():
-        print(f'Sintetizando: "{FRASE}"')
-        audio, palabras = await sintetizar_con_timings(FRASE)
-        print(f"audio: {len(audio)} bytes")
-        print()
-        print("-- palabras con timing --")
-        for p in palabras:
-            print(f'  {p["inicio"]:.3f}s - {p["fin"]:.3f}s : {p["palabra"]!r}')
+    import config
 
-        timeline = construir_timeline(palabras)
-        print()
-        print(f"-- timeline de visemes ({len(timeline)} eventos) --")
-        for ev in timeline:
-            print(f'  t={ev["t"]:.3f}s  viseme={ev["viseme"]:<12}  apertura={ev["apertura"]:.2f}'
-                  f'  | vrm={str(ev["viseme_vrm"]):<5} peso_vrm={ev["peso_vrm"]:.2f}')
+    FRASE = sys.argv[1] if len(sys.argv) > 1 else "Hola, Esteban. ¿Cómo estás hoy?"
+    voz = PiperVoice.load(config.leer_modelo_tts(), include_alignments=True)
+    t0 = time.perf_counter()
+    chunks = list(voz.synthesize(FRASE, include_alignments=True))
+    dt = time.perf_counter() - t0
+    total = sum(len(c.audio_float_array) for c in chunks)
+    print(f'"{FRASE}": {total / chunks[0].sample_rate:.2f}s de audio a {chunks[0].sample_rate} Hz, sintetizado en {dt:.3f}s')
+    for c in chunks:
+        print("  fonemas:", "".join(c.phonemes), "| alineación:", "sí" if c.phoneme_alignments else "NO")
 
-    asyncio.run(_prueba())
+    timeline, con_alineacion = construir_timeline(chunks)
+    print(f"-- timeline de visemes ({len(timeline)} eventos, alineación del modelo: {con_alineacion}) --")
+    for ev in timeline:
+        print(f'  t={ev["t"]:.3f}s  viseme={ev["viseme"]:<12}  apertura={ev["apertura"]:.2f}'
+              f'  | vrm={str(ev["viseme_vrm"]):<5} peso_vrm={ev["peso_vrm"]:.2f}')

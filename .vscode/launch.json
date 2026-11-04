@@ -18,13 +18,12 @@
       "webRoot": "${workspaceFolder}"
     },
     {
-      "name": "Rem: test_voz",
+      "name": "Rem: lipsync (voz de Yoru)",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/test_voz.py",
+      "program": "${workspaceFolder}/lipsync.py",
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "args": ["--voz", "es-VE-PaolaNeural", "--rate=-8%"]
+      "console": "integratedTerminal"
     },
     {
       "name": "Rem: dump_vrm",

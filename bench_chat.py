@@ -18,7 +18,6 @@ En ninguno de los dos casos falla en silencio: si un mensaje no tiene a quién
 llegar, lo dice en consola.
 
     venv/bin/python bench_chat.py
-    venv/bin/python bench_chat.py --no-rvc      # 'voz' sin conversión RVC (solo standalone)
     venv/bin/python bench_chat.py --open        # abre el navegador al arrancar
     venv/bin/python bench_chat.py --depurar-contexto-eco  # ver más abajo
 
@@ -26,7 +25,7 @@ Comandos dentro del REPL:
     chat <texto>       — manda <texto> al modo activo, imprime la respuesta en streaming
     modo                — muestra el modo activo (ia/eco)
     modo ia|eco          — cambia de modo en caliente, sin reiniciar (ver SesionChat)
-    voz on|off          — activa/desactiva hablar la respuesta (lipsync+RVC+avatar)
+    voz on|off          — activa/desactiva hablar la respuesta (Piper+lipsync+avatar)
     reset                — limpia el historial de la conversación
     state <estado>      — manda ese estado al avatar (idle/talking/thinking/happy/sad/angry/surprised)
     clip <nombre>       — dispara un clip VRMA por nombre (ej. 'clip VRMA_05', el '.vrma'
@@ -40,13 +39,13 @@ Groq u Ollama según .env/config.toml), con el contexto dinámico real
 (fecha/hora/estado de la PC) antepuesto a cada mensaje. Modo "eco"
 (llm.echo.EchoProvider) no llama a ningún modelo: repite tal cual el último
 mensaje, sin ese contexto — el modo eco existe para que Rem diga
-exactamente lo que se escribió (probar TTS/RVC/lipsync/avatar de punta a
+exactamente lo que se escribió (probar TTS/lipsync/avatar de punta a
 punta sin gastar tokens ni depender de que haya red o API key), así que
 anteponerlo por defecto contradiría el propósito. --depurar-contexto-eco
 lo fuerza de vuelta si hace falta ver ese bloque sin gastar tokens de un
 LLM real.
 
-El pipeline de voz (TTS -> RVC -> enviar_audio) vive en habla.py y el turno
+El pipeline de voz (Piper -> enviar_audio) vive en habla.py y el turno
 de LLM en chat_sesion.procesar_turno() — compartidos con el panel de chat de
 rem_chat.py (vía rem_avatar_server.py). _chat(), más abajo, es apenas un
 envoltorio que imprime en consola sobre esa función compartida (solo modo
@@ -143,7 +142,7 @@ def _imprimir_ayuda():
     print("    chat <texto>       — manda <texto> al modo activo, respuesta en streaming")
     print("    modo                — muestra el modo activo (ia/eco)")
     print("    modo ia|eco          — cambia de modo en caliente, sin reiniciar")
-    print("    voz on|off          — activa/desactiva hablar la respuesta (lipsync+RVC+avatar)")
+    print("    voz on|off          — activa/desactiva hablar la respuesta (Piper+lipsync+avatar)")
     print("    reset                — limpia el historial de la conversación")
     print(f"    state <estado>    — manda ese estado ({'/'.join(sorted(ESTADOS_VALIDOS))})")
     print("    clip <nombre>      — dispara un clip VRMA por nombre (ej. 'clip VRMA_05'),")
@@ -160,7 +159,7 @@ async def _leer_linea(prompt):
 
 # ─── Modo STANDALONE: bench_chat.py levantó el servidor él mismo ──────
 async def repl_standalone(args):
-    import habla  # solo hace falta acá — el modo cliente no toca RVC/TTS
+    import habla  # solo hace falta acá — el modo cliente no toca el TTS
     _imprimir_ayuda()
     # Sesión COMPARTIDA con el panel de chat de rem_chat.py (si algo más en
     # este proceso lo levanta) — no una SesionChat propia del REPL. Misma
@@ -172,7 +171,7 @@ async def repl_standalone(args):
     # tiene los suyos (ver rem_avatar_server.py), no se comparten (cada uno
     # habla lo que se le pidió a ÉL, ver CLAUDE.md "Voz en la ventana de chat").
     cola_habla: asyncio.Queue = asyncio.Queue()
-    worker_habla = asyncio.create_task(habla.worker_habla(cola_habla, not args.no_rvc))
+    worker_habla = asyncio.create_task(habla.worker_habla(cola_habla))
 
     try:
         while True:
@@ -410,7 +409,6 @@ async def repl_cliente(args):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--no-rvc", action="store_true", help="'voz' salta la conversión RVC (solo modo standalone)")
     p.add_argument("--open", action="store_true", help="abre el navegador automáticamente al arrancar")
     p.add_argument("--depurar-contexto-eco", action="store_true",
                     help="incluye el contexto dinámico (fecha/hora/estado de la PC) también en "
@@ -439,11 +437,9 @@ def main():
 
     # No hay servidor: lo levanta este proceso y corre autocontenido.
     print("No hay servidor de avatar — bench_chat.py arranca en modo STANDALONE.")
-    if not args.no_rvc:
-        # Antes de levantar el servidor, para solaparse con ese arranque (ver
-        # CLAUDE.md, "Precarga de RVC y fin de la recarga del .pth en cada frase").
-        import habla
-        threading.Thread(target=habla.precargar_rvc, daemon=True).start()
+    # Antes de levantar el servidor, para solaparse con ese arranque.
+    import habla
+    threading.Thread(target=habla.precargar_tts, daemon=True).start()
 
     print("Levantando servidor del avatar (HTTP :18765, WS :18766)...")
     rem_avatar_server.iniciar_servidor_avatar()

@@ -301,7 +301,7 @@ _chat_voz_activa = True
 
 # Cola + worker de voz PROPIOS del panel de chat — independientes de la cola
 # del REPL (asyncio.Queue en bench_chat.py, ver repl()). Ambos comparten el
-# mismo RVC (habla._rvc_cache/_rvc_lock), pero no la cola: cada turno se
+# misma voz Piper (habla._voz/_voz_lock), pero no la cola: cada turno se
 # habla desde la cola de quien lo disparó, así que con la ventana y el REPL
 # abiertos a la vez el turno del panel nunca termina también encolado en el
 # worker del REPL (o viceversa) — no hay forma de que el mismo turno se
@@ -332,7 +332,7 @@ def _obtener_cola_habla():
     if _chat_cola_habla is None:
         from habla import worker_habla
         _chat_cola_habla = asyncio.Queue()
-        _chat_worker_habla_task = asyncio.create_task(worker_habla(_chat_cola_habla, True))
+        _chat_worker_habla_task = asyncio.create_task(worker_habla(_chat_cola_habla))
     return _chat_cola_habla
 
 
@@ -372,7 +372,7 @@ async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None):
     LLM (chat_sesion.procesar_turno()) emitiendo chat_delta por cada
     fragmento tal como llega, y si la voz del panel está activa (ver
     voz_chat_activa()/set_voz_chat_activa()) también encola cada oración
-    para hablar (TTS -> RVC -> enviar_audio, mismo pipeline que el REPL de
+    para hablar (Piper -> enviar_audio, mismo pipeline que el REPL de
     bench_chat.py, ver habla.py) apenas dividir_en_oraciones() la completa.
     Mueve el estado del avatar a 'thinking' antes del primer fragmento y a
     'talking' con el primero — mismo canal (enviar_estado) que usa el resto
@@ -446,7 +446,7 @@ async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None):
 #
 # DECISIÓN — ¿qué pasa con ptt_start mientras Rem habla? SE IGNORA (no la
 # interrumpe). Interrumpir exigiría cancelar el turno de LLM en curso, vaciar
-# la cola de síntesis (TTS/RVC corre en un hilo que no se puede cancelar a
+# la cola de síntesis (Piper corre en un hilo que no se puede cancelar a
 # mitad) y cortar el <audio> del frontend, todo coordinado entre procesos —
 # mucha superficie para un beneficio dudoso. Ignorar garantiza además lo que
 # importa: el micrófono NUNCA está abierto mientras suena la voz de Rem, así

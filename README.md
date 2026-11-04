@@ -1,10 +1,10 @@
 # 🌸 Rem — Asistente virtual con avatar VRM
 
-Asistente de escritorio con la personalidad de **Rem (Re:Zero)**: avatar 3D VRM flotando sobre el escritorio, voz clonada con RVC, lipsync sincronizado y capacidad de ejecutar tareas en la PC.
+Asistente de escritorio con la personalidad de **Rem (Re:Zero)**: avatar 3D VRM flotando sobre el escritorio, voz de Yoru con Piper TTS local, lipsync sincronizado y capacidad de ejecutar tareas en la PC.
 
-Corre **100% local y sin coste** con un modelo Qwen3.5-4B en Ollama, o contra la API de Claude / Groq si se prefiere.
+Corre **100% local, sin coste y sin internet** con un modelo Qwen3.5-4B en Ollama (LLM), faster-whisper (oído) y Piper (voz), o contra la API de Claude / Groq si se prefiere.
 
-> **Estado:** funcional de punta a punta desde el 25 ago 2026 (LLM → personalidad → TTS → RVC → lipsync → avatar). La aplicación es `rem_chat.py` (ventana con panel de chat, u overlay con push-to-talk); el viejo asistente Tkinter (`Rem.py`) se eliminó.
+> **Estado:** funcional de punta a punta desde el 25 ago 2026 (LLM → personalidad → TTS → lipsync → avatar; desde nov 2026 la voz es Piper en vez de edge-tts + RVC). La aplicación es `rem_chat.py` (ventana con panel de chat, u overlay con push-to-talk); el viejo asistente Tkinter (`Rem.py`) se eliminó.
 
 ---
 
@@ -47,18 +47,16 @@ cd /mnt/extra/rem/Rem
 python3.10 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-python apply_shim.py   # reaplica el shim de fairseq sobre el paquete instalado
 ```
 
-Versiones que funcionan (fijadas por RVC, son sensibles):
+Sin torch ni CUDA en Python: la voz (Piper) y el oído (faster-whisper) van en CPU sobre onnxruntime /
+ctranslate2. La GPU queda para Ollama.
 
 | Paquete | Versión |
 |---|---|
-| numpy | 1.26.4 |
-| torch / torchaudio | 2.3.1+cu121 |
-| fairseq | 0.12.2 |
-| infer-rvc-python | — |
-| edge-tts | 7.2.8 |
+| piper-tts (+ onnx, para las alineaciones del lipsync) | 1.8.0 |
+| faster-whisper | 1.2.1 |
+| numpy | 2.2.6 |
 | httpx, sounddevice, soundfile | — |
 
 > ⚠️ Si mueves el proyecto de carpeta, `venv/bin/pip` se rompe (ruta absoluta en el shebang). `venv/bin/python` sigue funcionando; recrea el venv o arregla el shebang.
@@ -119,36 +117,22 @@ Sigue soportado (`llm/groq.py`, `AsyncGroq` con streaming), pero ya no es el cam
 
 ## 🎙️ Voz
 
-Cadena: **edge-tts** (voz base) → **RVC** (conversión al timbre de Rem) → reproducción + timeline de visemes.
+Cadena: **Piper** (voz de Yoru, local, CPU) → WAV + timeline de visemes → reproducción en el avatar.
+El avatar sigue siendo el de Rem.
 
-Configuración ganadora tras muchas pruebas:
+- Pon tu propio modelo Piper (`.onnx` + `.onnx.json`) en la ruta de `[tts].modelo` de
+  `config.toml`. Los modelos de voz no se versionan. Se usan los parámetros de síntesis del
+  `.onnx.json` tal cual.
+- Se carga una vez por proceso y se calienta al arrancar (~1,2 s en segundo plano). Síntesis medida:
+  **~0,03-0,6 s por oración** (≈0,06× tiempo real); primer audio en modo eco en **<0,2 s**.
+- **Lipsync con las duraciones reales del modelo**: Piper 1.8 expone cuánto dura cada fonema
+  (`include_alignments`; el modelo se parchea en memoria con el paquete `onnx`). `lipsync.py` lo
+  convierte en el timeline de visemes.
+- Probar: `venv/bin/python lipsync.py "una frase"`.
 
-| Parámetro | Valor |
-|---|---|
-| Voz base | `es-VE-PaolaNeural` |
-| Rate | `-8%` |
-| `pitch_lvl` | `4` |
-| `index_influence` | `0.75` |
-| Salida RVC | 40000 Hz |
-
-Finalistas descartadas: `es-MX-DaliaNeural --rate=-10%` y `es-CO-SalomeNeural --rate=-8%`. (`es-MX-RenataNeural` no existe en edge-tts.)
-
-> Artefacto conocido: la **R** suena rara tras la conversión RVC. Bajar `index_influence` a 0.5 / 0.3 / 0 no compensa la pérdida de parecido; se asume el artefacto.
-
-### Modelos necesarios
-
-```
-models/Rem_600e_6600s/Rem_600e_6600s.pth
-models/Rem_600e_6600s/Rem.index
-hubert_base.pt
-rmvpe.pt
-```
-
-### Precarga de RVC
-
-`_precargar_rvc()` carga el modelo y hace una conversión de calentamiento en un hilo daemon durante el arranque. Antes, cada frase releía el `.pth` (11–16 s); ahora la primera conversión real tarda **0,88 s**.
-
-La causa era que `BaseLoader.__call__()` guarda el tag cargado en `cache_params`, una variable **local**. Se usa `BaseLoader.generate_from_cache()`, que cachea en atributos de instancia. Bonus: llama a `infer()` directo, así que los fallos de RVC ahora lanzan excepción en vez de devolver una lista vacía en silencio. `BaseLoader` no es thread-safe → hay un `threading.Lock()` serializando cada llamada.
+Antes: edge-tts (`es-VE-PaolaNeural`) + RVC (`Rem_600e_6600s`). Se eliminó por completo (código y
+dependencias, incluido torch); el historial está en git hasta `bb410ce`. Los archivos de RVC
+(`models/Rem_600e_6600s/`, `hubert_base.pt`, `rmvpe.pt`, ~420 MB) ya no se usan.
 
 ---
 
@@ -196,13 +180,13 @@ rem_chat.py               # LA APLICACIÓN: levanta el servidor y abre la ventan
 rem_avatar_server.py      # HTTP (sirve HTML/VRM/clips/WAV) + WebSocket bidireccional (estado/audio/chat)
 rem_avatar.html           # Three.js, carga del VRM, clips VRMA, lipsync, panel de chat, cola de audio
 Animaciones/              # clips .vrma del avatar (no van al repo — ver Animaciones/README.md)
-lipsync.py                # timings de edge-tts → grafema-fonema → timeline
+lipsync.py                # alineaciones fonema→audio de Piper → timeline de visemes
 personalidad.py           # system prompt y contexto dinámico
 config.py                 # dotenv + config.toml (compartido)
 config.toml
-apply_shim.py             # shim de fairseq
+vendor/                   # three.js / three-vrm en local (el avatar carga sin internet)
 chat_sesion.py            # SesionChat + procesar_turno() (compartido rem_chat.py / bench_chat.py)
-habla.py                  # pipeline de voz de un turno (TTS → RVC → enviar_audio)
+habla.py                  # pipeline de voz de un turno (Piper → enviar_audio)
 llm/
   base.py                 # ABC LLMProvider + Message / ToolSpec / Chunk / ToolCall
   local.py                # Ollama
@@ -212,7 +196,7 @@ llm/
   sentence_splitter.py    # empuja cada oración al TTS en cuanto se completa
   _retry.py
 bench_chat.py             # REPL de depuración: cliente del servidor, o standalone si no hay ninguno
-models/Rem_600e_6600s/
+models/yoru_piper/        # voz de Yoru (Piper) — no se versiona
 tmp_audio/
 ```
 
@@ -271,34 +255,25 @@ lanzadores/instalar.sh    # escribe los .desktop en ~/.local/share/applications/
 
 ## ⚡ Rendimiento y presupuesto de VRAM
 
-Los 4 GB de la RTX 3050 son el cuello de botella real: el modelo (~2,9 GB) y RVC **no caben cómodos a la vez**.
+Los 4 GB de la RTX 3050 son solo para Ollama: Piper, faster-whisper y el WebGL del avatar (que
+WebKit rasteriza por software) no usan la NVIDIA.
 
-Calibración de `num_gpu` (el modelo tiene 32 capas):
+Medido sin red (nov 2026, con corriente), `num_gpu = 24`: **2322 MiB** de VRAM en uso (2312 de
+Ollama) y **15-18 tok/s** con prompts de ~2600-3000 tokens. Calibración de `num_gpu` (32 capas):
 
-| `num_gpu` | VRAM | Generación | RVC |
-|---|---|---|---|
-| 32 | ~2994 MiB | ~40,7 tok/s | ❌ OOM siempre |
-| **28** | ~2714 MiB | ~25,8 tok/s | ✅ fiable |
-| ≤24 | menos | hasta 4,7 tok/s | ✅ |
+| `num_gpu` | VRAM modelo | Generación |
+|---|---|---|
+| 32 | ~2994 MiB | ~40,7 tok/s |
+| 28 | ~2714 MiB | ~25,8 tok/s |
+| **24** (actual) | ~2430 MiB | ~20,7 tok/s |
+| 0 | ~153 MiB | ~4,7 tok/s |
 
-Se fijó **28** como el valor más alto que funciona.
+24 se eligió para dejarle sitio a RVC, que ya no existe: hay margen para subirlo, pero no se tocó
+todavía (medir antes con `nvidia-smi`).
 
-Coste de tener RVC residente en la GPU:
-
-| Escenario | tok/s |
-|---|---|
-| `ollama run --verbose`, nada más corriendo | 24,7 |
-| RVC residente **en reposo** | 9,0 |
-| RVC convirtiendo en paralelo | ~4 |
-
-O sea: la mera presencia de RVC en la VRAM degrada la generación un ~65%. Es una compensación abierta — la precarga de RVC bajó el tiempo hasta el primer audio pero empeoró el tiempo total de respuesta.
-
-Alternativas descartadas por medición:
-- **RVC en CPU**: ~13,6 s por frase corta (~4,5× tiempo real). La cola del `SentenceSplitter` no sigue el ritmo.
-- **Bajar `num_ctx` a 4096**: no libera casi nada; la caché KV de Qwen3.5 ya es pequeña por su atención híbrida.
-- **`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`**: llega más lejos (falla en RMVPE en vez de HuBERT) pero le faltan 12 MiB.
-
-Cuando RVC falla por OOM, el pipeline cae al audio crudo de edge-tts: se oye, pero sin la voz de Rem.
+- **Bajar `num_ctx` a 4096** no libera casi nada: la caché KV de Qwen3.5 ya es pequeña por su
+  atención híbrida.
+- En batería la GPU cae a P5 y la generación baja a ~6,6 tok/s (ver CLAUDE.md).
 
 ---
 
@@ -350,8 +325,7 @@ Sin cariño ni romance. Natural, con la tecnología como su fuerte, y que **cont
 
 ## 📜 Créditos
 
-- Modelo de voz RVC: Rem (Re:Zero)
-- RVC: [infer-rvc-python](https://github.com/R3gm/infer_rvc_python)
-- TTS: [edge-tts](https://github.com/rany2/edge-tts)
+- TTS: [Piper](https://github.com/OHF-voice/piper1-gpl) (GPL-3.0)
+- Avatar: [three.js](https://threejs.org) y [three-vrm](https://github.com/pixiv/three-vrm) (MIT), vendorizados en `vendor/`
 - LLM local: [Ollama](https://ollama.com) + Qwen3.5-4B
 - Avatar: [three-vrm](https://github.com/pixiv/three-vrm)
