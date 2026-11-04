@@ -48,10 +48,10 @@ def leer_modelo_avatar() -> str:
 
 def leer_modelo_tts() -> str:
     """Ruta ABSOLUTA del modelo Piper (.onnx) de la voz de salida, desde
-    config.toml [tts].modelo (relativa a la raíz del proyecto; default la voz
-    de Yoru). Su config (.onnx.json, con el sample rate) va al lado, con el
+    config.toml [tts].modelo (relativa a la raíz del proyecto; default
+    models/piper/model.onnx). Su config (.onnx.json, con el sample rate) va al lado, con el
     mismo nombre + ".json" — es la convención de Piper."""
-    ruta = str(leer_config_toml().get("tts", {}).get("modelo", "models/yoru_piper/model.onnx")).strip()
+    ruta = str(leer_config_toml().get("tts", {}).get("modelo", "models/piper/model.onnx")).strip()
     return ruta if os.path.isabs(ruta) else os.path.join(BASE_DIR, ruta)
 
 

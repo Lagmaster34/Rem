@@ -1,0 +1,17 @@
+#!/bin/bash
+# Segunda barrera (un commit hecho con --no-verify se salta el pre-commit):
+# rechaza el push si algún commit que se va a subir contiene *.onnx,
+# *.onnx.json o models/piper/ (o la ruta vieja models/yoru_piper/). Instalación: ver hooks/README.md.
+cero=0000000000000000000000000000000000000000
+mal=0
+while read -r _ref_local sha_local _ref_remota sha_remoto; do
+    [ "$sha_local" = "$cero" ] && continue          # borrado de rama
+    if [ "$sha_remoto" = "$cero" ]; then rango="$sha_local --not --remotes"; else rango="$sha_remoto..$sha_local"; fi
+    encontrados=$(git log --format= --name-only $rango -- '*.onnx' '*.onnx.json' 'models/piper/*' 'models/yoru_piper/*' | sort -u)
+    if [ -n "$encontrados" ]; then
+        echo "pre-push: RECHAZADO — estos commits contienen la voz de Piper:" >&2
+        sed 's/^/  /' <<<"$encontrados" >&2
+        mal=1
+    fi
+done
+exit $mal

@@ -1,0 +1,37 @@
+#!/bin/bash
+# Rechaza cualquier commit que incluya un modelo de voz Piper: *.onnx,
+# *.onnx.json o algo bajo models/piper/ (o la ruta vieja models/yoru_piper/)
+# — también si se agregó con
+# `git add -f`, y también una copia renombrada (se compara el contenido con
+# los SHA-256 del manifest.json local, que nunca se versiona).
+# Instalación: ver hooks/README.md.
+set -u
+bloqueados=()
+
+# 1) Por ruta (agregados, copiados, modificados o renombrados).
+while IFS= read -r -d '' ruta; do
+    case "$ruta" in
+        *.onnx|*.onnx.json|models/piper/*|models/yoru_piper/*) bloqueados+=("$ruta (ruta prohibida)") ;;
+    esac
+done < <(git diff --cached --name-only -z --diff-filter=ACMR)
+
+# 2) Por contenido: el mismo archivo con otro nombre.
+raiz="$(git rev-parse --show-toplevel)"
+for manifest in "$raiz/models/piper/manifest.json" "$raiz/models/yoru_piper/manifest.json"; do
+    [ -f "$manifest" ] || continue
+    hashes=$(grep -oE '"sha256": *"[0-9a-f]{64}"' "$manifest" | grep -oE '[0-9a-f]{64}')
+    tamanos=$(grep -oE '"bytes": *[0-9]+' "$manifest" | grep -oE '[0-9]+')
+    while IFS= read -r -d '' ruta; do
+        tam=$(git cat-file -s ":$ruta" 2>/dev/null) || continue
+        grep -qx "$tam" <<<"$tamanos" || continue   # solo si el tamaño coincide
+        h=$(git cat-file blob ":$ruta" | sha256sum | cut -d' ' -f1)
+        grep -qx "$h" <<<"$hashes" && bloqueados+=("$ruta (mismo contenido que la voz)")
+    done < <(git diff --cached --name-only -z --diff-filter=ACMR)
+done
+
+if [ ${#bloqueados[@]} -gt 0 ]; then
+    echo "pre-commit: RECHAZADO — la voz de Piper no se versiona nunca:" >&2
+    printf '  %s\n' "${bloqueados[@]}" >&2
+    echo "Sácalo del índice con: git rm --cached <archivo>" >&2
+    exit 1
+fi

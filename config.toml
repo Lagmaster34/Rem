@@ -69,7 +69,7 @@ model = "llama-3.3-70b-versatile"
 # síntesis (noise_scale, noise_w, length_scale) son los del .onnx.json tal
 # cual. Pon tu propio modelo Piper (.onnx + .onnx.json) en esta ruta; los
 # modelos de voz no se versionan (ver .gitignore).
-modelo = "models/yoru_piper/model.onnx"
+modelo = "models/piper/model.onnx"
 
 
 [avatar]

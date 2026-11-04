@@ -27,7 +27,10 @@ rem.vrm
 *.glb
 models/*.vrm
 
-# Modelos de voz Piper: nunca se versionan (ver hooks/).
+# Modelos de voz Piper: nunca se versionan, estén donde estén (ver hooks/).
+*.onnx
+*.onnx.json
+models/piper/
 models/yoru_piper/
 
 # Clips de animación VRMA (descargar manualmente — ver Animaciones/README.md).

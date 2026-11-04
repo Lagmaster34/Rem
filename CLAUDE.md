@@ -17,7 +17,7 @@ no basta con copiar la carpeta.
 | Capa | Tecnología |
 |------|-----------|
 | LLM | Claude (Anthropic) — `claude-sonnet-5` por defecto. Groq queda como fallback (`llm/groq.py`) |
-| TTS | Piper (`piper-tts` 1.8, CPU) con la voz de Yoru (`models/yoru_piper/`). Ver "Voz de Yoru (Piper)" |
+| TTS | Piper (`piper-tts` 1.8, CPU) con la voz de Yoru (`[tts].modelo`, por defecto `models/piper/`). Ver "Voz de Yoru (Piper)" |
 | STT | `faster-whisper` local (`stt/`), push-to-talk. Groq Whisper como alternativa |
 | GUI | GTK3 + WebKit2 (`rem_chat.py`) — la ventana del avatar con panel de chat, u overlay |
 | Avatar 3D | Three.js + `@pixiv/three-vrm` + `@pixiv/three-vrm-animation` en WebGL, vendorizados en `vendor/esm/` |

@@ -196,7 +196,7 @@ llm/
   sentence_splitter.py    # empuja cada oración al TTS en cuanto se completa
   _retry.py
 bench_chat.py             # REPL de depuración: cliente del servidor, o standalone si no hay ninguno
-models/yoru_piper/        # voz de Yoru (Piper) — no se versiona
+models/piper/             # modelo de voz Piper (pon el tuyo) — no se versiona
 tmp_audio/
 ```
 

@@ -184,7 +184,7 @@ bench_chat.py           ← REPL de depuración: cliente del servidor, o standal
 - Inspector remoto de WebKit: abrí `http://127.0.0.1:9222` en un navegador normal
 
 ### Rem no habla
-- Confirma que `models/yoru_piper/model.onnx` y `model.onnx.json` existen (o la ruta de `[tts].modelo`)
+- Confirma que el `.onnx` y su `.onnx.json` existen en la ruta de `[tts].modelo` (por defecto `models/piper/model.onnx`)
 - Prueba la voz sola: `venv/bin/python lipsync.py "hola"`
 
 ### La boca no se mueve al hablar (`lipsync SIN alineación` en el log)
