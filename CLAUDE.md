@@ -261,7 +261,7 @@ usuario escribe o habla.
 |---------|--------|--------|
 | Modelo de voz Piper (`.onnx` + `.onnx.json`) | — | Pon tu propio modelo Piper en la ruta de `[tts].modelo` de `config.toml`. Nunca se versiona |
 | `rmvpe.pt`, `hubert_base.pt`, `models/Rem_600e_6600s/` | 173 + 181 + 66 MB | **Ya no se usan** (eran de RVC); siguen en disco |
-| `rem.vrm` | — | Incluido en el repo |
+| `rem.vrm` | ~23 MB | **No va en el repo**: su meta VRM (VRoid Hub, autor Skadi) dice `redistribution=disallow`. Colocar a mano |
 | `Animaciones/VRMA_MotionPack/*.vrma` | — | `tk256ailab/vrm-viewer` (MIT) + pack VRoid Project — ver `Animaciones/README.md` |
 
 ## Arquitectura de concurrencia

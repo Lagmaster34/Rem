@@ -15,9 +15,11 @@ __pycache__/
 pruebas_voz/
 tmp_audio/
 
-# Modelos ML muy grandes (descargar de HuggingFace/Google Drive — ver INSTALL.md)
+# Modelos de terceros: no se versionan (licencias que no permiten redistribuirlos).
+# Los de RVC ya no se usan; rem.vrm prohíbe la redistribución (meta VRoid Hub).
 rmvpe.pt
 hubert_base.pt
+models/Rem_600e_6600s/
 models/**/*.pth
 models/**/*.index
 rem.vrm
