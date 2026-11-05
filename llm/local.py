@@ -9,6 +9,8 @@ RTX 3050.
 """
 import asyncio
 import json
+import re
+import subprocess
 import uuid
 from typing import AsyncIterator
 
@@ -24,6 +26,48 @@ _MODELO_DEFAULT = "hf.co/HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive:Q4_K
 _KEEP_ALIVE_DEFAULT = 0
 # Sampling recomendado por el autor del modelo para modo no-thinking.
 _OPTIONS_DEFAULT = {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0, "num_ctx": 8192}
+
+MENSAJE_SIN_VRAM = "Sin VRAM: cierra apps que usen la GPU o baja num_gpu en config.toml"
+_RE_OOM = re.compile(r"cudaMalloc|out of memory", re.IGNORECASE)
+
+
+class SinVRAMError(RuntimeError):
+    """Ollama devolvió 500 porque no le cupo el modelo en la GPU. Su str() es el
+    mensaje para el usuario (el panel del chat lo muestra tal cual). No se
+    reintenta: la VRAM no se libera sola en 1-4 s."""
+    no_reintentar = True
+
+    def __init__(self, detalle: str = ""):
+        super().__init__(MENSAJE_SIN_VRAM)
+        self.detalle = detalle
+
+
+def _oom_en_log_de_ollama(segundos: int = 30) -> str | None:
+    """Busca cudaMalloc / out of memory en el log del servicio de Ollama de los
+    últimos segundos: el cuerpo del 500 no siempre trae la causa (a veces es
+    solo "llama runner process has terminated"). De mejor esfuerzo: sin
+    journalctl o sin permisos devuelve None."""
+    try:
+        r = subprocess.run(["journalctl", "-u", "ollama", "--since", f"-{segundos}s",
+                            "--no-pager", "-o", "cat"],
+                           capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lineas = [l for l in r.stdout.splitlines() if _RE_OOM.search(l)]
+    return lineas[-1].strip() if lineas else None
+
+
+def _error_http(status: int, cuerpo: str) -> Exception:
+    """Traduce una respuesta de error de /api/chat. Un 500 con OOM de CUDA (en el
+    cuerpo o en el log de Ollama) es SinVRAMError; lo demás, un error con el
+    cuerpo incluido (antes se perdía: con stream=True raise_for_status() no lo lee)."""
+    if status == 500:
+        if _RE_OOM.search(cuerpo):
+            return SinVRAMError(cuerpo.strip())
+        linea = _oom_en_log_de_ollama()
+        if linea:
+            return SinVRAMError(linea)
+    return RuntimeError(f"Ollama respondió {status}: {cuerpo.strip()[:300]}")
 
 
 class OllamaProvider(LLMProvider):
@@ -141,7 +185,13 @@ class OllamaProvider(LLMProvider):
         async def _conectar():
             req = client.build_request("POST", "/api/chat", json=payload)
             resp = await client.send(req, stream=True)
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                cuerpo = (await resp.aread()).decode("utf-8", "replace")
+                await resp.aclose()
+                error = await asyncio.to_thread(_error_http, resp.status_code, cuerpo)
+                if isinstance(error, SinVRAMError):
+                    print(f"[Ollama] 500 por falta de VRAM: {error.detalle}", flush=True)
+                raise error
             return resp
 
         # Igual que en Claude: el retry solo cubre conectar y obtener el

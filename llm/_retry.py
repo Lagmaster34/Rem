@@ -26,6 +26,8 @@ async def reintentar_con_backoff(intentar, max_intentos: int, etiqueta: str):
         try:
             return await intentar()
         except Exception as e:
+            if getattr(e, "no_reintentar", False):
+                raise  # p. ej. SinVRAMError: reintentar no cambia nada, solo demora el aviso
             ultimo_error = e
             causa = f" (causa: {type(e.__cause__).__name__}: {e.__cause__})" if e.__cause__ else ""
             if intento < max_intentos - 1:

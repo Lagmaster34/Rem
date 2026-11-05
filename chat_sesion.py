@@ -195,6 +195,24 @@ async def _pasar_por(chunks, on_chunk):
         yield chunk
 
 
+# Verbos que piden abrir algo (normalizados, sin tildes): "ábreme el navegador"
+# puede llegar como abrir_programa('firefox') sin nombrarlo, así que basta el
+# verbo; sin verbo, tiene que aparecer el nombre del programa.
+_RE_PEDIDO_ABRIR = re.compile(r"\b(abr|lanz|inici|ejecut|arranc|corr[ea]|pon(e|me|le)?\b|open)")
+
+
+def _tool_pertinente(call, texto_usuario: str) -> bool:
+    """¿El mensaje del usuario de verdad pide esta tool? Hoy solo se filtra
+    abrir_programa (la única con falsos positivos medidos); el resto pasa."""
+    if call.name != "abrir_programa":
+        return True
+    t = personalidad._normalizar(texto_usuario)
+    if _RE_PEDIDO_ABRIR.search(t):
+        return True
+    nombre = personalidad._normalizar(str((call.arguments or {}).get("nombre", "")))
+    return any(len(p) >= 3 and p in t for p in re.split(r"[\s._-]+", nombre))
+
+
 async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
                           on_delta=None, on_tool_call=None, cola_habla=None,
                           incluir_contexto=True, t_ref=None,
@@ -291,27 +309,43 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
         elif isinstance(chunk, Done):
             done_chunk = chunk
 
-    stream = sesion.provider.stream_chat(system, mensajes, tools=tools)
     etiqueta = None
-    if not isinstance(sesion.provider, EchoProvider):
-        def _on_etiqueta(palabra):
-            nonlocal etiqueta
-            etiqueta = palabra.upper()
-            emocion = EMOCIONES.get(etiqueta)
-            print(f"  [Emoción] [{etiqueta}] -> {emocion or 'sin efecto'}", flush=True)
-            if emocion and on_emocion:
-                on_emocion(emocion)
-        stream = _extraer_emocion(stream, _on_etiqueta)
+
+    def _on_etiqueta(palabra):
+        nonlocal etiqueta
+        etiqueta = palabra.upper()
+        emocion = EMOCIONES.get(etiqueta)
+        print(f"  [Emoción] [{etiqueta}] -> {emocion or 'sin efecto'}", flush=True)
+        if emocion and on_emocion:
+            on_emocion(emocion)
 
     turno_habla = None
     if cola_habla is not None:
         from habla import TurnoHabla
         turno_habla = TurnoHabla(t_ref)
-        async for oracion in dividir_en_oraciones(_pasar_por(stream, _on_chunk)):
-            cola_habla.put_nowait((_para_voz(oracion), turno_habla))
-    else:
-        async for chunk in stream:
-            _on_chunk(chunk)
+
+    async def _consumir(tools_turno):
+        stream = sesion.provider.stream_chat(system, mensajes, tools=tools_turno)
+        if not isinstance(sesion.provider, EchoProvider):
+            stream = _extraer_emocion(stream, _on_etiqueta)
+        if cola_habla is not None:
+            async for oracion in dividir_en_oraciones(_pasar_por(stream, _on_chunk)):
+                cola_habla.put_nowait((_para_voz(oracion), turno_habla))
+        else:
+            async for chunk in stream:
+                _on_chunk(chunk)
+
+    await _consumir(tools)
+    # Tool call sin pedido real (falso positivo del modelo chico: "invéntate
+    # una canción" -> abrir_programa('vlc')): se descarta y el turno se repite
+    # SIN tools, para que conteste en personaje en vez del mensaje fijo de la tool.
+    if tool_calls_recibidas and not "".join(partes).strip() \
+            and not _tool_pertinente(tool_calls_recibidas[0], texto):
+        call = tool_calls_recibidas[0]
+        print(f"  [Tool] {call.name}({call.arguments}) descartada: el mensaje no la pide — se repite sin tools",
+              flush=True)
+        tool_calls_recibidas.clear()
+        await _consumir(None)
 
     texto_completo = "".join(partes)
 

@@ -368,7 +368,9 @@ _SPEC_ABRIR_PROGRAMA = ToolSpec(
     name="abrir_programa",
     description=("Abre un programa instalado en el sistema por su nombre. Usar SOLO "
                   "cuando Esteban pida explícitamente abrir, lanzar o iniciar una "
-                  "aplicación concreta."),
+                  "aplicación concreta. Solo úsala si el usuario pide explícitamente "
+                  "abrir o iniciar un programa. Nunca para cantar, contar historias, "
+                  "recomendar ni responder preguntas."),
     parameters={
         "type": "object",
         "properties": {"nombre": {"type": "string",
