@@ -3,11 +3,9 @@
 (`/v1/chat/completions`): esa no acepta `think` ni `keep_alive`, y ambos son
 imprescindibles acá (ver más abajo). Streaming NDJSON real vía httpx.
 
-Contexto de memoria (medido en esta máquina, RTX 3050 4 GB): el modelo
-Qwen3.5-4B Q4_K_M con sus 32 capas completas en GPU (num_gpu=32, el default
-de Ollama) ocupa ~2994 MiB. `num_gpu` (config.toml → [llm.ollama], con la
-tabla de calibración) decide cuántas capas van a GPU; se bajó en su día para
-hacerle sitio a RVC, que ya no existe (la voz es Piper, en CPU).
+`num_gpu` (config.toml → [llm.ollama], con la tabla medida en esta máquina)
+decide cuántas capas van a GPU; 99 = todo el modelo, ~3,6 GB de los 4 GB de la
+RTX 3050.
 """
 import asyncio
 import json

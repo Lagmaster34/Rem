@@ -26,22 +26,25 @@ top_k       = 20
 min_p       = 0.0
 num_ctx     = 4096
 
-# Capas del modelo (32 en total) offloadeadas a GPU; el resto corre en CPU.
-# Se calibró (RTX 3050, 4 GB VRAM) para dejarle sitio a RVC en la misma GPU:
+# Capas offloadeadas a GPU. 99 = todo: las 32 capas, la de salida y el
+# proyector de visión (clip, 333M parámetros), que Ollama solo sube a GPU
+# cuando caben todas las capas. La voz (Piper) y el STT van en CPU: la GPU es
+# toda del LLM. Medido con la ventana abierta (RTX 3050 4 GB, con corriente,
+# GPU P0, 3 turnos cada uno, prompt real de ~1270 tok):
 #
-#   num_gpu | VRAM modelo | tok/s
-#   --------|-------------|-------
-#   32      | ~2994 MiB   | ~40,7
-#   28      | ~2714 MiB   | ~25,8
-#   24      | ~2430 MiB   | ~20,7   <- valor actual
-#   20      | ~2156 MiB   | ~16,9
-#   16      | ~1872 MiB   | ~12,9
-#    0      | ~153 MiB    | ~4,7    (CPU puro)
+#   num_gpu | pico VRAM | tok/s     | ollama ps
+#   --------|-----------|-----------|----------------------------------------
+#   99 (33) | 3572 MiB  | 50,6-52,4 | 100% GPU                <- valor actual
+#   32      | 2864 MiB  | 42,5-45,6 | 11%/89% (1 capa + visión en CPU)
+#   30      | 2724 MiB  | ~35,6     |
+#   28      | 2584 MiB  | 27,8-31,4 |
+#   24      | 2326 MiB  | ~26       |
 #
-# RVC ya no existe (la voz es Piper, en CPU): 32 y 28 fallaban SOLO por el pico
-# de VRAM de RVC. Sin RVC hay margen para subirlo, pero todavía no se tocó —
-# antes, medir con nvidia-smi (ver CLAUDE.md, "Voz de Yoru (Piper)").
-num_gpu = 24
+# Con 99 quedan ~520 MiB libres: no hubo OOM ni errores 500, pero subir
+# num_ctx o pasar a un cuantizado más grande (Q5_K_M/Q6_K) ya no entra sin
+# quitar el proyector de visión (Yoru no usa imágenes; serían ~600 MiB).
+# En batería la GPU baja a P5 y los tok/s caen ~3x (ver CLAUDE.md).
+num_gpu = 99
 
 
 [llm.claude]
