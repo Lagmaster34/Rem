@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "categorias": {
   "idle": {
    "etiqueta": "Reposo",
@@ -11,13 +11,15 @@
    "etiqueta": "Bailes",
    "activa": true,
    "peso": 1,
-   "orden": 2
+   "orden": 2,
+   "nota": "No entran en la ruleta de reposo: salen en modo baile (/bailar), de una bolsa sin repetición (raro = súper raro, 3 %)."
   },
   "greetings": {
    "etiqueta": "Saludos",
    "activa": false,
    "peso": 1,
-   "orden": 3
+   "orden": 3,
+   "nota": "Saludos (los clips con \"saludo\": true): uno al abrir y al cambiar de modelo, sin repetir el anterior."
   },
   "sit": {
    "etiqueta": "Sentada",
@@ -50,22 +52,9 @@
    "activa": false,
    "peso": 1,
    "orden": 8
-  },
-  "rem-anterior": {
-   "etiqueta": "Rem anterior",
-   "activa": false,
-   "peso": 1,
-   "orden": 9,
-   "nota": "Pack oficial VRoid + tk256ailab, los clips de antes del catálogo. Thinking.vrma se sigue usando para el estado thinking."
   }
  },
  "porEstado": {
-  "thinking": {
-   "clips": [
-    "VRMA_MotionPack/Thinking.vrma"
-   ],
-   "modo": "bucle"
-  },
   "sad": {
    "clips": [
     "nerumi/idle/kawaii/@KA_Idle38_Cry.vrma"
@@ -92,712 +81,27 @@
     "nerumi/idle/kawaii/@KA_Idle65_ThumbsUp.vrma"
    ],
    "modo": "unaVez"
+  },
+  "thinking": {
+   "clips": [
+    "nerumi/idle/kawaii/@KA_Idle08_ComeUpWithAnIdea.vrma",
+    "nerumi/idle/kawaii/@KA_Idle09_Waiting.vrma"
+   ],
+   "modo": "bucle"
+  },
+  "listening": {
+   "clips": [
+    "nerumi/idle/kawaii/@KA_Idle12_LeaningForward.vrma"
+   ],
+   "modo": "bucle"
   }
  },
  "poseBase": {
-  "archivo": null,
-  "modo": "poseFija",
-  "candidato": "nerumi/idle/kawaii/@KA_Idle01_breathing.vrma",
-  "nota": "Procedural por ahora. Idle01_breathing medido apto (brazos 11-14° del torso todo el clip, sin giro ni desplazamiento); apagado hasta revisarlo a ojo."
+  "archivo": "nerumi/idle/kawaii/@KA_Idle01_breathing.vrma",
+  "modo": "bucle",
+  "nota": "Reposo base de cuerpo entero (también mientras habla): el cuerpo se mueve solo con clips, sin poses por código. Medido apto: brazos 11-14° del torso todo el clip, sin giro ni desplazamiento."
  },
  "clips": {
-  "VRMA_MotionPack/Angry.vrma": {
-   "etiqueta": "Enfado",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "tk256ailab",
-    "pack": "vrm-viewer (carpeta VRMA/)",
-    "url": "https://github.com/tk256ailab/vrm-viewer",
-    "licencia": "MIT (el repo); sin términos específicos para los .vrma",
-    "fuente": "Animaciones/README.md"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [],
-   "medido": {
-    "durS": 3.93,
-    "giroGrados": 27.0,
-    "desplazamientoM": 0.27,
-    "inclinacionMaxGrados": 8.6,
-    "specVersion": false,
-    "brazoIzq": {
-     "inicio": 42.0,
-     "fin": 52.4,
-     "mediana": 49.5,
-     "max": 52.4,
-     "fraccionAlto": 0.0
-    },
-    "brazoDer": {
-     "inicio": 50.9,
-     "fin": 43.4,
-     "mediana": 44.0,
-     "max": 53.1,
-     "fraccionAlto": 0.0
-    }
-   },
-   "sha256": "c86379b1f5c49326becd94008bd2af1ca8e68e13cddd5088b7e1c7c1e2b97260"
-  },
-  "VRMA_MotionPack/Blush.vrma": {
-   "etiqueta": "Sonrojo",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "tk256ailab",
-    "pack": "vrm-viewer (carpeta VRMA/)",
-    "url": "https://github.com/tk256ailab/vrm-viewer",
-    "licencia": "MIT (el repo); sin términos específicos para los .vrma",
-    "fuente": "Animaciones/README.md"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [
-    "brazos-alto-mayoria"
-   ],
-   "medido": {
-    "durS": 3.93,
-    "giroGrados": 11.0,
-    "desplazamientoM": 0.04,
-    "inclinacionMaxGrados": 3.7,
-    "specVersion": false,
-    "brazoIzq": {
-     "inicio": 25.5,
-     "fin": 20.3,
-     "mediana": 116.0,
-     "max": 127.9,
-     "fraccionAlto": 0.66
-    },
-    "brazoDer": {
-     "inicio": 18.5,
-     "fin": 19.5,
-     "mediana": 19.4,
-     "max": 22.2,
-     "fraccionAlto": 0.0
-    }
-   },
-   "sha256": "9057f93fe8add98c781955ebc0df686bec79dbb90cc6351b092a3a4fea8e8edf"
-  },
-  "VRMA_MotionPack/Clapping.vrma": {
-   "etiqueta": "Aplaudir",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "tk256ailab",
-    "pack": "vrm-viewer (carpeta VRMA/)",
-    "url": "https://github.com/tk256ailab/vrm-viewer",
-    "licencia": "MIT (el repo); sin términos específicos para los .vrma",
-    "fuente": "Animaciones/README.md"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [],
-   "medido": {
-    "durS": 3.93,
-    "giroGrados": 4.7,
-    "desplazamientoM": 0.07,
-    "inclinacionMaxGrados": 4.1,
-    "specVersion": false,
-    "brazoIzq": {
-     "inicio": 17.2,
-     "fin": 14.1,
-     "mediana": 32.5,
-     "max": 77.5,
-     "fraccionAlto": 0.29
-    },
-    "brazoDer": {
-     "inicio": 15.4,
-     "fin": 12.9,
-     "mediana": 31.0,
-     "max": 75.0,
-     "fraccionAlto": 0.25
-    }
-   },
-   "sha256": "a4165a9ddd02fbccf527f49bce60656bf1ac601630b32d7d70509d8006912ee9"
-  },
-  "VRMA_MotionPack/Goodbye.vrma": {
-   "etiqueta": "Despedida",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "tk256ailab",
-    "pack": "vrm-viewer (carpeta VRMA/)",
-    "url": "https://github.com/tk256ailab/vrm-viewer",
-    "licencia": "MIT (el repo); sin términos específicos para los .vrma",
-    "fuente": "Animaciones/README.md"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [],
-   "medido": {
-    "durS": 3.93,
-    "giroGrados": 6.6,
-    "desplazamientoM": 0.07,
-    "inclinacionMaxGrados": 10.4,
-    "specVersion": false,
-    "brazoIzq": {
-     "inicio": 23.6,
-     "fin": 15.7,
-     "mediana": 22.8,
-     "max": 124.6,
-     "fraccionAlto": 0.21
-    },
-    "brazoDer": {
-     "inicio": 30.2,
-     "fin": 13.8,
-     "mediana": 26.1,
-     "max": 122.3,
-     "fraccionAlto": 0.22
-    }
-   },
-   "sha256": "6a162b83a0b9b8c1d6ee5c05adf71ccb16f012286bab1dd3b1d69f5a1d3c9fbe"
-  },
-  "VRMA_MotionPack/LookAround.vrma": {
-   "etiqueta": "Mirar alrededor",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "tk256ailab",
-    "pack": "vrm-viewer (carpeta VRMA/)",
-    "url": "https://github.com/tk256ailab/vrm-viewer",
-    "licencia": "MIT (el repo); sin términos específicos para los .vrma",
-    "fuente": "Animaciones/README.md"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [],
-   "medido": {
-    "durS": 3.93,
-    "giroGrados": 40.4,
-    "desplazamientoM": 0.13,
-    "inclinacionMaxGrados": 6.8,
-    "specVersion": false,
-    "brazoIzq": {
-     "inicio": 12.3,
-     "fin": 12.3,
-     "mediana": 14.5,
-     "max": 18.1,
-     "fraccionAlto": 0.0
-    },
-    "brazoDer": {
-     "inicio": 18.4,
-     "fin": 23.5,
-     "mediana": 22.3,
-     "max": 28.7,
-     "fraccionAlto": 0.0
-    }
-   },
-   "sha256": "cf5c51bf07845b29c8f664cea6cf694f05f0d51fbf41a716414b656db72e411f"
-  },
-  "VRMA_MotionPack/Relax.vrma": {
-   "etiqueta": "Relajarse",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "tk256ailab",
-    "pack": "vrm-viewer (carpeta VRMA/)",
-    "url": "https://github.com/tk256ailab/vrm-viewer",
-    "licencia": "MIT (el repo); sin términos específicos para los .vrma",
-    "fuente": "CLAUDE.md (estructura de Animaciones/, pack tk256ailab)"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [
-    "termina-brazos-alto",
-    "brazos-alto-mayoria"
-   ],
-   "medido": {
-    "durS": 3.93,
-    "giroGrados": 4.6,
-    "desplazamientoM": 0.04,
-    "inclinacionMaxGrados": 4.2,
-    "specVersion": false,
-    "brazoIzq": {
-     "inicio": 16.1,
-     "fin": 118.6,
-     "mediana": 113.1,
-     "max": 128.0,
-     "fraccionAlto": 0.82
-    },
-    "brazoDer": {
-     "inicio": 17.3,
-     "fin": 103.5,
-     "mediana": 102.4,
-     "max": 110.5,
-     "fraccionAlto": 0.82
-    }
-   },
-   "sha256": "7de5b0a0e8099d0fa2b6dbdb9e04ee490a77543aa6b1be35bada146bdf43f289"
-  },
-  "VRMA_MotionPack/Sad.vrma": {
-   "etiqueta": "Tristeza",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "tk256ailab",
-    "pack": "vrm-viewer (carpeta VRMA/)",
-    "url": "https://github.com/tk256ailab/vrm-viewer",
-    "licencia": "MIT (el repo); sin términos específicos para los .vrma",
-    "fuente": "Animaciones/README.md"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [],
-   "medido": {
-    "durS": 3.93,
-    "giroGrados": 11.0,
-    "desplazamientoM": 0.14,
-    "inclinacionMaxGrados": 2.8,
-    "specVersion": false,
-    "brazoIzq": {
-     "inicio": 30.9,
-     "fin": 29.7,
-     "mediana": 30.5,
-     "max": 32.3,
-     "fraccionAlto": 0.0
-    },
-    "brazoDer": {
-     "inicio": 30.9,
-     "fin": 28.9,
-     "mediana": 30.3,
-     "max": 31.9,
-     "fraccionAlto": 0.0
-    }
-   },
-   "sha256": "0e2b2f4c13125ed8ad8cf4ed95109949e86ab78b5cbf393be8cefb630a5cf304"
-  },
-  "VRMA_MotionPack/Sleepy.vrma": {
-   "etiqueta": "Sueño",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "tk256ailab",
-    "pack": "vrm-viewer (carpeta VRMA/)",
-    "url": "https://github.com/tk256ailab/vrm-viewer",
-    "licencia": "MIT (el repo); sin términos específicos para los .vrma",
-    "fuente": "Animaciones/README.md"
-   },
-   "peso": 1,
-   "horas": [
-    0,
-    6
-   ],
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [
-    "brazos-alto-mayoria"
-   ],
-   "medido": {
-    "durS": 3.93,
-    "giroGrados": 16.1,
-    "desplazamientoM": 0.08,
-    "inclinacionMaxGrados": 4.7,
-    "specVersion": false,
-    "brazoIzq": {
-     "inicio": 14.1,
-     "fin": 14.9,
-     "mediana": 14.0,
-     "max": 15.9,
-     "fraccionAlto": 0.0
-    },
-    "brazoDer": {
-     "inicio": 20.9,
-     "fin": 40.7,
-     "mediana": 69.2,
-     "max": 92.5,
-     "fraccionAlto": 0.59
-    }
-   },
-   "sha256": "42b6c81721235d0697c97dbde62e15e7c3bf91d5267205920a9bb150cc19a51f"
-  },
-  "VRMA_MotionPack/Surprised.vrma": {
-   "etiqueta": "Sorpresa",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "tk256ailab",
-    "pack": "vrm-viewer (carpeta VRMA/)",
-    "url": "https://github.com/tk256ailab/vrm-viewer",
-    "licencia": "MIT (el repo); sin términos específicos para los .vrma",
-    "fuente": "Animaciones/README.md"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [],
-   "medido": {
-    "durS": 3.93,
-    "giroGrados": 22.9,
-    "desplazamientoM": 0.05,
-    "inclinacionMaxGrados": 17.8,
-    "specVersion": false,
-    "brazoIzq": {
-     "inicio": 19.8,
-     "fin": 10.1,
-     "mediana": 25.8,
-     "max": 63.9,
-     "fraccionAlto": 0.13
-    },
-    "brazoDer": {
-     "inicio": 32.9,
-     "fin": 16.7,
-     "mediana": 34.4,
-     "max": 78.5,
-     "fraccionAlto": 0.26
-    }
-   },
-   "sha256": "04d867433f772d660bf08bdd6057715a0f41f8d0b2365d7285eec88fc19843d9"
-  },
-  "VRMA_MotionPack/Thinking.vrma": {
-   "etiqueta": "Pensar",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "tk256ailab",
-    "pack": "vrm-viewer (carpeta VRMA/)",
-    "url": "https://github.com/tk256ailab/vrm-viewer",
-    "licencia": "MIT (el repo); sin términos específicos para los .vrma",
-    "fuente": "Animaciones/README.md"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [],
-   "medido": {
-    "durS": 3.93,
-    "giroGrados": 8.6,
-    "desplazamientoM": 0.05,
-    "inclinacionMaxGrados": 6.9,
-    "specVersion": false,
-    "brazoIzq": {
-     "inicio": 14.3,
-     "fin": 14.4,
-     "mediana": 17.6,
-     "max": 19.5,
-     "fraccionAlto": 0.0
-    },
-    "brazoDer": {
-     "inicio": 25.8,
-     "fin": 13.3,
-     "mediana": 44.4,
-     "max": 50.7,
-     "fraccionAlto": 0.0
-    }
-   },
-   "sha256": "0c52edd6e97bd6da23ac1f6c386b6c51bead3be4193c01ca08b39696fb3944f5"
-  },
-  "VRMA_MotionPack/VRMA_01.vrma": {
-   "etiqueta": "Mostrar cuerpo entero",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "VRoid Project (pixiv Inc.)",
-    "pack": "VRM Animation, pack oficial",
-    "url": "https://vroid.booth.pm/items/5512385",
-    "licencia": "pixiv Inc.: uso comercial y modificación permitidos con crédito obligatorio «Animation credits to pixiv Inc.'s VRoid Project»; prohibido redistribuirlos de forma extraíble",
-    "fuente": "Animaciones/README.md (Readme_VRMA_MotionPack_EN.txt)"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": true,
-   "fundidoEntradaS": null,
-   "avisos": [
-    "gira"
-   ],
-   "medido": {
-    "durS": 11.8,
-    "giroGrados": 418.5,
-    "desplazamientoM": 0.28,
-    "inclinacionMaxGrados": 6.1,
-    "specVersion": true,
-    "brazoIzq": {
-     "inicio": 20.7,
-     "fin": 16.1,
-     "mediana": 42.5,
-     "max": 57.8,
-     "fraccionAlto": 0.0
-    },
-    "brazoDer": {
-     "inicio": 21.2,
-     "fin": 19.3,
-     "mediana": 43.6,
-     "max": 60.9,
-     "fraccionAlto": 0.01
-    }
-   },
-   "sha256": "f45abc44800c647fa106537a2e31a84cb83b74cf3dd8a0ee71c6915f1555ac57"
-  },
-  "VRMA_MotionPack/VRMA_02.vrma": {
-   "etiqueta": "Saludo",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "VRoid Project (pixiv Inc.)",
-    "pack": "VRM Animation, pack oficial",
-    "url": "https://vroid.booth.pm/items/5512385",
-    "licencia": "pixiv Inc.: uso comercial y modificación permitidos con crédito obligatorio «Animation credits to pixiv Inc.'s VRoid Project»; prohibido redistribuirlos de forma extraíble",
-    "fuente": "Animaciones/README.md (Readme_VRMA_MotionPack_EN.txt)"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [
-    "termina-brazos-alto",
-    "brazos-alto-mayoria"
-   ],
-   "medido": {
-    "durS": 7.27,
-    "giroGrados": 19.0,
-    "desplazamientoM": 0.4,
-    "inclinacionMaxGrados": 35.5,
-    "specVersion": true,
-    "brazoIzq": {
-     "inicio": 19.3,
-     "fin": 15.9,
-     "mediana": 18.9,
-     "max": 72.8,
-     "fraccionAlto": 0.09
-    },
-    "brazoDer": {
-     "inicio": 21.9,
-     "fin": 71.9,
-     "mediana": 69.8,
-     "max": 80.7,
-     "fraccionAlto": 0.74
-    }
-   },
-   "sha256": "6322bbe2df7716529dd53e2a61816e67b946416d3761c672b8d50ee2829825bb"
-  },
-  "VRMA_MotionPack/VRMA_03.vrma": {
-   "etiqueta": "Señal de V",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "VRoid Project (pixiv Inc.)",
-    "pack": "VRM Animation, pack oficial",
-    "url": "https://vroid.booth.pm/items/5512385",
-    "licencia": "pixiv Inc.: uso comercial y modificación permitidos con crédito obligatorio «Animation credits to pixiv Inc.'s VRoid Project»; prohibido redistribuirlos de forma extraíble",
-    "fuente": "Animaciones/README.md (Readme_VRMA_MotionPack_EN.txt)"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [],
-   "medido": {
-    "durS": 11.68,
-    "giroGrados": 24.6,
-    "desplazamientoM": 0.06,
-    "inclinacionMaxGrados": 4.0,
-    "specVersion": true,
-    "brazoIzq": {
-     "inicio": 13.5,
-     "fin": 12.1,
-     "mediana": 19.3,
-     "max": 45.7,
-     "fraccionAlto": 0.0
-    },
-    "brazoDer": {
-     "inicio": 15.8,
-     "fin": 14.6,
-     "mediana": 34.5,
-     "max": 69.3,
-     "fraccionAlto": 0.03
-    }
-   },
-   "sha256": "6f66b6b5c0214a7b825498050380ea43a3f782b5ea24ce46f7096acf15866d75"
-  },
-  "VRMA_MotionPack/VRMA_04.vrma": {
-   "etiqueta": "Disparar",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "VRoid Project (pixiv Inc.)",
-    "pack": "VRM Animation, pack oficial",
-    "url": "https://vroid.booth.pm/items/5512385",
-    "licencia": "pixiv Inc.: uso comercial y modificación permitidos con crédito obligatorio «Animation credits to pixiv Inc.'s VRoid Project»; prohibido redistribuirlos de forma extraíble",
-    "fuente": "Animaciones/README.md (Readme_VRMA_MotionPack_EN.txt)"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [],
-   "medido": {
-    "durS": 9.6,
-    "giroGrados": 38.2,
-    "desplazamientoM": 0.09,
-    "inclinacionMaxGrados": 7.8,
-    "specVersion": true,
-    "brazoIzq": {
-     "inicio": 15.5,
-     "fin": 11.0,
-     "mediana": 12.1,
-     "max": 16.1,
-     "fraccionAlto": 0.0
-    },
-    "brazoDer": {
-     "inicio": 18.1,
-     "fin": 16.7,
-     "mediana": 46.0,
-     "max": 85.5,
-     "fraccionAlto": 0.35
-    }
-   },
-   "sha256": "c40c1a7b0dbcac5aa9582f45498474255e4b0ca5642a71ffaf43878c27bedf70"
-  },
-  "VRMA_MotionPack/VRMA_05.vrma": {
-   "etiqueta": "Giro de bailarina",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "VRoid Project (pixiv Inc.)",
-    "pack": "VRM Animation, pack oficial",
-    "url": "https://vroid.booth.pm/items/5512385",
-    "licencia": "pixiv Inc.: uso comercial y modificación permitidos con crédito obligatorio «Animation credits to pixiv Inc.'s VRoid Project»; prohibido redistribuirlos de forma extraíble",
-    "fuente": "Animaciones/README.md (Readme_VRMA_MotionPack_EN.txt)"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": true,
-   "fundidoEntradaS": null,
-   "avisos": [
-    "gira"
-   ],
-   "medido": {
-    "durS": 9.32,
-    "giroGrados": 408.2,
-    "desplazamientoM": 0.15,
-    "inclinacionMaxGrados": 10.0,
-    "specVersion": true,
-    "brazoIzq": {
-     "inicio": 26.6,
-     "fin": 28.1,
-     "mediana": 36.4,
-     "max": 92.4,
-     "fraccionAlto": 0.31
-    },
-    "brazoDer": {
-     "inicio": 19.5,
-     "fin": 23.9,
-     "mediana": 24.4,
-     "max": 73.3,
-     "fraccionAlto": 0.13
-    }
-   },
-   "sha256": "cc508712ca4db8833ffe982d2eecd427e9374a04c005db2a7a45775f0ca45586"
-  },
-  "VRMA_MotionPack/VRMA_06.vrma": {
-   "etiqueta": "Pose de modelo",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "VRoid Project (pixiv Inc.)",
-    "pack": "VRM Animation, pack oficial",
-    "url": "https://vroid.booth.pm/items/5512385",
-    "licencia": "pixiv Inc.: uso comercial y modificación permitidos con crédito obligatorio «Animation credits to pixiv Inc.'s VRoid Project»; prohibido redistribuirlos de forma extraíble",
-    "fuente": "Animaciones/README.md (Readme_VRMA_MotionPack_EN.txt)"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [],
-   "medido": {
-    "durS": 7.52,
-    "giroGrados": 36.2,
-    "desplazamientoM": 0.17,
-    "inclinacionMaxGrados": 9.8,
-    "specVersion": true,
-    "brazoIzq": {
-     "inicio": 30.9,
-     "fin": 27.6,
-     "mediana": 36.7,
-     "max": 59.7,
-     "fraccionAlto": 0.0
-    },
-    "brazoDer": {
-     "inicio": 22.0,
-     "fin": 22.1,
-     "mediana": 22.7,
-     "max": 31.6,
-     "fraccionAlto": 0.0
-    }
-   },
-   "sha256": "a2c86633690e911cf935c5b8cae6553aea0445567f88c2861f7597fc1bf08af1"
-  },
-  "VRMA_MotionPack/VRMA_07.vrma": {
-   "etiqueta": "Sentadillas",
-   "categoria": "rem-anterior",
-   "origen": {
-    "autor": "VRoid Project (pixiv Inc.)",
-    "pack": "VRM Animation, pack oficial",
-    "url": "https://vroid.booth.pm/items/5512385",
-    "licencia": "pixiv Inc.: uso comercial y modificación permitidos con crédito obligatorio «Animation credits to pixiv Inc.'s VRoid Project»; prohibido redistribuirlos de forma extraíble",
-    "fuente": "Animaciones/README.md (Readme_VRMA_MotionPack_EN.txt)"
-   },
-   "peso": 1,
-   "horas": null,
-   "nota": null,
-   "activoPorDefecto": false,
-   "giraCuerpo": false,
-   "fundidoEntradaS": null,
-   "avisos": [],
-   "medido": {
-    "durS": 11.52,
-    "giroGrados": 8.0,
-    "desplazamientoM": 0.09,
-    "inclinacionMaxGrados": 7.0,
-    "specVersion": true,
-    "brazoIzq": {
-     "inicio": 26.4,
-     "fin": 26.9,
-     "mediana": 33.7,
-     "max": 90.9,
-     "fraccionAlto": 0.24
-    },
-    "brazoDer": {
-     "inicio": 20.3,
-     "fin": 22.2,
-     "mediana": 36.1,
-     "max": 98.0,
-     "fraccionAlto": 0.29
-    }
-   },
-   "sha256": "b0096525231e9f49947a6fad0295575b1c2bfbc33c042d07f125c7c2fbe88995"
-  },
   "nerumi/actions/lying/HOD_lying_posture.vrma": {
    "etiqueta": "Tumbada",
    "categoria": "lying",
@@ -841,7 +145,10 @@
      "fraccionAlto": 1.0
     }
    },
-   "sha256": "8a9b5e44f2c89e9d49f6948d92c3853a0dbb99c42d985c3e8e377304e0c8e5df"
+   "sha256": "8a9b5e44f2c89e9d49f6948d92c3853a0dbb99c42d985c3e8e377304e0c8e5df",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/kawaii/@KA_Sit_CrossLegged.vrma": {
    "etiqueta": "Sentada en el suelo",
@@ -882,7 +189,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "ac85e948ca7520e5d85b0cde554a5c857905db6e6dfdbf047af81d50dfd801a8"
+   "sha256": "ac85e948ca7520e5d85b0cde554a5c857905db6e6dfdbf047af81d50dfd801a8",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/kawaii/@KA_Sit_CrossLegs.vrma": {
    "etiqueta": "Cruzar las piernas",
@@ -923,7 +233,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "6baf567148febbdde61b39861e0135b2f4b78fd4df92fb9133c161b13483838a"
+   "sha256": "6baf567148febbdde61b39861e0135b2f4b78fd4df92fb9133c161b13483838a",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/kawaii/@KA_Sit_FeelListless.vrma": {
    "etiqueta": "Desganada",
@@ -964,7 +277,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "31806eb47a031a8dda5c3b2b45c269adb51d2a057ddad3f5c5eedff2268266f1"
+   "sha256": "31806eb47a031a8dda5c3b2b45c269adb51d2a057ddad3f5c5eedff2268266f1",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/kawaii/@KA_Sit_LookAtToes.vrma": {
    "etiqueta": "Mirarse los pies",
@@ -1005,7 +321,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "731e81787ad377c03059640c4fe6888cc4805268950d0cedc06e15ad8c86e1f1"
+   "sha256": "731e81787ad377c03059640c4fe6888cc4805268950d0cedc06e15ad8c86e1f1",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/kawaii/@KA_Sit_LookingAround.vrma": {
    "etiqueta": "Mirar alrededor",
@@ -1046,7 +365,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "b68c5483d3c256567964ae4367b53d137f8eaffe003ff229deb7d7899faf957d"
+   "sha256": "b68c5483d3c256567964ae4367b53d137f8eaffe003ff229deb7d7899faf957d",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/kawaii/@KA_Sit_PutHandBetweens.vrma": {
    "etiqueta": "Manos entre las rodillas",
@@ -1087,7 +409,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "27c0e724304fcba309d65736255b697603a0af8b7d13db8cb9b4659a576e66ff"
+   "sha256": "27c0e724304fcba309d65736255b697603a0af8b7d13db8cb9b4659a576e66ff",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/kawaii/@KA_Sit_Sorrow.vrma": {
    "etiqueta": "Tristeza",
@@ -1128,7 +453,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "ce9c0ce3d8780bae7f8dc7f837738514a746d1f0db6654a8df98774f435b0618"
+   "sha256": "ce9c0ce3d8780bae7f8dc7f837738514a746d1f0db6654a8df98774f435b0618",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/kawaii/@KA_Sit_SwingingLegs.vrma": {
    "etiqueta": "Balancear las piernas",
@@ -1169,7 +497,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "1bc18b000a9f380c12497e6672bfaabe0c8faa649a5415e7c02c33b0d4406754"
+   "sha256": "1bc18b000a9f380c12497e6672bfaabe0c8faa649a5415e7c02c33b0d4406754",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/kawaii/@KA_Sit_WithBothLegsUp.vrma": {
    "etiqueta": "Piernas arriba",
@@ -1210,7 +541,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "dd30dd07838c44e02495544aa9481d8c3d4bde470824f80d473e0b522d494702"
+   "sha256": "dd30dd07838c44e02495544aa9481d8c3d4bde470824f80d473e0b522d494702",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/seated-eh.vrma": {
    "etiqueta": "¿Eh?",
@@ -1250,7 +584,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "f1b30b0621679d5405a2d7c5f213d71c9d4bf57bf990efd99d260fff0b9feae3"
+   "sha256": "f1b30b0621679d5405a2d7c5f213d71c9d4bf57bf990efd99d260fff0b9feae3",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/seated-idea.vrma": {
    "etiqueta": "Tener una idea",
@@ -1290,7 +627,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "c4acaa62aaea44a83a1df83d0685eca6a7ab9d001f7a71b21a5dbada1013d267"
+   "sha256": "c4acaa62aaea44a83a1df83d0685eca6a7ab9d001f7a71b21a5dbada1013d267",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/seated-music.vrma": {
    "etiqueta": "Escuchar música",
@@ -1330,7 +670,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "8ee8b7fd986faa81aecda075b46df815a16f97a330f11d1b670fda36de895f9f"
+   "sha256": "8ee8b7fd986faa81aecda075b46df815a16f97a330f11d1b670fda36de895f9f",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/seated-vibing.vrma": {
    "etiqueta": "Disfrutar",
@@ -1370,7 +713,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "b7acf764025f756cc3f2237aa27a2c0b79d28c1936b3c4fc54da9c5aac4cf9e0"
+   "sha256": "b7acf764025f756cc3f2237aa27a2c0b79d28c1936b3c4fc54da9c5aac4cf9e0",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/seated-yawn.vrma": {
    "etiqueta": "Bostezo",
@@ -1410,7 +756,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "55afb06b9a0227322c9026f70a8324a3c3011e53906ba6e4b0d9febd4e663235"
+   "sha256": "55afb06b9a0227322c9026f70a8324a3c3011e53906ba6e4b0d9febd4e663235",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/sit-to-stand.vrma": {
    "etiqueta": "Levantarse",
@@ -1450,7 +799,10 @@
      "fraccionAlto": 0.18
     }
    },
-   "sha256": "d452a528a83ccb4abbe4f015b82928f8afbb89768cb3cd14dfc144486a5e0ece"
+   "sha256": "d452a528a83ccb4abbe4f015b82928f8afbb89768cb3cd14dfc144486a5e0ece",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/sitting-cross-legs.vrma": {
    "etiqueta": "Piernas cruzadas",
@@ -1490,7 +842,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "9036757857d9db4841d1cfbbc5a7f494ca8a21137a966b054462a6c227e013d5"
+   "sha256": "9036757857d9db4841d1cfbbc5a7f494ca8a21137a966b054462a6c227e013d5",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/sitting-fidget.vrma": {
    "etiqueta": "Inquieta",
@@ -1530,7 +885,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "afab001d884730eb24fb189e7f1756553409b0ea04a492ee357c62313a80cb0c"
+   "sha256": "afab001d884730eb24fb189e7f1756553409b0ea04a492ee357c62313a80cb0c",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/actions/sit/stand-to-sit.vrma": {
    "etiqueta": "Sentarse",
@@ -1570,7 +928,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "3ede225c0fa33214b2a2dccf9fd3f8798ea35a125856d3f657e139ca26ca97fb"
+   "sha256": "3ede225c0fa33214b2a2dccf9fd3f8798ea35a125856d3f657e139ca26ca97fb",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/combat/@KA_Combat_HeavySword_Idle01.vrma": {
    "etiqueta": "Guardia con espada pesada",
@@ -1610,7 +971,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "57c0993c5b25104fba884bd56a452ef5dfa6131beb499707e528af6db48c12f2"
+   "sha256": "57c0993c5b25104fba884bd56a452ef5dfa6131beb499707e528af6db48c12f2",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/combat/@KA_Combat_OHSword01_ChargeAttack.vrma": {
    "etiqueta": "Ataque cargado",
@@ -1653,7 +1017,10 @@
      "fraccionAlto": 0.33
     }
    },
-   "sha256": "3509fcc8ee2dd7d41be794e523a2cf6af95aa714ef4c35a575f14b680a502093"
+   "sha256": "3509fcc8ee2dd7d41be794e523a2cf6af95aa714ef4c35a575f14b680a502093",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance1-toothless.vrma": {
    "etiqueta": "Toothless",
@@ -1697,7 +1064,10 @@
      "fraccionAlto": 0.61
     }
    },
-   "sha256": "fa8f5f92bc35cad8adcfb40edc1c7dd19fab697bdbc8a7d87072802ed9138750"
+   "sha256": "fa8f5f92bc35cad8adcfb40edc1c7dd19fab697bdbc8a7d87072802ed9138750",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance10-rickroll.vrma": {
    "etiqueta": "Rickroll",
@@ -1737,7 +1107,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "64d6a8399c3abdad6746c18392a9c982c7f03913d2b44b63e2d44db5bfe35c8d"
+   "sha256": "64d6a8399c3abdad6746c18392a9c982c7f03913d2b44b63e2d44db5bfe35c8d",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance11-spooky.vrma": {
    "etiqueta": "Spooky",
@@ -1780,7 +1153,10 @@
      "fraccionAlto": 0.29
     }
    },
-   "sha256": "312aba8bdc3fae8edbe608df647aafccec0378e2a10ccc1c86b274f7ea186402"
+   "sha256": "312aba8bdc3fae8edbe608df647aafccec0378e2a10ccc1c86b274f7ea186402",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance12-swing.vrma": {
    "etiqueta": "Swing",
@@ -1820,7 +1196,10 @@
      "fraccionAlto": 0.12
     }
    },
-   "sha256": "5735dba505c4b8857e62342b801f47b22fbbbcbcbfa8a37fb55b6fa274136a7b"
+   "sha256": "5735dba505c4b8857e62342b801f47b22fbbbcbcbfa8a37fb55b6fa274136a7b",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance13-boogie.vrma": {
    "etiqueta": "Boogie",
@@ -1863,7 +1242,10 @@
      "fraccionAlto": 0.24
     }
    },
-   "sha256": "ab77f656157b44430f58ed2a0be9f798eb8317d0bc06181ad4de215a5bcb9af0"
+   "sha256": "ab77f656157b44430f58ed2a0be9f798eb8317d0bc06181ad4de215a5bcb9af0",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance14-charleton.vrma": {
    "etiqueta": "Charleston",
@@ -1905,7 +1287,10 @@
      "fraccionAlto": 0.25
     }
    },
-   "sha256": "1096a1da193bcfda2f3b21b36a8fe549d720f778480dc1bcb5347e100c10300d"
+   "sha256": "1096a1da193bcfda2f3b21b36a8fe549d720f778480dc1bcb5347e100c10300d",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance15-disco.vrma": {
    "etiqueta": "Disco",
@@ -1949,7 +1334,10 @@
      "fraccionAlto": 0.39
     }
    },
-   "sha256": "e4c2141dff55f9900f1bfc9bcbfbe6bd6e7bf7b6aaeeeb41f1450c1c609e92f3"
+   "sha256": "e4c2141dff55f9900f1bfc9bcbfbe6bd6e7bf7b6aaeeeb41f1450c1c609e92f3",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance16-shuffle.vrma": {
    "etiqueta": "Shuffle",
@@ -1994,7 +1382,10 @@
      "fraccionAlto": 0.58
     }
    },
-   "sha256": "316e9c1a58d848405c1e33c266b85ca69bf88fa5092df2918721f43cf89c02d4"
+   "sha256": "316e9c1a58d848405c1e33c266b85ca69bf88fa5092df2918721f43cf89c02d4",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance17-swing.vrma": {
    "etiqueta": "Swing",
@@ -2034,7 +1425,10 @@
      "fraccionAlto": 0.36
     }
    },
-   "sha256": "b5bd4c03a631729be6e80069473d436d6ad5e2962b0adf6dbd4b77e0f62f767e"
+   "sha256": "b5bd4c03a631729be6e80069473d436d6ad5e2962b0adf6dbd4b77e0f62f767e",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance18-running.vrma": {
    "etiqueta": "Running man",
@@ -2077,7 +1471,10 @@
      "fraccionAlto": 0.48
     }
    },
-   "sha256": "fa24281bfe66be89e59ba5842fad8f8abf09f8c2cc12252f3a181730357ddb26"
+   "sha256": "fa24281bfe66be89e59ba5842fad8f8abf09f8c2cc12252f3a181730357ddb26",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance19-sprinkler.vrma": {
    "etiqueta": "Aspersor",
@@ -2121,7 +1518,10 @@
      "fraccionAlto": 1.0
     }
    },
-   "sha256": "77345950e360f83a6983445a3531890126cf658f8573e5019484749141d88f8a"
+   "sha256": "77345950e360f83a6983445a3531890126cf658f8573e5019484749141d88f8a",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance2-poke.vrma": {
    "etiqueta": "Poke",
@@ -2161,7 +1561,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "d27bc6e3e71e5d627bc4ee145f158c18206ed6aac36f16c9c2961fa48efca0f1"
+   "sha256": "d27bc6e3e71e5d627bc4ee145f158c18206ed6aac36f16c9c2961fa48efca0f1",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance20-swim.vrma": {
    "etiqueta": "Nadar",
@@ -2205,7 +1608,10 @@
      "fraccionAlto": 0.65
     }
    },
-   "sha256": "c846cbb8694c318511012f504e4207e50cb25d4fbf81b596ad2536f7b33a01b4"
+   "sha256": "c846cbb8694c318511012f504e4207e50cb25d4fbf81b596ad2536f7b33a01b4",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance21-zippy.vrma": {
    "etiqueta": "Zippy",
@@ -2249,7 +1655,10 @@
      "fraccionAlto": 0.55
     }
    },
-   "sha256": "4bbff31bf5f4b1f3f5b8133a70597346cbdd0a5e81ebc8e4a0c458bbe19ac083"
+   "sha256": "4bbff31bf5f4b1f3f5b8133a70597346cbdd0a5e81ebc8e4a0c458bbe19ac083",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance22-conga.vrma": {
    "etiqueta": "Conga",
@@ -2291,7 +1700,10 @@
      "fraccionAlto": 0.49
     }
    },
-   "sha256": "ecafe8f088ffce0b1a83d281214aec6ed64a8a591fe230d634056ad9b6a69ac8"
+   "sha256": "ecafe8f088ffce0b1a83d281214aec6ed64a8a591fe230d634056ad9b6a69ac8",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance23-kitty.vrma": {
    "etiqueta": "Kitty",
@@ -2333,7 +1745,10 @@
      "fraccionAlto": 0.39
     }
    },
-   "sha256": "fd11262c6a95129627edf6a5fffc5ed7fed100d6292650c28e064dac2ae6714d"
+   "sha256": "fd11262c6a95129627edf6a5fffc5ed7fed100d6292650c28e064dac2ae6714d",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance24-hiphop.vrma": {
    "etiqueta": "Hip hop",
@@ -2375,7 +1790,10 @@
      "fraccionAlto": 0.35
     }
    },
-   "sha256": "b823797a324bb6551a27054b196fa0dc5cd6aa4c8fb6b3bc1869a49bb4693252"
+   "sha256": "b823797a324bb6551a27054b196fa0dc5cd6aa4c8fb6b3bc1869a49bb4693252",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance25-rollie.vrma": {
    "etiqueta": "Rollie",
@@ -2418,7 +1836,10 @@
      "fraccionAlto": 0.41
     }
    },
-   "sha256": "1e11ffacc545d83a8fd5d61626581d7e4b6d03b0908a2ede22d2cbf2f80f4512"
+   "sha256": "1e11ffacc545d83a8fd5d61626581d7e4b6d03b0908a2ede22d2cbf2f80f4512",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance26-jiggle.vrma": {
    "etiqueta": "Jiggle",
@@ -2458,7 +1879,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "8ee9e606eaca0428a2032798fb5bdd4320e2606a535de3492afec7e63898539f"
+   "sha256": "8ee9e606eaca0428a2032798fb5bdd4320e2606a535de3492afec7e63898539f",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance27-dinamite.vrma": {
    "etiqueta": "Dynamite",
@@ -2500,7 +1924,10 @@
      "fraccionAlto": 0.28
     }
    },
-   "sha256": "371cf280b4ce2c193627502f71e671b8980fb22d327861b67b8296ab8e3fc981"
+   "sha256": "371cf280b4ce2c193627502f71e671b8980fb22d327861b67b8296ab8e3fc981",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance28-coffi.vrma": {
    "etiqueta": "Coffin",
@@ -2542,7 +1969,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "0da5770bc8569d7b869392a2fe127de39d8c85e640d21731d1675774ab350bf4"
+   "sha256": "0da5770bc8569d7b869392a2fe127de39d8c85e640d21731d1675774ab350bf4",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance29-buildit.vrma": {
    "etiqueta": "Build it",
@@ -2587,7 +2017,10 @@
      "fraccionAlto": 0.61
     }
    },
-   "sha256": "345cfe3d018c4994d3c980098ea4218331f078017bee21538d37f757c64e63b7"
+   "sha256": "345cfe3d018c4994d3c980098ea4218331f078017bee21538d37f757c64e63b7",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance3-smug.vrma": {
    "etiqueta": "Smug",
@@ -2627,7 +2060,10 @@
      "fraccionAlto": 0.11
     }
    },
-   "sha256": "d76dadd46f9e0a6f3dd700fd244fc5d753b7d9c6f68dcecdefbb0ba0f86d1b8e"
+   "sha256": "d76dadd46f9e0a6f3dd700fd244fc5d753b7d9c6f68dcecdefbb0ba0f86d1b8e",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance30-bust-move.vrma": {
    "etiqueta": "Bust a move",
@@ -2667,7 +2103,10 @@
      "fraccionAlto": 0.15
     }
    },
-   "sha256": "15b8dc0de33b28d6ebf582e0f892e2508ca9d5d7ef3bdfaa2171083fe62f8a29"
+   "sha256": "15b8dc0de33b28d6ebf582e0f892e2508ca9d5d7ef3bdfaa2171083fe62f8a29",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance31-ankha.vrma": {
    "etiqueta": "Ankha",
@@ -2707,7 +2146,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "7a88e73b9fd44d592bb8b7bf1cf3766fd8e67017792e3442ec3e9ef1d48a54ea"
+   "sha256": "7a88e73b9fd44d592bb8b7bf1cf3766fd8e67017792e3442ec3e9ef1d48a54ea",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance32-brooklinbloodpop.vrma": {
    "etiqueta": "Brooklyn Blood Pop",
@@ -2747,7 +2189,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "e5e91a1febb468eb3e3d892a388cb9d608d810af6c7106cb48a60735558a6524"
+   "sha256": "e5e91a1febb468eb3e3d892a388cb9d608d810af6c7106cb48a60735558a6524",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance33-yoshi.vrma": {
    "etiqueta": "Yoshi",
@@ -2787,7 +2232,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "028551357316d9500a57acb762da8a862fa699354e9471b306e143f1135e7808"
+   "sha256": "028551357316d9500a57acb762da8a862fa699354e9471b306e143f1135e7808",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance34-agnes-cortisol.vrma": {
    "etiqueta": "Agnes Cortisol",
@@ -2831,7 +2279,10 @@
      "fraccionAlto": 1.0
     }
    },
-   "sha256": "baf637751c635404e70c948f91ef355883eac8c40ac01bbc364d11ecbd98081d"
+   "sha256": "baf637751c635404e70c948f91ef355883eac8c40ac01bbc364d11ecbd98081d",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance35-maitake.vrma": {
    "etiqueta": "Maitake",
@@ -2875,7 +2326,10 @@
      "fraccionAlto": 1.0
     }
    },
-   "sha256": "96721f164eb52ecac53707a0fce24b9a4ed5204abbe731a19c590766d4cac138"
+   "sha256": "96721f164eb52ecac53707a0fce24b9a4ed5204abbe731a19c590766d4cac138",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance36-tetowiggle.vrma": {
    "etiqueta": "Teto wiggle",
@@ -2919,7 +2373,10 @@
      "fraccionAlto": 1.0
     }
    },
-   "sha256": "0bc50b974a3301aa788333da3d64beeeaf982853d01a03154ec36a4811e4c7f6"
+   "sha256": "0bc50b974a3301aa788333da3d64beeeaf982853d01a03154ec36a4811e4c7f6",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance37-silly-dancing.vrma": {
    "etiqueta": "Baile tonto",
@@ -2961,7 +2418,10 @@
      "fraccionAlto": 0.57
     }
    },
-   "sha256": "7e40e80aed99d9816bb84c999f69d426ccdbf3acee9fa25e13db1c3bab8906a3"
+   "sha256": "7e40e80aed99d9816bb84c999f69d426ccdbf3acee9fa25e13db1c3bab8906a3",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance38-caramelldansen.vrma": {
    "etiqueta": "Caramelldansen",
@@ -3005,7 +2465,10 @@
      "fraccionAlto": 1.0
     }
    },
-   "sha256": "23642fd0de397851ce89a0a215cfe52b5a392d2f917e9be82416a94c1f9466d3"
+   "sha256": "23642fd0de397851ce89a0a215cfe52b5a392d2f917e9be82416a94c1f9466d3",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance39-macarena.vrma": {
    "etiqueta": "Macarena",
@@ -3049,7 +2512,10 @@
      "fraccionAlto": 0.66
     }
    },
-   "sha256": "c5e57dfcfed662d4dd7025d8ed279294f2ac904e1addeafa1ec5a2dd40e3d845"
+   "sha256": "c5e57dfcfed662d4dd7025d8ed279294f2ac904e1addeafa1ec5a2dd40e3d845",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance4-dare.vrma": {
    "etiqueta": "Dare",
@@ -3091,7 +2557,10 @@
      "fraccionAlto": 0.19
     }
    },
-   "sha256": "25d7837761d0363d093c8660b6332135271adc7348dd8687fd2a98fd7bf0014b"
+   "sha256": "25d7837761d0363d093c8660b6332135271adc7348dd8687fd2a98fd7bf0014b",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance40-heart.vrma": {
    "etiqueta": "Corazón",
@@ -3133,7 +2602,10 @@
      "fraccionAlto": 0.43
     }
    },
-   "sha256": "68ebc0fbe2287df0d4608d673300b1e58fe27d4c401142ced1f52f0f119cb465"
+   "sha256": "68ebc0fbe2287df0d4608d673300b1e58fe27d4c401142ced1f52f0f119cb465",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance41-dreamfeet.vrma": {
    "etiqueta": "Dream feet",
@@ -3176,7 +2648,10 @@
      "fraccionAlto": 0.23
     }
    },
-   "sha256": "135fe7ee4fad75a2db4b895c38593cd4181940825d62ef212a21b2efae6f9cc5"
+   "sha256": "135fe7ee4fad75a2db4b895c38593cd4181940825d62ef212a21b2efae6f9cc5",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance42-ghost.vrma": {
    "etiqueta": "Ghost",
@@ -3219,7 +2694,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "a8e12dc89d4e29b3b4f675aa30f8dee736441ae9f9a10e4ee0852abd7abadf6f"
+   "sha256": "a8e12dc89d4e29b3b4f675aa30f8dee736441ae9f9a10e4ee0852abd7abadf6f",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance43-boom-boom-bass-entry.vrma": {
    "etiqueta": "Boom boom bass (entrada)",
@@ -3261,7 +2739,10 @@
      "fraccionAlto": 0.2
     }
    },
-   "sha256": "28643b03653681616becc65528abea4aead53140db1bf953b2b89e9f6c034eb9"
+   "sha256": "28643b03653681616becc65528abea4aead53140db1bf953b2b89e9f6c034eb9",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance43-boom-boom-bass.vrma": {
    "etiqueta": "Boom boom bass",
@@ -3304,7 +2785,10 @@
      "fraccionAlto": 0.22
     }
    },
-   "sha256": "d0e4ac9d3eb10a619595582a81fbe5d943cdf1663f6ca98a29d824a813c354fe"
+   "sha256": "d0e4ac9d3eb10a619595582a81fbe5d943cdf1663f6ca98a29d824a813c354fe",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance44-luxe-fit.vrma": {
    "etiqueta": "Luxe fit",
@@ -3348,7 +2832,10 @@
      "fraccionAlto": 0.08
     }
    },
-   "sha256": "8a39711444272a761eb31c037734c0f80c588ac4675802c386551adb251e8523"
+   "sha256": "8a39711444272a761eb31c037734c0f80c588ac4675802c386551adb251e8523",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance45-lover-girl.vrma": {
    "etiqueta": "Lover girl",
@@ -3390,7 +2877,10 @@
      "fraccionAlto": 0.21
     }
    },
-   "sha256": "3801f9290fc8e4912714c8f8021db3d207fb050c78e73e32bab953fa85aa8afa"
+   "sha256": "3801f9290fc8e4912714c8f8021db3d207fb050c78e73e32bab953fa85aa8afa",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance46-lets-groove.vrma": {
    "etiqueta": "Let's groove",
@@ -3433,7 +2923,10 @@
      "fraccionAlto": 0.45
     }
    },
-   "sha256": "8365db1b3f35e4618fdf768a07c74d1cd011c2cefbe1baa9bd7790045cd29223"
+   "sha256": "8365db1b3f35e4618fdf768a07c74d1cd011c2cefbe1baa9bd7790045cd29223",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance47-lets-groove-2.vrma": {
    "etiqueta": "Let's groove 2",
@@ -3476,7 +2969,10 @@
      "fraccionAlto": 0.17
     }
    },
-   "sha256": "2d0daab27e8309c747402572db9163a873f7324b8b069e5806d1f50315a5a874"
+   "sha256": "2d0daab27e8309c747402572db9163a873f7324b8b069e5806d1f50315a5a874",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance5-popular.vrma": {
    "etiqueta": "Popular",
@@ -3516,7 +3012,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "c3191f091ba55b93573fb47392c38e219a4f2bdceaf8b84f362ccf1961326e56"
+   "sha256": "c3191f091ba55b93573fb47392c38e219a4f2bdceaf8b84f362ccf1961326e56",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance6-hugov3.vrma": {
    "etiqueta": "Hugo v3",
@@ -3556,7 +3055,10 @@
      "fraccionAlto": 0.06
     }
    },
-   "sha256": "3f71ffd69f02f8f8f1d26c2b11fc85cb15908ce36373a98fa679cbe6f4111ca9"
+   "sha256": "3f71ffd69f02f8f8f1d26c2b11fc85cb15908ce36373a98fa679cbe6f4111ca9",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance7-oblivion.vrma": {
    "etiqueta": "Oblivion",
@@ -3599,7 +3101,10 @@
      "fraccionAlto": 0.28
     }
    },
-   "sha256": "760f7e08c1c6d6ea64863610544d925376a2c27d4cf4fab3f1c2f9cca98443ae"
+   "sha256": "760f7e08c1c6d6ea64863610544d925376a2c27d4cf4fab3f1c2f9cca98443ae",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance8-imaginedragons.vrma": {
    "etiqueta": "Boney Bounce (Imagine Dragons)",
@@ -3643,7 +3148,10 @@
      "fraccionAlto": 0.33
     }
    },
-   "sha256": "bed862a1b0e9b9d143c28909adcf74a6ffe306993721162a2eb82655b88932ca"
+   "sha256": "bed862a1b0e9b9d143c28909adcf74a6ffe306993721162a2eb82655b88932ca",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/Dance9-helltaker.vrma": {
    "etiqueta": "Helltaker",
@@ -3685,7 +3193,10 @@
      "fraccionAlto": 0.17
     }
    },
-   "sha256": "77e3b6ffa5fb38ff07b02379a0684b0c3c16284d201db0e88d7a789b2cf53102"
+   "sha256": "77e3b6ffa5fb38ff07b02379a0684b0c3c16284d201db0e88d7a789b2cf53102",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/RareDance1-doodle.vrma": {
    "etiqueta": "Doodle",
@@ -3697,7 +3208,7 @@
     "licencia": "términos propios del autor (sin revisar)",
     "fuente": "NOTAS-nerumi.md §13 (DANCE_CREATORS de animation-catalog.js en Nerumi)"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": true,
@@ -3729,7 +3240,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "3c91e662dc7c91832840e5f682e895edc2cbbabc3a7ebe7a3cc0ceac386d7a87"
+   "sha256": "3c91e662dc7c91832840e5f682e895edc2cbbabc3a7ebe7a3cc0ceac386d7a87",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/RareDance10-ghost-complete.vrma": {
    "etiqueta": "Ghost (completo)",
@@ -3741,7 +3255,7 @@
     "licencia": "términos propios del autor (sin revisar)",
     "fuente": "NOTAS-nerumi.md §13 (DANCE_CREATORS de animation-catalog.js en Nerumi)"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": false,
@@ -3772,7 +3286,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "551208991af9704b93557e6c7399a11fa2ee91546de91ece55a1cdede86eaede"
+   "sha256": "551208991af9704b93557e6c7399a11fa2ee91546de91ece55a1cdede86eaede",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/RareDance2-arona.vrma": {
    "etiqueta": "Arona",
@@ -3784,7 +3301,7 @@
     "licencia": "términos propios del autor (sin revisar)",
     "fuente": "NOTAS-nerumi.md §13 (DANCE_CREATORS de animation-catalog.js en Nerumi)"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": true,
@@ -3817,7 +3334,10 @@
      "fraccionAlto": 0.89
     }
    },
-   "sha256": "526ad8c246854dd085c69b9c6b5a0467734d8f05e70cb1397195c9b7e66a382c"
+   "sha256": "526ad8c246854dd085c69b9c6b5a0467734d8f05e70cb1397195c9b7e66a382c",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/RareDance3-california.vrma": {
    "etiqueta": "California",
@@ -3829,7 +3349,7 @@
     "licencia": "desconocida",
     "fuente": "sin README, provenance.json ni entrada en NOTAS-nerumi.md"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": true,
@@ -3862,7 +3382,10 @@
      "fraccionAlto": 0.78
     }
    },
-   "sha256": "78f05a607ecfe256866171a99d578a97b6824a38e851f09e8507a7c63a5a639b"
+   "sha256": "78f05a607ecfe256866171a99d578a97b6824a38e851f09e8507a7c63a5a639b",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/RareDance4-defaultGMOD.vrma": {
    "etiqueta": "Default (GMod)",
@@ -3874,7 +3397,7 @@
     "licencia": "desconocida",
     "fuente": "sin README, provenance.json ni entrada en NOTAS-nerumi.md"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": false,
@@ -3906,7 +3429,10 @@
      "fraccionAlto": 0.48
     }
    },
-   "sha256": "0c95e0b617c5a36e8c26b215d49a22c82e1c8e7d4a3e91cbb056589ceb41b719"
+   "sha256": "0c95e0b617c5a36e8c26b215d49a22c82e1c8e7d4a3e91cbb056589ceb41b719",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/RareDance5-seetinh.vrma": {
    "etiqueta": "Seetinh",
@@ -3918,7 +3444,7 @@
     "licencia": "desconocida",
     "fuente": "sin README, provenance.json ni entrada en NOTAS-nerumi.md"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": false,
@@ -3952,7 +3478,10 @@
      "fraccionAlto": 0.59
     }
    },
-   "sha256": "a2ecc0c01f47a95e21086f5cf8d12286e53eade92088db9c40da1d9ae877acc5"
+   "sha256": "a2ecc0c01f47a95e21086f5cf8d12286e53eade92088db9c40da1d9ae877acc5",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/RareDance6-thanos.vrma": {
    "etiqueta": "Thanos",
@@ -3964,7 +3493,7 @@
     "licencia": "términos propios del autor (sin revisar)",
     "fuente": "NOTAS-nerumi.md §13 (DANCE_CREATORS de animation-catalog.js en Nerumi)"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": true,
@@ -3992,7 +3521,10 @@
      "fraccionAlto": 0.12
     }
    },
-   "sha256": "1af469fe48f68b86271118653a2b828dc4d7aa7549ea8bf816bcd23b3eb5a8f8"
+   "sha256": "1af469fe48f68b86271118653a2b828dc4d7aa7549ea8bf816bcd23b3eb5a8f8",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/RareDance7-freddy-pump-it-up.vrma": {
    "etiqueta": "Freddy: Pump it up",
@@ -4004,7 +3536,7 @@
     "licencia": "términos propios del autor (sin revisar)",
     "fuente": "NOTAS-nerumi.md §13 (DANCE_CREATORS de animation-catalog.js en Nerumi)"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": false,
@@ -4037,7 +3569,10 @@
      "fraccionAlto": 0.33
     }
    },
-   "sha256": "4d76d163724c38357074c6f79c74a7760907f5b2bb12152a9df8d15194eba1eb"
+   "sha256": "4d76d163724c38357074c6f79c74a7760907f5b2bb12152a9df8d15194eba1eb",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/RareDance8-goth.vrma": {
    "etiqueta": "Goth",
@@ -4049,7 +3584,7 @@
     "licencia": "términos propios del autor (sin revisar)",
     "fuente": "NOTAS-nerumi.md §13 (DANCE_CREATORS de animation-catalog.js en Nerumi)"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": true,
@@ -4082,7 +3617,10 @@
      "fraccionAlto": 0.55
     }
    },
-   "sha256": "840fc3beb2709647387300d117be48d9afc1a1a10df9229722cae689132f9342"
+   "sha256": "840fc3beb2709647387300d117be48d9afc1a1a10df9229722cae689132f9342",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/dance/RareDance9-split.vrma": {
    "etiqueta": "Split",
@@ -4094,7 +3632,7 @@
     "licencia": "términos propios del autor (sin revisar)",
     "fuente": "NOTAS-nerumi.md §13 (DANCE_CREATORS de animation-catalog.js en Nerumi)"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": true,
@@ -4126,7 +3664,10 @@
      "fraccionAlto": 0.33
     }
    },
-   "sha256": "84e48c9c94fdad1e4b796811276f3b6568bc23a8da6f738488af906a97b01679"
+   "sha256": "84e48c9c94fdad1e4b796811276f3b6568bc23a8da6f738488af906a97b01679",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/easter-eggs/kawaii/@KA_Death_Ground.vrma": {
    "etiqueta": "Caer al suelo",
@@ -4171,7 +3712,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "2e0367a314853aacba60f57ea3f49a673e18995781e1781568057b62b111bae9"
+   "sha256": "2e0367a314853aacba60f57ea3f49a673e18995781e1781568057b62b111bae9",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/easter-eggs/kawaii/@KA_Swimming_FlutterKick_Fwd.vrma": {
    "etiqueta": "Nadar",
@@ -4215,7 +3759,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "3d3a6c3e2bb7e330e2aee2d4041f46f9481688a62762747e6839c07dd63da51c"
+   "sha256": "3d3a6c3e2bb7e330e2aee2d4041f46f9481688a62762747e6839c07dd63da51c",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/easter-eggs/kawaii/@KA_Swimming_FlutterKick_Fwd_Start.vrma": {
    "etiqueta": "Nadar: empezar",
@@ -4261,7 +3808,10 @@
      "fraccionAlto": 0.68
     }
    },
-   "sha256": "86d09d4c0a00bec3785a48cccb87fe48613652ffe6fe4d7010fff2c7e12cf557"
+   "sha256": "86d09d4c0a00bec3785a48cccb87fe48613652ffe6fe4d7010fff2c7e12cf557",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/easter-eggs/kawaii/@KA_Swimming_FlutterKick_Fwd_Stop.vrma": {
    "etiqueta": "Nadar: parar",
@@ -4306,7 +3856,10 @@
      "fraccionAlto": 0.1
     }
    },
-   "sha256": "7021bce0fdc450165359750a748157dc34fc201d348b376f2ba9ad980f5cdb53"
+   "sha256": "7021bce0fdc450165359750a748157dc34fc201d348b376f2ba9ad980f5cdb53",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/easter-eggs/kawaii/@KA_Swimming_Idle.vrma": {
    "etiqueta": "Flotar en el agua",
@@ -4351,7 +3904,10 @@
      "fraccionAlto": 1.0
     }
    },
-   "sha256": "ec40fbfcaf46efd8157ac94b4a04a0b8d9bb9ac2ee9e24ba2cafd177142b409b"
+   "sha256": "ec40fbfcaf46efd8157ac94b4a04a0b8d9bb9ac2ee9e24ba2cafd177142b409b",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/greet.vrma": {
    "etiqueta": "Saludo inicial",
@@ -4391,7 +3947,10 @@
      "fraccionAlto": 0.03
     }
    },
-   "sha256": "6f66b6b5c0214a7b825498050380ea43a3f782b5ea24ce46f7096acf15866d75"
+   "sha256": "6f66b6b5c0214a7b825498050380ea43a3f782b5ea24ce46f7096acf15866d75",
+   "raro": false,
+   "expresion": null,
+   "saludo": true
   },
   "nerumi/greetings/kawaii/@KA_Idle16_WaveHands.vrma": {
    "etiqueta": "Saludar con las dos manos",
@@ -4431,7 +3990,10 @@
      "fraccionAlto": 0.5
     }
    },
-   "sha256": "3a4f2351fda7106779b20b15103aa24709b88fd6ff3659e03eab9d2bbe22f540"
+   "sha256": "3a4f2351fda7106779b20b15103aa24709b88fd6ff3659e03eab9d2bbe22f540",
+   "raro": false,
+   "expresion": null,
+   "saludo": true
   },
   "nerumi/greetings/kawaii/@KA_Idle44_GreetingBow.vrma": {
    "etiqueta": "Saludo con reverencia",
@@ -4471,7 +4033,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "c57e5ccc3594c22698889f37f924afacef25fe441fe4c5918dcbcaba088b9dfe"
+   "sha256": "c57e5ccc3594c22698889f37f924afacef25fe441fe4c5918dcbcaba088b9dfe",
+   "raro": false,
+   "expresion": null,
+   "saludo": true
   },
   "nerumi/greetings/kawaii/@KA_Idle45_WaveHandSlightly.vrma": {
    "etiqueta": "Saludar con la mano",
@@ -4511,7 +4076,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "c993f1d0482e1d425a6cd9cf1852e68d64b96f20e6cc3b43f7f5735f159df561"
+   "sha256": "c993f1d0482e1d425a6cd9cf1852e68d64b96f20e6cc3b43f7f5735f159df561",
+   "raro": false,
+   "expresion": null,
+   "saludo": true
   },
   "nerumi/idle/Dao-butterfly-dog.vrma": {
    "etiqueta": "Butterfly dog",
@@ -4551,7 +4119,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "c85142915be0411407efa3310c3a2ebb961a1a50db6e4ef98d9381b5acd90df1"
+   "sha256": "c85142915be0411407efa3310c3a2ebb961a1a50db6e4ef98d9381b5acd90df1",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/Idle1-left-right.vrma": {
    "etiqueta": "Balancearse a los lados",
@@ -4591,7 +4162,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "2fdfdd6a543fda63195d240a4e02de7996d1d20431fa63e5a844d8af5dc13521"
+   "sha256": "2fdfdd6a543fda63195d240a4e02de7996d1d20431fa63e5a844d8af5dc13521",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle0-break2.vrma": {
    "etiqueta": "Breakdance 2",
@@ -4637,7 +4211,10 @@
      "fraccionAlto": 0.54
     }
    },
-   "sha256": "dcb0f155f6c735c131542a79b3d8e6dbb2e60ca1f830291cdeb9c421e5b648d2"
+   "sha256": "dcb0f155f6c735c131542a79b3d8e6dbb2e60ca1f830291cdeb9c421e5b648d2",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle10-67.vrma": {
    "etiqueta": "67",
@@ -4677,7 +4254,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "58e9ccbc1cf8c422038a7f8d73fd481b275eda30aca9608ef71a390e91e6a1a1"
+   "sha256": "58e9ccbc1cf8c422038a7f8d73fd481b275eda30aca9608ef71a390e91e6a1a1",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle11-blowkiss.vrma": {
    "etiqueta": "Lanzar un beso",
@@ -4717,7 +4297,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "6078ebbe2924d8a2fcd95480b0c7d395035c4b51d3004113db05c5b8d7a4f375"
+   "sha256": "6078ebbe2924d8a2fcd95480b0c7d395035c4b51d3004113db05c5b8d7a4f375",
+   "raro": false,
+   "expresion": "happy",
+   "saludo": false
   },
   "nerumi/idle/idle12-dab.vrma": {
    "etiqueta": "Dab",
@@ -4760,7 +4343,10 @@
      "fraccionAlto": 0.88
     }
    },
-   "sha256": "8f409fec110a892f49b45c40a07edc9105f7cdfb340c549fc2894ac84fb1caae"
+   "sha256": "8f409fec110a892f49b45c40a07edc9105f7cdfb340c549fc2894ac84fb1caae",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle13-head-spin.vrma": {
    "etiqueta": "Girar sobre la cabeza",
@@ -4805,7 +4391,10 @@
      "fraccionAlto": 0.77
     }
    },
-   "sha256": "1f5ca69a517b8d39f873ecf047da7dac2c991c77eca66f4b01205f4a06ac81d1"
+   "sha256": "1f5ca69a517b8d39f873ecf047da7dac2c991c77eca66f4b01205f4a06ac81d1",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle14-idle2.vrma": {
    "etiqueta": "Reposo 2",
@@ -4849,7 +4438,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "dff3a3fe1d4a50af68e90c66f8d7b610cd50b30ea1b1e5dd2caef33687081573"
+   "sha256": "dff3a3fe1d4a50af68e90c66f8d7b610cd50b30ea1b1e5dd2caef33687081573",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle15-idle3.vrma": {
    "etiqueta": "Reposo 3",
@@ -4889,7 +4481,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "808e129753a0d172de7d6ef75ecde9ad6ff1504d5ae6ba84931311c448087af8"
+   "sha256": "808e129753a0d172de7d6ef75ecde9ad6ff1504d5ae6ba84931311c448087af8",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle16-idle4.vrma": {
    "etiqueta": "Reposo 4",
@@ -4929,7 +4524,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "af480ecc778bf90988fc2f4ce4b7b2abd3007f0a14b650a3ebca1b9323b3d161"
+   "sha256": "af480ecc778bf90988fc2f4ce4b7b2abd3007f0a14b650a3ebca1b9323b3d161",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle17-idle5.vrma": {
    "etiqueta": "Reposo 5",
@@ -4969,7 +4567,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "bb9d36e4950d2ba1f8a6a6cec4ba3aff0d0b2dc36a88c5979d61dc51ed851ced"
+   "sha256": "bb9d36e4950d2ba1f8a6a6cec4ba3aff0d0b2dc36a88c5979d61dc51ed851ced",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle18-robot2.vrma": {
    "etiqueta": "Robot 2",
@@ -5009,7 +4610,10 @@
      "fraccionAlto": 0.24
     }
    },
-   "sha256": "cb0ca9f5002d69d7314c952f7fdfff8e23ecb44b486898af947d74368ce0e762"
+   "sha256": "cb0ca9f5002d69d7314c952f7fdfff8e23ecb44b486898af947d74368ce0e762",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle19-pikuniku.vrma": {
    "etiqueta": "Pikuniku",
@@ -5049,7 +4653,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "3201f8bbe273467f3744a034e534b0ff20300b10170a7185369cc8757c4fe95c"
+   "sha256": "3201f8bbe273467f3744a034e534b0ff20300b10170a7185369cc8757c4fe95c",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle2-heart.vrma": {
    "etiqueta": "Corazón",
@@ -5089,7 +4696,10 @@
      "fraccionAlto": 0.05
     }
    },
-   "sha256": "399b87927522d1e8ce5219337fd7c466644d2d8a826bfac7c77a44ea00b1c7e6"
+   "sha256": "399b87927522d1e8ce5219337fd7c466644d2d8a826bfac7c77a44ea00b1c7e6",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle20-idle1.vrma": {
    "etiqueta": "Reposo 1",
@@ -5129,7 +4739,10 @@
      "fraccionAlto": 0.03
     }
    },
-   "sha256": "8bafc7bd321588b16170068c64272d08fdfcec306f60e5647657920b7ae8aace"
+   "sha256": "8bafc7bd321588b16170068c64272d08fdfcec306f60e5647657920b7ae8aace",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle21-idle6.vrma": {
    "etiqueta": "Reposo 6",
@@ -5169,7 +4782,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "fb556b10498fa7a6057fbc8aec370a3f1596408413f2eb7a44ee4e4e87a2a6a5"
+   "sha256": "fb556b10498fa7a6057fbc8aec370a3f1596408413f2eb7a44ee4e4e87a2a6a5",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle3-yawn.vrma": {
    "etiqueta": "Bostezo",
@@ -5209,7 +4825,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "184ce393639cbd238c54ec323702a8a08a5dab0f8df912b83e291ac3db39e40b"
+   "sha256": "184ce393639cbd238c54ec323702a8a08a5dab0f8df912b83e291ac3db39e40b",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle4-break.vrma": {
    "etiqueta": "Breakdance",
@@ -5253,7 +4872,10 @@
      "fraccionAlto": 0.5
     }
    },
-   "sha256": "e1720c750175af8fd72dd0b0666e310dc70dd962933419822ddaba5a056798be"
+   "sha256": "e1720c750175af8fd72dd0b0666e310dc70dd962933419822ddaba5a056798be",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle5-idle-happy.vrma": {
    "etiqueta": "Contenta",
@@ -5293,7 +4915,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "ee76d942fdec730e16543aba349230099fb5f5c43688ea6ff208f6e65a64ce10"
+   "sha256": "ee76d942fdec730e16543aba349230099fb5f5c43688ea6ff208f6e65a64ce10",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle6-penguin.vrma": {
    "etiqueta": "Pingüino",
@@ -5335,7 +4960,10 @@
      "fraccionAlto": 0.23
     }
    },
-   "sha256": "129c7b0a996e7032ac613c292ccd6a1b6a7135d3fa435fb535894b4dbcfee1ef"
+   "sha256": "129c7b0a996e7032ac613c292ccd6a1b6a7135d3fa435fb535894b4dbcfee1ef",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle7-worm.vrma": {
    "etiqueta": "El gusano",
@@ -5380,7 +5008,10 @@
      "fraccionAlto": 0.58
     }
    },
-   "sha256": "941ccf382d49bdfcd48dbc669a163b864cc62cf3fdc3891495cea9dcbda9de9a"
+   "sha256": "941ccf382d49bdfcd48dbc669a163b864cc62cf3fdc3891495cea9dcbda9de9a",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle8-robot.vrma": {
    "etiqueta": "Robot",
@@ -5424,7 +5055,10 @@
      "fraccionAlto": 0.1
     }
    },
-   "sha256": "7a3708519099786884271a2e058bb56d0b0e2d648f91b6e9afede1fd6f546b6d"
+   "sha256": "7a3708519099786884271a2e058bb56d0b0e2d648f91b6e9afede1fd6f546b6d",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/idle9-levitate.vrma": {
    "etiqueta": "Levitar",
@@ -5466,7 +5100,10 @@
      "fraccionAlto": 0.15
     }
    },
-   "sha256": "6629761a73288cd1370df806aa44781152e2a50080bea6fe7f5c5adef13f52bd"
+   "sha256": "6629761a73288cd1370df806aa44781152e2a50080bea6fe7f5c5adef13f52bd",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle01_breathing.vrma": {
    "etiqueta": "Respirar",
@@ -5506,7 +5143,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "107b9040260840073b6ca79d4f717cff2f3bd31ea7bb9ab48c5d5d79fa187782"
+   "sha256": "107b9040260840073b6ca79d4f717cff2f3bd31ea7bb9ab48c5d5d79fa187782",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle02_LookLeftAndRight.vrma": {
    "etiqueta": "Mirar a los lados",
@@ -5546,7 +5186,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "84c39b9f15c5937410a359552973ca1e94b300172ee68ab75cdbe3e3c4a4de21"
+   "sha256": "84c39b9f15c5937410a359552973ca1e94b300172ee68ab75cdbe3e3c4a4de21",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle03_LookAtHands.vrma": {
    "etiqueta": "Mirarse las manos",
@@ -5586,7 +5229,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "c7e05c26051bac2153dd6b5af79cf242fa3979a95c15bc758a7fab0a8e746c82"
+   "sha256": "c7e05c26051bac2153dd6b5af79cf242fa3979a95c15bc758a7fab0a8e746c82",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle04_LookAtFeet.vrma": {
    "etiqueta": "Mirarse los pies",
@@ -5626,7 +5272,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "475f7a7cc76fdaf70a0bc879c9127d3ffeca29b99e796e220401acaa8043805b"
+   "sha256": "475f7a7cc76fdaf70a0bc879c9127d3ffeca29b99e796e220401acaa8043805b",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle05_Stretch.vrma": {
    "etiqueta": "Estirarse",
@@ -5666,7 +5315,10 @@
      "fraccionAlto": 0.46
     }
    },
-   "sha256": "6aba8f6cd36ad5a67595e0bda583e243769bc8758d381e021abb0499564ce1f2"
+   "sha256": "6aba8f6cd36ad5a67595e0bda583e243769bc8758d381e021abb0499564ce1f2",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle06_JumpAround.vrma": {
    "etiqueta": "Saltar de un lado a otro",
@@ -5678,7 +5330,7 @@
     "licencia": "Unity Asset Store, de pago: uso personal; no redistribuir los archivos",
     "fuente": "nerumi/idle/kawaii/README.md"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": true,
@@ -5706,7 +5358,10 @@
      "fraccionAlto": 0.02
     }
    },
-   "sha256": "5f1a596a55c27fb42c1e3a54fb2ed9ade1305855634ed3480f5f43c1df7b08a1"
+   "sha256": "5f1a596a55c27fb42c1e3a54fb2ed9ade1305855634ed3480f5f43c1df7b08a1",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle08_ComeUpWithAnIdea.vrma": {
    "etiqueta": "Tener una idea",
@@ -5746,7 +5401,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "8e25c313c0c6bd5f62fe188d4c3eec13514b31ccb1dd2ca7d13a9834639e8ffd"
+   "sha256": "8e25c313c0c6bd5f62fe188d4c3eec13514b31ccb1dd2ca7d13a9834639e8ffd",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle09_Waiting.vrma": {
    "etiqueta": "Esperar",
@@ -5786,7 +5444,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "a2775216ecdea9fdb0861b6e20a5bd794f86af19996c0e7a9c0d0b972cf9cd6e"
+   "sha256": "a2775216ecdea9fdb0861b6e20a5bd794f86af19996c0e7a9c0d0b972cf9cd6e",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle11_LookingBack.vrma": {
    "etiqueta": "Mirar atrás",
@@ -5828,7 +5489,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "954dda33992c84a9f580f6495cd53c535f8bd53855c31f0096e34e47b3b0539e"
+   "sha256": "954dda33992c84a9f580f6495cd53c535f8bd53855c31f0096e34e47b3b0539e",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle12_LeaningForward.vrma": {
    "etiqueta": "Inclinarse hacia delante",
@@ -5868,7 +5532,10 @@
      "fraccionAlto": 0.24
     }
    },
-   "sha256": "453f43028b4636a0211def186aeb51565942537dd20026561c5e6d02618fcd98"
+   "sha256": "453f43028b4636a0211def186aeb51565942537dd20026561c5e6d02618fcd98",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle15_TieShoelaces.vrma": {
    "etiqueta": "Atarse los cordones",
@@ -5908,7 +5575,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "7bea4090a808dd9af8f41e4c9d5c137d34f5f3f5759320513e69dde319331df6"
+   "sha256": "7bea4090a808dd9af8f41e4c9d5c137d34f5f3f5759320513e69dde319331df6",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle18_Shy.vrma": {
    "etiqueta": "Timidez",
@@ -5948,7 +5618,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "1ae5ce140f7c7c37b93c53953adbaada12b981399d48415184f7a540052befb1"
+   "sha256": "1ae5ce140f7c7c37b93c53953adbaada12b981399d48415184f7a540052befb1",
+   "raro": false,
+   "expresion": "relaxed",
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle19_ShyRefusal.vrma": {
    "etiqueta": "Negarse con timidez",
@@ -5990,7 +5663,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "b772f99f3ff9c11ffa78700990bdb471783d59a49319b73e5a261e79c6b2bedf"
+   "sha256": "b772f99f3ff9c11ffa78700990bdb471783d59a49319b73e5a261e79c6b2bedf",
+   "raro": false,
+   "expresion": "relaxed",
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle20_TriplePose.vrma": {
    "etiqueta": "Tres poses",
@@ -6032,7 +5708,10 @@
      "fraccionAlto": 0.48
     }
    },
-   "sha256": "2edecaa3ef8b33e1bb90e715860bf2a74b9e825e49a835bb45a74b6d944dd19a"
+   "sha256": "2edecaa3ef8b33e1bb90e715860bf2a74b9e825e49a835bb45a74b6d944dd19a",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle25_Cheers.vrma": {
    "etiqueta": "Vítores",
@@ -6072,7 +5751,10 @@
      "fraccionAlto": 0.1
     }
    },
-   "sha256": "1f0dc02a3ca246e5a11b6df2c6ed0739e97b16f8ba78e258e8774f3bd2bca3f5"
+   "sha256": "1f0dc02a3ca246e5a11b6df2c6ed0739e97b16f8ba78e258e8774f3bd2bca3f5",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle26_Shout.vrma": {
    "etiqueta": "Gritar",
@@ -6112,7 +5794,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "fdc25c053b556a61e450ad0da058c031ff694ba768a2fe747ce5e0cecfff1949"
+   "sha256": "fdc25c053b556a61e450ad0da058c031ff694ba768a2fe747ce5e0cecfff1949",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle30_Stretch2.vrma": {
    "etiqueta": "Estirarse 2",
@@ -6155,7 +5840,10 @@
      "fraccionAlto": 0.34
     }
    },
-   "sha256": "19ef0fce8c2808c1ecce9ccf9a5cdbf1ff87fa970505c26a7339ec2e45748219"
+   "sha256": "19ef0fce8c2808c1ecce9ccf9a5cdbf1ff87fa970505c26a7339ec2e45748219",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle31_PickUp.vrma": {
    "etiqueta": "Recoger algo",
@@ -6195,7 +5883,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "f3b9bbf0137d0afaf730de807e4a63bdd68dcefa092b017e687144d60e1f89ee"
+   "sha256": "f3b9bbf0137d0afaf730de807e4a63bdd68dcefa092b017e687144d60e1f89ee",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle32_LeanAgainst.vrma": {
    "etiqueta": "Apoyarse",
@@ -6235,7 +5926,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "496d97d5987c4b0e6322ba967da20033de65f83a06298f7766d3b8b346379d1d"
+   "sha256": "496d97d5987c4b0e6322ba967da20033de65f83a06298f7766d3b8b346379d1d",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle35_FingerSnap.vrma": {
    "etiqueta": "Chasquear los dedos",
@@ -6275,7 +5969,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "4ddbcf0d80685040db5931a8416a1b6ea8302d2f8216944d02ad1ad10ea7ca62"
+   "sha256": "4ddbcf0d80685040db5931a8416a1b6ea8302d2f8216944d02ad1ad10ea7ca62",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle38_Cry.vrma": {
    "etiqueta": "Llorar",
@@ -6315,7 +6012,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "49d9ac9ecac0dfb9be041f05a1e1e94460bf30fed9e3014c30a15865c45d2c5d"
+   "sha256": "49d9ac9ecac0dfb9be041f05a1e1e94460bf30fed9e3014c30a15865c45d2c5d",
+   "raro": false,
+   "expresion": "sad",
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle39_CuteArmUp.vrma": {
    "etiqueta": "Brazo arriba",
@@ -6355,7 +6055,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "64c27f80131f021157e87ef8b0053c842cf701cf636ee73efd57279b42b2f5a5"
+   "sha256": "64c27f80131f021157e87ef8b0053c842cf701cf636ee73efd57279b42b2f5a5",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle40_CrossLegs.vrma": {
    "etiqueta": "Cruzar las piernas",
@@ -6395,7 +6098,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "e3b2c23cd946f5ee741691684e51336834730c53a9b3082c131366ba4cb16474"
+   "sha256": "e3b2c23cd946f5ee741691684e51336834730c53a9b3082c131366ba4cb16474",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle41_CuteShyPose.vrma": {
    "etiqueta": "Pose tímida",
@@ -6435,7 +6141,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "3b7a13e25ee9d3f238822aa1f22c8e5a66aab3740527b1313b894d41bbbd68cd"
+   "sha256": "3b7a13e25ee9d3f238822aa1f22c8e5a66aab3740527b1313b894d41bbbd68cd",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle42_Taunt.vrma": {
    "etiqueta": "Provocar",
@@ -6477,7 +6186,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "5c4bf3aa133c3aaefbe6e755f4325f74610ef92ab2ff9e80f4d0e8d597cbc38f"
+   "sha256": "5c4bf3aa133c3aaefbe6e755f4325f74610ef92ab2ff9e80f4d0e8d597cbc38f",
+   "raro": false,
+   "expresion": "happy",
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle43_HandOnHip.vrma": {
    "etiqueta": "Mano en la cadera",
@@ -6517,7 +6229,10 @@
      "fraccionAlto": 0.31
     }
    },
-   "sha256": "d2d0c20c92bc66a929b71e515ca10c03699d3916680cddb566c9f8019486f86e"
+   "sha256": "d2d0c20c92bc66a929b71e515ca10c03699d3916680cddb566c9f8019486f86e",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle52_Curtsy.vrma": {
    "etiqueta": "Reverencia",
@@ -6557,7 +6272,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "2a67409df9864ac9b753813481fd3ba0090109126f2bdd11b63790939c1873a1"
+   "sha256": "2a67409df9864ac9b753813481fd3ba0090109126f2bdd11b63790939c1873a1",
+   "raro": false,
+   "expresion": null,
+   "saludo": true
   },
   "nerumi/idle/kawaii/@KA_Idle55_Backflip.vrma": {
    "etiqueta": "Mortal hacia atrás",
@@ -6569,7 +6287,7 @@
     "licencia": "Unity Asset Store, de pago: uso personal; no redistribuir los archivos",
     "fuente": "nerumi/idle/kawaii/README.md"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": false,
@@ -6600,7 +6318,10 @@
      "fraccionAlto": 0.18
     }
    },
-   "sha256": "675d2df28ae968ff4c637b65ad200ae5186b6e93f8739e3177db01892f35ff23"
+   "sha256": "675d2df28ae968ff4c637b65ad200ae5186b6e93f8739e3177db01892f35ff23",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle56_Handstand.vrma": {
    "etiqueta": "Hacer el pino",
@@ -6612,7 +6333,7 @@
     "licencia": "Unity Asset Store, de pago: uso personal; no redistribuir los archivos",
     "fuente": "nerumi/idle/kawaii/README.md"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": false,
@@ -6645,7 +6366,10 @@
      "fraccionAlto": 0.77
     }
    },
-   "sha256": "58e7688f61609bbc72b0093b12de0e94e3f7077bb349902f56a5447819e87f69"
+   "sha256": "58e7688f61609bbc72b0093b12de0e94e3f7077bb349902f56a5447819e87f69",
+   "raro": true,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle65_ThumbsUp.vrma": {
    "etiqueta": "Pulgar arriba",
@@ -6685,7 +6409,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "50fd28ae445ad0cbd70e0e4cf458a277e27f9cd4b4cbf636c7b28abe00cbbfe8"
+   "sha256": "50fd28ae445ad0cbd70e0e4cf458a277e27f9cd4b4cbf636c7b28abe00cbbfe8",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle66_JumpForJoy.vrma": {
    "etiqueta": "Saltar de alegría",
@@ -6697,7 +6424,7 @@
     "licencia": "Unity Asset Store, de pago: uso personal; no redistribuir los archivos",
     "fuente": "nerumi/idle/kawaii/README.md"
    },
-   "peso": 0.25,
+   "peso": 1,
    "horas": null,
    "nota": null,
    "activoPorDefecto": true,
@@ -6725,7 +6452,10 @@
      "fraccionAlto": 0.23
     }
    },
-   "sha256": "06df001eb07471e6786f1351303db3e1f67f7a3ac2aa9b85910093eb29a9bc83"
+   "sha256": "06df001eb07471e6786f1351303db3e1f67f7a3ac2aa9b85910093eb29a9bc83",
+   "raro": true,
+   "expresion": "happy",
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle67_FeelDown.vrma": {
    "etiqueta": "Desanimarse",
@@ -6768,7 +6498,10 @@
      "fraccionAlto": 0.36
     }
    },
-   "sha256": "f826729a6361a76f07f54dead653fe3052da5519c79fa8d16a2f2c5126338300"
+   "sha256": "f826729a6361a76f07f54dead653fe3052da5519c79fa8d16a2f2c5126338300",
+   "raro": false,
+   "expresion": "sad",
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle68_Surprise.vrma": {
    "etiqueta": "Sorpresa",
@@ -6808,7 +6541,10 @@
      "fraccionAlto": 0.04
     }
    },
-   "sha256": "bae851ab6d5d648dfeb864d9829ae0c7569aa83021306e85fd28a5b7a6897c1f"
+   "sha256": "bae851ab6d5d648dfeb864d9829ae0c7569aa83021306e85fd28a5b7a6897c1f",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle69_Surprise2.vrma": {
    "etiqueta": "Sorpresa 2",
@@ -6848,7 +6584,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "202b6462e1f87bc7ec9a260203a4cdd5d3052160075e7709fe6fafbaa5713194"
+   "sha256": "202b6462e1f87bc7ec9a260203a4cdd5d3052160075e7709fe6fafbaa5713194",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle70_ChangeClothes.vrma": {
    "etiqueta": "Cambiarse de ropa",
@@ -6890,7 +6629,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "49db4be79eab25add40ad2d101ee6965d5d223bd5c3b59a516bc694850c7780d"
+   "sha256": "49db4be79eab25add40ad2d101ee6965d5d223bd5c3b59a516bc694850c7780d",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle71_CatPose.vrma": {
    "etiqueta": "Pose de gato",
@@ -6932,7 +6674,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "a92db300a28e884c3563c9b7fe740268365e2e6438ca656cdff2304403a7d042"
+   "sha256": "a92db300a28e884c3563c9b7fe740268365e2e6438ca656cdff2304403a7d042",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle72_LeanForward.vrma": {
    "etiqueta": "Asomarse",
@@ -6972,7 +6717,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "21c66c85e6790cf3fecbef0d154c0c259d4439727469c32006e8c212eb6b3427"
+   "sha256": "21c66c85e6790cf3fecbef0d154c0c259d4439727469c32006e8c212eb6b3427",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle73_IdolPose.vrma": {
    "etiqueta": "Pose de idol",
@@ -7014,7 +6762,10 @@
      "fraccionAlto": 0.63
     }
    },
-   "sha256": "d780e609e5809c187cbe7edf344a7df8aa7b65f437b08558d092d75ad0eb77a6"
+   "sha256": "d780e609e5809c187cbe7edf344a7df8aa7b65f437b08558d092d75ad0eb77a6",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle74_Cheer.vrma": {
    "etiqueta": "Animar",
@@ -7054,7 +6805,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "272d490c63cc73a524333689081f732ccd7bb10f4b2932f0cb738638e38424ab"
+   "sha256": "272d490c63cc73a524333689081f732ccd7bb10f4b2932f0cb738638e38424ab",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle75_Pointing.vrma": {
    "etiqueta": "Señalar",
@@ -7096,7 +6850,10 @@
      "fraccionAlto": 0.63
     }
    },
-   "sha256": "9b903a1e957384904bd1374395e022e97e0b0122bfaec24287980a355c5dc452"
+   "sha256": "9b903a1e957384904bd1374395e022e97e0b0122bfaec24287980a355c5dc452",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle76_MotivatedPose.vrma": {
    "etiqueta": "Pose con ganas",
@@ -7136,7 +6893,10 @@
      "fraccionAlto": 0.01
     }
    },
-   "sha256": "e2f1b2495253e8b43dffc84f39cff93a6b781118ec44abfc8f126eff20910816"
+   "sha256": "e2f1b2495253e8b43dffc84f39cff93a6b781118ec44abfc8f126eff20910816",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle77_ChangeClothes2.vrma": {
    "etiqueta": "Cambiarse de ropa 2",
@@ -7178,7 +6938,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "4e9ac45a7a29b7bd1d13ee707e8118b6ce790a4aa9502e97a4a8a1ed2111b2f8"
+   "sha256": "4e9ac45a7a29b7bd1d13ee707e8118b6ce790a4aa9502e97a4a8a1ed2111b2f8",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle82_PickUp_L.vrma": {
    "etiqueta": "Recoger algo (izquierda)",
@@ -7218,7 +6981,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "2a086ef21793b2bf21cc68fef732b376d59f440c16b4dd1caf040ef46a130d5a"
+   "sha256": "2a086ef21793b2bf21cc68fef732b376d59f440c16b4dd1caf040ef46a130d5a",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle85_Sneeze1.vrma": {
    "etiqueta": "Estornudo 1",
@@ -7258,7 +7024,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "a1bc6b550f272e3e00f07a76adf2888ca7db8cf500ed755c7ae8d795190624f2"
+   "sha256": "a1bc6b550f272e3e00f07a76adf2888ca7db8cf500ed755c7ae8d795190624f2",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle86_Sneeze2.vrma": {
    "etiqueta": "Estornudo 2",
@@ -7298,7 +7067,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "bea4a4c965a2fddf3f24cde32c9cfa5475b067a190913048c786ebcebeae7646"
+   "sha256": "bea4a4c965a2fddf3f24cde32c9cfa5475b067a190913048c786ebcebeae7646",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle87_Sneeze3.vrma": {
    "etiqueta": "Estornudo 3",
@@ -7338,7 +7110,10 @@
      "fraccionAlto": 0.02
     }
    },
-   "sha256": "dd85be4eae74539362faf1d32048eb9f3d14547096b8470324ac1320dffec86b"
+   "sha256": "dd85be4eae74539362faf1d32048eb9f3d14547096b8470324ac1320dffec86b",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle88_DoublePeacePose.vrma": {
    "etiqueta": "Doble V",
@@ -7380,7 +7155,10 @@
      "fraccionAlto": 0.52
     }
    },
-   "sha256": "91d94332c441a6b36d61847d08c0caf76f855ef969f16ad37448aa7af707a3a6"
+   "sha256": "91d94332c441a6b36d61847d08c0caf76f855ef969f16ad37448aa7af707a3a6",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle89_CheekPointPose.vrma": {
    "etiqueta": "Dedo en la mejilla",
@@ -7422,7 +7200,10 @@
      "fraccionAlto": 0.62
     }
    },
-   "sha256": "5a418430da8fe055b5a85981fb3c51ca5561bd5a5a6719e4cca121417ca938d4"
+   "sha256": "5a418430da8fe055b5a85981fb3c51ca5561bd5a5a6719e4cca121417ca938d4",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle90_HandsOnHipsConfident.vrma": {
    "etiqueta": "Manos en la cadera",
@@ -7464,7 +7245,10 @@
      "fraccionAlto": 0.65
     }
    },
-   "sha256": "82e47764dc8843d002c6c777ee6987faf2335fc47e2f28ceb5e5812806b13427"
+   "sha256": "82e47764dc8843d002c6c777ee6987faf2335fc47e2f28ceb5e5812806b13427",
+   "raro": false,
+   "expresion": "happy",
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle91_ThumbsUp.vrma": {
    "etiqueta": "Pulgar arriba 2",
@@ -7506,7 +7290,10 @@
      "fraccionAlto": 0.63
     }
    },
-   "sha256": "32d67ab11b5f87626b8749fbc16d4ae5e70fa4d4921d6e7c336c39c991859f2e"
+   "sha256": "32d67ab11b5f87626b8749fbc16d4ae5e70fa4d4921d6e7c336c39c991859f2e",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle92_Shush1.vrma": {
    "etiqueta": "Pedir silencio 1",
@@ -7546,7 +7333,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "7bc1ee45a4d22357b650070a9d983755a9d2de02426e10b1ba92c72879ecadaf"
+   "sha256": "7bc1ee45a4d22357b650070a9d983755a9d2de02426e10b1ba92c72879ecadaf",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle93_Shush2.vrma": {
    "etiqueta": "Pedir silencio 2",
@@ -7586,7 +7376,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "7d4b6e84087b4c98e007e746dac1069dcb4053d71d9273aff5c0d737ad720329"
+   "sha256": "7d4b6e84087b4c98e007e746dac1069dcb4053d71d9273aff5c0d737ad720329",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle94_Shush3.vrma": {
    "etiqueta": "Pedir silencio 3",
@@ -7626,7 +7419,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "b2f98d16abfc74c442c9c686966253d40d6dbba2927d4644621c8ba6068670ac"
+   "sha256": "b2f98d16abfc74c442c9c686966253d40d6dbba2927d4644621c8ba6068670ac",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle95_Cold1.vrma": {
    "etiqueta": "Frío 1",
@@ -7666,7 +7462,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "61d28f4fe59f26225d2f569d94d1fcb28c3a40e0fa125e3cc637b88b95177dea"
+   "sha256": "61d28f4fe59f26225d2f569d94d1fcb28c3a40e0fa125e3cc637b88b95177dea",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle96_Cold2.vrma": {
    "etiqueta": "Frío 2",
@@ -7706,7 +7505,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "0aa48ea8eea5730356917066002634ed83ce38c3a5396640f79faebc0c973883"
+   "sha256": "0aa48ea8eea5730356917066002634ed83ce38c3a5396640f79faebc0c973883",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle97_Hot1.vrma": {
    "etiqueta": "Calor 1",
@@ -7746,7 +7548,10 @@
      "fraccionAlto": 0.24
     }
    },
-   "sha256": "61c4cccf94b1f6ae5da125651e4f7d1285a7eaea999a7f186e03034aea34b339"
+   "sha256": "61c4cccf94b1f6ae5da125651e4f7d1285a7eaea999a7f186e03034aea34b339",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle98_Hot2.vrma": {
    "etiqueta": "Calor 2",
@@ -7786,7 +7591,10 @@
      "fraccionAlto": 0.07
     }
    },
-   "sha256": "8e860d723843863c27e11c373036ef203575b5acd2c44d347f842ef6e18e2f44"
+   "sha256": "8e860d723843863c27e11c373036ef203575b5acd2c44d347f842ef6e18e2f44",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle99_Sleepy.vrma": {
    "etiqueta": "Sueño",
@@ -7829,7 +7637,10 @@
      "fraccionAlto": 0.15
     }
    },
-   "sha256": "9bce6ec48f40638695c12abf839b98a2a42be5fc43e10c3a004134bf907e1593"
+   "sha256": "9bce6ec48f40638695c12abf839b98a2a42be5fc43e10c3a004134bf907e1593",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/tutorial/tutorial-apunta-derecha.vrma": {
    "etiqueta": "Señalar a la derecha",
@@ -7869,7 +7680,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "88fb2cb9a68605962492a31cdba3c0ecd3ea6877aa2c435a8ca1e238f03d11f0"
+   "sha256": "88fb2cb9a68605962492a31cdba3c0ecd3ea6877aa2c435a8ca1e238f03d11f0",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/tutorial/tutorial-apunta-izquierda.vrma": {
    "etiqueta": "Señalar a la izquierda",
@@ -7909,7 +7723,10 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "6ac24d6c714a9ff8fd711099bd660036a7b95a8da886c31eacbdd3ffd8727f8f"
+   "sha256": "6ac24d6c714a9ff8fd711099bd660036a7b95a8da886c31eacbdd3ffd8727f8f",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   },
   "nerumi/tutorial/tutorial-explicacion.vrma": {
    "etiqueta": "Explicar",
@@ -7949,15 +7766,22 @@
      "fraccionAlto": 0.0
     }
    },
-   "sha256": "9533b00e5212aa26272318f7db5c21d928b3ce50eebdd0299d7ac75ee6b67b04"
+   "sha256": "9533b00e5212aa26272318f7db5c21d928b3ce50eebdd0299d7ac75ee6b67b04",
+   "raro": false,
+   "expresion": null,
+   "saludo": false
   }
  },
- "nota": "Fuente de verdad de los clips del avatar. Lo curado (etiqueta, categoria, origen, peso, horas, nota, activoPorDefecto, categorias, porEstado, poseBase) se edita a mano; medido/avisos/giraCuerpo/fundidoEntradaS/sha256 los recalcula catalogo_animaciones.py.",
+ "nota": "Fuente de verdad de los clips del avatar. Lo curado (etiqueta, categoria, origen, peso, horas, nota, activoPorDefecto, raro, expresion, saludo, categorias, porEstado, poseBase, ajustes) se edita a mano; medido/avisos/giraCuerpo/fundidoEntradaS/sha256 los recalcula catalogo_animaciones.py. raro: grupo raro de la ruleta de reposo (probRaro) o baile súper raro (probSuperRaro). expresion: cara durante el clip si está en reposo y sin emoción (happy|sad|angry|surprised|relaxed). Sistema de elección inspirado en el de Nerumi (ver CLAUDE.md, \"Director de animación\").",
  "ajustes": {
   "intervaloReposo": {
-   "minS": 4,
-   "maxS": 9
+   "minS": 60,
+   "maxS": 120
   },
-  "enfriamientoMin": 5
+  "enfriamientoMin": 5,
+  "probRaro": 0.2,
+  "probSuperRaro": 0.03,
+  "emocionBreveS": 5,
+  "emocionTrasHablarS": 4
  }
 }

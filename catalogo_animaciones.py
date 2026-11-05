@@ -219,8 +219,6 @@ def categoria_de(rel):
     """Categoría por carpeta: Animaciones/nerumi/<cat>/..., con actions/<x>/
     como su propia categoría (sit, lying) y greet.vrma suelto en saludos."""
     partes = rel.split("/")
-    if partes[0] == "VRMA_MotionPack":
-        return "rem-anterior"
     if partes[0] == "nerumi":
         if len(partes) == 2:
             return "greetings" if partes[1].startswith("greet") else "otros"
@@ -314,11 +312,13 @@ def main():
                     "etiqueta": etiqueta_de(rel), "categoria": categoria,
                     "origen": origen_generado(rel, provs), "peso": 1, "horas": None, "nota": None,
                     "activoPorDefecto": activo_generado(categoria, avisos, cat.get("categorias", {})),
+                    "raro": False, "expresion": None, "saludo": False,
                 }
                 nuevos.append(rel)
             else:
                 curado = {k: previo.get(k) for k in
-                          ("etiqueta", "categoria", "origen", "peso", "horas", "nota", "activoPorDefecto")}
+                          ("etiqueta", "categoria", "origen", "peso", "horas", "nota", "activoPorDefecto",
+                           "raro", "expresion", "saludo")}
             entrada = {
                 **curado,
                 "giraCuerpo": "gira" in avisos,

@@ -1,23 +1,18 @@
 """acciones.py — las herramientas (tool calling nativo) que Rem puede
-ejecutar desde rem_chat, más las protecciones que reutiliza de la auditoría
-de seguridad del viejo Rem.py (Tkinter, eliminado — sigue en el historial de
-git, último commit que lo tiene: 58abc8e).
+ejecutar desde rem_chat, con la validación de rutas que usan.
 
-Alcance deliberadamente chico (ver CLAUDE.md, "Pendiente: portar el
-ejecutor de acciones a rem_chat"): NO es el catálogo completo de Rem.py —
-solo herramientas de bajo riesgo, de solo lectura, o con confirmación
-obligatoria.
-`ejecutar_comando` y el resto del catálogo viejo (JSON en texto) se quedan
-fuera; el hueco de `pacman` sin restricción de subcomando (ver esa sección
-de CLAUDE.md) no aplica más porque `ejecutar_comando` no se porta.
+Alcance deliberadamente chico (ver CLAUDE.md, "Acciones del sistema en
+rem_chat" y "Seguridad de acciones del sistema"): solo herramientas de bajo
+riesgo, de solo lectura, o con confirmación obligatoria. No hay
+`ejecutar_comando` ni acciones que muevan/borren archivos.
 
-Solo se extrajo de Rem.py lo que las herramientas de búsqueda necesitan:
-`_ruta_segura`/`_filtrar_rutas_seguras` (la validación de rutas) y el
-soporte de `memoria_sistema` para `buscar_archivos` (registrar/consultar
-la caché de archivos ya encontrados). El resto del catálogo de Rem.py
-(ejecutar_comando, mover/copiar/eliminar archivo, crear_carpeta,
-optimizar, descargar, etc.) no se portó y ya no existe en el árbol: si hace
-falta, recuperarlo de 58abc8e junto con su validación.
+Las protecciones vienen de la auditoría de seguridad del asistente anterior:
+`_ruta_segura`/`_filtrar_rutas_seguras` (validación de rutas) y el soporte de
+`memoria_sistema` para `buscar_archivos` (registrar/consultar la caché de
+archivos ya encontrados). El resto de aquel catálogo (ejecutar_comando,
+mover/copiar/eliminar, descargar...) está en git, en el commit del
+2026-09-22 «feat: portar 4 herramientas del ejecutor de acciones a rem_chat
+(tool calling nativo)»: si se porta algo, portar también su validación.
 
 `memoria_sistema` se recibe como parámetro en cada función que lo necesita
 (igual que ya hace personalidad.py), nunca como global del módulo: la
@@ -35,8 +30,7 @@ import urllib.parse
 
 from llm import ToolSpec
 
-# ── Rutas seguras (portadas tal cual de Rem.py, mismo motivo: ver CLAUDE.md
-# "Seguridad de acciones del sistema") ──────────────────────────────────
+# ── Rutas seguras (ver CLAUDE.md "Seguridad de acciones del sistema") ──────
 _ZONA_SEGURA = os.path.realpath(os.path.expanduser("~"))
 _DIRS_PROHIBIDOS = ("/etc", "/boot", "/sys", "/proc", "/root", "/bin", "/sbin",
                     "/usr/bin", "/usr/sbin", "/lib", "/lib64")
@@ -52,9 +46,9 @@ _RUTAS_PROHIBIDAS_HOME = tuple(
 
 
 def _ruta_segura(ruta, permitir_raiz=False):
-    """Portada de Rem.py — ver CLAUDE.md ("Seguridad de acciones del
-    sistema") para el razonamiento de cada chequeo. Solo la usa
-    buscar_archivos() acá, con permitir_raiz=True (es de solo lectura)."""
+    """Ver CLAUDE.md ("Seguridad de acciones del sistema") para el
+    razonamiento de cada chequeo. Solo la usa buscar_archivos() acá, con
+    permitir_raiz=True (es de solo lectura)."""
     ruta = os.path.realpath(os.path.expanduser(str(ruta)))
     if os.path.commonpath([ruta, _ZONA_SEGURA]) != _ZONA_SEGURA:
         return False, f"Solo puedo operar dentro de {_ZONA_SEGURA}."
@@ -70,10 +64,9 @@ def _ruta_segura(ruta, permitir_raiz=False):
 
 
 def _filtrar_rutas_seguras(rutas):
-    """Portada de Rem.py — glob.glob('**') puede encontrar coincidencias
-    dentro de ~/.ssh/~/.config/etc. igual si están debajo de la base
-    validada; hay que filtrar cada resultado, no solo la carpeta de
-    partida."""
+    """glob.glob('**') puede encontrar coincidencias dentro de
+    ~/.ssh/~/.config/etc. igual si están debajo de la base validada; hay que
+    filtrar cada resultado, no solo la carpeta de partida."""
     return [r for r in rutas if _ruta_segura(r, permitir_raiz=True)[0]]
 
 
@@ -102,9 +95,9 @@ def _rotar_memoria_sistema(memoria_sistema):
 
 
 def _registrar_archivo_sistema(memoria_sistema, nombre, ruta):
-    """Mismo filtro que tenía Rem.py: memoria_sistema persiste en disco y
-    buscar_archivos() la devuelve en respuestas futuras, así que una entrada
-    indebida acá quedaría expuesta hasta que se borre a mano — ver CLAUDE.md."""
+    """memoria_sistema persiste en disco y buscar_archivos() la devuelve en
+    respuestas futuras, así que una entrada indebida acá quedaría expuesta
+    hasta que se borre a mano — ver CLAUDE.md."""
     ok, _ = _ruta_segura(ruta, permitir_raiz=True)
     if not ok:
         return
@@ -121,11 +114,9 @@ def _buscar_en_memoria_sistema(memoria_sistema, nombre):
 
 
 # ── Herramienta 1: abrir_programa ────────────────────────────────────────
-# A diferencia del "abrir" viejo de Rem.py (que caía a xdg-open o a exec
-# directo con el string que mandara el LLM si no encontraba un atajo
-# configurado), esto SOLO resuelve contra .desktop realmente instalados —
-# nunca ejecuta un nombre arbitrario. Ambigüedad (0 o >1 coincidencias) se
-# reporta, no se adivina.
+# SOLO resuelve contra .desktop realmente instalados — nunca ejecuta un
+# nombre arbitrario (no cae a xdg-open ni a exec directo con el string que
+# mande el LLM). Ambigüedad (0 o >1 coincidencias) se reporta, no se adivina.
 _DIRS_DESKTOP = ("/usr/share/applications", os.path.expanduser("~/.local/share/applications"))
 _FIELD_CODES = re.compile(r"%[fFuUick%]")
 

@@ -1,6 +1,6 @@
 """
 Servidor para el avatar 3D de Rem.
-  - HTTP  en :18765 → sirve rem_avatar.html, rem.vrm y los clips de Animaciones/
+  - HTTP  en :18765 → sirve rem_avatar.html, los VRM de models/vrm/ y los clips de Animaciones/
   - WS    en :18766 → bidireccional: Python -> browser (estado/audio/chat_*),
                        y browser -> Python (chat_message/cambiar_modo/reset/voz/
                        estado, ver _ws_handler/chat_sesion.py)
@@ -135,6 +135,19 @@ def enviar_debug_clip(nombre: str) -> int:
     al sorteo aleatorio de updateGestos(). Devuelve a cuántos clientes llegó."""
     return _emitir_ws({"tipo": "debug_clip", "nombre": nombre},
                       f"debug_clip {nombre!r}")
+
+
+# Emoción de la respuesta (etiqueta [FELIZ] etc. al inicio, ver
+# chat_sesion.EMOCIONES): va aparte del estado (talking/thinking), que la
+# pisaría al instante. El avatar la usa para la cara y para el clip de esa
+# emoción (catálogo -> porEstado), con su propia duración.
+EMOCIONES_VALIDAS = {'happy', 'sad', 'angry', 'surprised'}
+
+
+def enviar_emocion(emocion: str) -> int:
+    """Pide al avatar que muestre una emoción (cara + clip). Devuelve a
+    cuántos avatares llegó."""
+    return _emitir_ws({"tipo": "emocion", "emocion": emocion}, f"emoción {emocion!r}")
 
 
 def _broadcast_ws(payload: dict, destino=DESTINO_CHAT) -> int:
@@ -414,7 +427,8 @@ async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None):
         await procesar_turno(sesion, texto, memoria_larga, memoria_sistema,
                               on_delta=_on_delta, cola_habla=cola_habla,
                               incluir_contexto=incluir_contexto, t_ref=t_ref,
-                              tools=tools, on_confirmar_accion=_pedir_confirmacion_accion)
+                              tools=tools, on_confirmar_accion=_pedir_confirmacion_accion,
+                              on_emocion=enviar_emocion)
         _broadcast_ws({"tipo": "chat_done"})
     except Exception as e:
         logger.exception("[Chat] error procesando turno")
@@ -753,6 +767,22 @@ async def _ws_handler(websocket):
 
             elif tipo == "prefs_get":
                 await _enviar_prefs_estado(websocket)
+
+            elif tipo == "modelos_get":
+                # Los VRM locales de models/vrm/ (selector de modelo de la
+                # ventana y del panel). Solo a quien pregunta.
+                import modelos_vrm
+                await websocket.send(json.dumps({
+                    "tipo": "modelos_lista", "modelos": await asyncio.to_thread(modelos_vrm.listar)}))
+
+            elif tipo == "emocion":
+                # Depuración (comando 'emocion <x>' de bench_chat.py): se
+                # re-difunde como 'estado'/'debug_clip'.
+                emo = str(data.get("emocion") or "").lower()
+                if emo in EMOCIONES_VALIDAS:
+                    enviar_emocion(emo)
+                else:
+                    _broadcast_ws({"tipo": "error", "mensaje": f"emoción inválida: {emo!r}"})
 
             elif tipo == "prefs_set":
                 await _aplicar_prefs(websocket, data.get("seccion"), data.get("cambios"),

@@ -38,7 +38,7 @@ def leer_config_toml(ruta: str = TOML_PATH) -> dict:
 def leer_modelo_avatar() -> str:
     """Ruta (relativa a la raíz del proyecto) del modelo VRM a cargar en el
     avatar: la preferencia del panel (preferencias.json -> modelo.vrm) o, si no
-    hay, config.toml [avatar].modelo (default "rem.vrm"). La sirve
+    hay, config.toml [avatar].modelo (default "models/vrm/neru.vrm"). La sirve
     rem_avatar_server.py (que sirve todo BASE_DIR) y la consume
     rem_avatar.html vía el query param ?modelo=... que arma
     rem_avatar_server.url_avatar()."""

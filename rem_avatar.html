@@ -304,6 +304,23 @@
   #chat-send:hover { filter: brightness(1.1); }
   #chat-send:active { transform: scale(0.94); }
   #chat-send:disabled { opacity: 0.4; cursor: default; }
+  .chat-btn-texto {
+    appearance: none; cursor: pointer;
+    background: rgba(255,255,255,0.03); color: #b9cbd6;
+    border: 1px solid rgba(43,232,255,0.22); border-radius: 999px;
+    font: inherit; font-size: 12px; font-weight: 600; letter-spacing: 0.03em;
+    padding: 5px 12px; transition: background .15s ease, color .15s ease, border-color .15s ease;
+  }
+  .chat-btn-texto:hover { color: #eaf6ff; border-color: #2be8ff; }
+  .chat-btn-texto.activo { background: #2be8ff; color: #04141a; border-color: #2be8ff;
+    box-shadow: 0 0 12px rgba(43,232,255,0.35); }
+  #chat-modelos { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px;
+    border-bottom: 1px solid rgba(43,232,255,0.25); background: rgba(10,4,26,0.96); }
+  #chat-modelos[hidden] { display: none; }
+  .modelo-item { text-align: left; padding: 6px 8px; border-radius: 6px; cursor: pointer;
+    background: transparent; color: #dfe9ff; border: 1px solid rgba(43,232,255,0.2); font: inherit; font-size: 13px; }
+  .modelo-item:hover { background: rgba(43,232,255,0.12); }
+  .modelo-item.activo { border-color: rgba(43,232,255,0.8); }
 </style>
 </head>
 <body>
@@ -333,8 +350,6 @@ import { VRMAnimationLoaderPlugin } from '/vendor/esm/@pixiv/three-vrm-animation
 //     movimiento de cabeza/cuello y respiración, con los brazos en una pose de
 //     reposo fija (CONFIG.brazos). Una caja de texto abajo es lo único que
 //     recibe el ratón. Ver CONFIG.overlay y crearOverlayUI().
-// (El viejo rem_overlay.py — otro proceso aparte — se eliminó; esto es el
-// mismo servidor, la misma página y el mismo pipeline de voz/LLM.)
 const MODO = new URLSearchParams(location.search).get('modo') === 'overlay' ? 'overlay' : 'ventana';
 const ES_OVERLAY = MODO === 'overlay';
 console.log(`[Modo] ${MODO}`);
@@ -423,7 +438,15 @@ const CONFIG = {
     // número de ciclos COMPLETOS que haga falta para llegar (el corte cae en
     // una frontera de ciclo). 8 s = la mediana de duración de los bailes.
     baileMinS: 8,
-    crossfadeS: 0.4,  // transición clip<->clip (nativa del mixer, AnimationAction.crossFadeTo)
+    // Transición clip<->clip: PUENTE DE POSE, no el crossFadeTo del mixer (ver
+    // _iniciarPuente). Se fotografía la pose visible, el clip nuevo entra a
+    // pleno peso y durante puenteS se hace slerp hueso por hueso desde la foto
+    // hacia él — la técnica de Nerumi (DEFAULT_VRMA_BLEND_SECONDS = 0,5 s),
+    // que la adoptó porque el crossfade nativo mezclaba mal la cadera.
+    puenteS: 0.5,
+    // Al dar la vuelta un clip en bucle, la unión casi nunca es perfecta:
+    // mismo puente, cortito (Nerumi: LOOP_WRAP_BLEND_SECONDS = 0,12 s).
+    puenteBucleS: 0.12,
     // Fundido procedural<->clip (el peso de mezcla, _clipPeso — ver
     // actualizarAnimacionClips). Con easing (easeInOutCubic), no lineal.
     // fadeIn: al entrar a un clip (procedural -> clip). Empieza a contar
@@ -497,6 +520,9 @@ const CONFIG = {
     //   velMin/velMax/velCambioS: solo 'bucle' — timeScale deriva lento entre
     //                             velMin y velMax, objetivo nuevo cada ~velCambioS s.
     idle: {
+      // false: la pose base mueve el cuerpo ENTERO (lo actual). true: del clip
+      // solo los brazos y el resto procedural (la mezcla vieja de mezclaBrazos).
+      soloBrazos: false,
       modo: 'poseFija',       // por defecto si poseBase no dice modo
       mezclaBrazos: 0.8,
       ampProcedural: 1.5,
@@ -549,128 +575,53 @@ const CONFIG = {
     cabezaFraccion: 0.3,         // 0..1 — cuánto de la mirada (grados, ya convertidos a rad) gira también la cabeza/cuello
     cabezaVelocidad: 6,          // lerp/s de la cabeza hacia la mirada — más alto = menos retardo respecto a los ojos
   },
-  // ── SELECCIÓN DE MODELO ──────────────────────────────────────────────
-  // rem_chat.py/bench_chat.py arman la URL con ?modelo=<ruta> (ver
-  // rem_avatar_server.url_avatar(), que lo lee de config.toml
-  // [avatar].modelo) — la clave acá es esa MISMA ruta, tal cual. El código
-  // de lipsync/expresiones ya NO asume ningún modelo concreto: todo lo que
-  // depende del archivo vive en el perfil de su entrada acá.
-  //
-  // lipsync.visemas: por cada uno de los 15 visemes canónicos que manda
-  // lipsync.py (timeline[].viseme, formato "vrc.v_*" — el nombre es una
-  // convención interna de este proyecto, no depende de que el modelo tenga
-  // morphs con ESE nombre literal), la lista de morphs REALES de este VRM a
-  // los que contribuye y con qué peso. La resolución es SIEMPRE por nombre
-  // contra morphTargetDictionary (ver localizarMallaFacial/aplicarViseme):
-  // nunca se escribe un índice a ciegas, y un nombre que no exista en el
-  // modelo queda logueado y sin efecto (no rompe nada). Un viseme con lista
-  // vacía es a propósito "sin morph" (p.ej. boca cerrada en silencio/bilabial
-  // en un modelo sin ese matiz) — no es lo mismo que un nombre no encontrado.
-  modelos: {
-    'rem.vrm': {
-      // Los 15 visemes VRChat/Oculus completos, 1:1. Igual que antes de esta
-      // refactor, PERO ya no por índice hardcodeado: con este loader
-      // (GLTFLoader + VRMLoaderPlugin@2/VRMUtils.removeUnnecessaryJoints),
-      // morphTargetDictionary en runtime NO conserva los nombres reales del
-      // glTF — degenera a claves numéricas en STRING ("0".."58" acá). Esto
-      // se creía específico de cómo se exportó rem.vrm (ver CLAUDE.md,
-      // "Cómo three.js construye morphTargetDictionary"), pero se confirmó
-      // en vivo que TAMBIÉN pasa con models/rem_naenae.vrm — un archivo que
-      // sí nombra sus targets en el glTF crudo — así que es un fenómeno del
-      // LOADER, no de cómo se exportó cada archivo. La resolución sigue
-      // siendo por nombre (se busca "4" como clave real en
-      // morphTargetDictionary, nunca se escribe un índice a ciegas); estas
-      // claves específicas se confirmaron leyendo el extras.targetNames
-      // crudo del glTF con dump_vrm.py y correlacionando con el orden que
-      // preserva la degeneración numérica (todas las primitives de un mismo
-      // mesh comparten el mismo orden, así que la posición sigue siendo
-      // válida pese a perder el nombre).
-      lipsync: {
-        visemas: {
-          'vrc.v_aa': [{ morph: '4',  peso: 1 }],
-          'vrc.v_ch': [{ morph: '5',  peso: 1 }],
-          'vrc.v_dd': [{ morph: '6',  peso: 1 }],
-          'vrc.v_e':  [{ morph: '7',  peso: 1 }],
-          'vrc.v_ff': [{ morph: '8',  peso: 1 }],
-          'vrc.v_ih': [{ morph: '9',  peso: 1 }],
-          'vrc.v_kk': [{ morph: '10', peso: 1 }],
-          'vrc.v_nn': [{ morph: '11', peso: 1 }],
-          'vrc.v_oh': [{ morph: '12', peso: 1 }],
-          'vrc.v_ou': [{ morph: '13', peso: 1 }],
-          'vrc.v_pp': [{ morph: '14', peso: 1 }],
-          'vrc.v_rr': [{ morph: '15', peso: 1 }],
-          'vrc.v_sil':[{ morph: '16', peso: 1 }],
-          'vrc.v_ss': [{ morph: '17', peso: 1 }],
-          'vrc.v_th': [{ morph: '18', peso: 1 }],
-        },
-      },
-      // "Surprised" bindea (entre otros) un morph de boca ("Huh") — se
-      // suprime mientras hay audio para que no compita con los visemes.
-      expresionesSuprimirHabla: ['surprised'],
-    },
-    'models/rem_naenae.vrm': {
-      // Solo 5 morphs reales de boca (vocales VRoid estándar Fcl_MTH_*), sin
-      // el set VRChat completo. El glTF crudo de este archivo SÍ nombra sus
-      // targets (extras.targetNames trae "Face.M_..._Fcl_MTH_A", etc. —
-      // confirmado por inspección directa) pero en runtime, con este loader
-      // (GLTFLoader + VRMLoaderPlugin@2/VRMUtils.removeUnnecessaryJoints),
-      // morphTargetDictionary NO conserva esos nombres: degenera a claves
-      // numéricas en STRING ("0".."40"), exactamente el mismo fenómeno que
-      // rem.vrm — confirmado en vivo en los DOS modelos, así que no es un
-      // problema de cómo se exportó este archivo en particular, es de esta
-      // versión del loader. Las 10 primitives de Facebaked comparten el
-      // mismo orden de targets, así que la clave numérica sigue siendo
-      // válida en las 10 por igual (mismo criterio que rem.vrm). Posiciones
-      // reales (dump directo del glTF): Fcl_MTH_A=29, I=30, U=31, E=32,
-      // O=33. Punto de partida pedido: sil/pp -> boca cerrada de verdad (sin
-      // morph), las 5 vocales 1:1, "ff" parcial sobre "ih", consonantes sin
-      // viseme propio aproximadas con peso bajo de ih/aa — todo ajustable
-      // acá sin tocar código. Verificado en vivo (Esteban, no con capturas
-      // fijas): el lipsync se ve bien, incluso mejor que en rem.vrm.
-      lipsync: {
-        visemas: {
-          'vrc.v_sil': [],
-          'vrc.v_pp':  [],
-          'vrc.v_aa':  [{ morph: '29', peso: 1 }],    // Fcl_MTH_A
-          'vrc.v_e':   [{ morph: '32', peso: 1 }],    // Fcl_MTH_E
-          'vrc.v_ih':  [{ morph: '30', peso: 1 }],    // Fcl_MTH_I
-          'vrc.v_oh':  [{ morph: '33', peso: 1 }],    // Fcl_MTH_O
-          'vrc.v_ou':  [{ morph: '31', peso: 1 }],    // Fcl_MTH_U
-          'vrc.v_ff':  [{ morph: '30', peso: 0.3 }],
-          'vrc.v_dd':  [{ morph: '30', peso: 0.2 }],
-          'vrc.v_nn':  [{ morph: '30', peso: 0.2 }],
-          'vrc.v_ss':  [{ morph: '30', peso: 0.3 }],
-          'vrc.v_th':  [{ morph: '30', peso: 0.2 }],
-          'vrc.v_kk':  [{ morph: '29', peso: 0.3 }],
-          'vrc.v_rr':  [{ morph: '30', peso: 0.25 }],
-          'vrc.v_ch':  [{ morph: '30', peso: 0.4 }],
-        },
-      },
-      // Los 5 blendShapeGroups de emoción de este modelo (Angry/Fun/Joy/
-      // Sorrow/Surprised) bindean cada uno un ÚNICO morph "Fcl_ALL_*" —
-      // convención VRoid para "expresión completa" (ceja+ojo+BOCA en un
-      // solo shape esculpido), a diferencia de rem.vrm donde solo Surprised
-      // competía con la boca. Se suprimen las 4 que puede alcanzar
-      // EXPR_PROFILES/updateExpressions (happy/sad/angry/surprised) mientras
-      // hay audio — mismo mecanismo que rem.vrm, más expresiones en la lista.
-      expresionesSuprimirHabla: ['happy', 'sad', 'angry', 'surprised'],
-    },
+  // Cara: cuánto de una expresión que se suprime al hablar (ver
+  // _expresionesSuprimirHabla) se conserva mientras suena la voz. 0 = se apaga
+  // del todo (lo probado: en VRoid las emociones son Fcl_ALL_*, cara completa
+  // CON boca, y pelean con los visemes).
+  expresiones: {
+    supresionHabla: 0,
+    emocionPeso: { happy: 0.9, sad: 0.85, angry: 0.8, surprised: 0.9 }, // cara de una emoción del chat
+    gestoPeso: 0.6,     // cara de un gesto de reposo con "expresion" en el catálogo
+    bailePeso: 0.45,    // happy suave mientras baila (el "vibing" de Nerumi)
   },
+  // ── MODELOS ──────────────────────────────────────────────────────────
+  // Los VRM viven en models/vrm/ (solo locales, nunca en git) y se cambian
+  // en caliente (botón 👤 del chat, /modelo, panel de control — ver
+  // cambiarModelo()). Todo lo que depende del archivo se AUTODETECTA al
+  // cargarlo, sin perfil a mano:
+  //   - VRM 0.x o 1.0 (vrm.meta.metaVersion): orientación de la escena y el
+  //     espejo de la pose procedural (ver _esVRM1).
+  //   - Lipsync: los binds de las expresiones aa/ih/ou/ee/oh dicen qué morph es
+  //     cada vocal (ver _resolverLipsyncPorVocales); sin ellas, expressionManager.
+  //   - Qué emociones apagar al hablar: las que tocan morphs de boca o de cara
+  //     completa (ver _detectarSupresionHabla).
+  //   - Encuadre: por huesos, como siempre.
+  // Solo si un modelo necesita algo distinto se le pone una entrada acá, con
+  // la MISMA ruta que usa config.toml/preferencias:
+  //   'models/vrm/x.vrm': {
+  //     lipsync: { visemas: { 'vrc.v_aa': [{ morph: '<clave real de morphTargetDictionary>', peso: 1 }], ... } },
+  //     expresionesSuprimirHabla: ['happy', ...],
+  //   }
+  modelos: {},
+  modeloPorDefecto: 'models/vrm/neru.vrm',
 };
 
 // ═══════════════════════════════════════════════════
 // SELECCIÓN DE MODELO — ver CONFIG.modelos más arriba
 // ═══════════════════════════════════════════════════
-// ?modelo=... lo arma rem_avatar_server.url_avatar() (Python) leyendo
-// config.toml [avatar].modelo — default "rem.vrm" si falta el param (abrir
-// la página a mano, sin query, sigue funcionando) o si el valor no tiene
-// perfil en CONFIG.modelos (typo en config.toml: mejor caer a algo que
-// funciona que a un modelo sin lipsync configurado).
-const MODELO_ACTIVO = new URLSearchParams(location.search).get('modelo') || 'rem.vrm';
-const PERFIL_MODELO = CONFIG.modelos[MODELO_ACTIVO] ?? (() => {
-  console.warn(`[Modelo] "${MODELO_ACTIVO}" no tiene perfil en CONFIG.modelos — usando el de "rem.vrm"`);
-  return CONFIG.modelos['rem.vrm'];
-})();
+// ?modelo=... lo arma rem_avatar_server.url_avatar() (Python) con la
+// preferencia del panel o config.toml [avatar].modelo. Es `let`: cambiarModelo()
+// lo reemplaza en caliente. _modeloGen sube con cada cambio e invalida todo lo
+// que estuviera cargando para el modelo anterior (el VRM y los clips).
+let MODELO_ACTIVO = new URLSearchParams(location.search).get('modelo') || CONFIG.modeloPorDefecto;
+let PERFIL_MODELO = CONFIG.modelos[MODELO_ACTIVO] ?? {};
+let _modeloGen = 0;
+// VRM 1.0 mira a +Z y VRM 0.x a -Z, y sus huesos normalizados tienen X/Z
+// espejados entre sí. Los clips VRMA ya lo resuelven (clipDeVrma); la pose
+// procedural está escrita en la convención de VRM 0.x y se espeja para 1.0
+// (ver _espejarHuesos).
+let _esVRM1 = false;
 console.log(`[Modelo] activo: "${MODELO_ACTIVO}"`);
 
 // ═══════════════════════════════════════════════════
@@ -1024,17 +975,31 @@ loader.register(p => new VRMAnimationLoaderPlugin(p));
 // resto de la sesión aunque el resto del pipeline (audio, lipsync, WS) siga
 // funcionando con normalidad. La causa raíz es un bug de WebKit, no algo que
 // se arregle acá — esto solo evita que un fallo transitorio sea permanente.
-const VRM_MAX_INTENTOS = 5;
+const VRM_MAX_INTENTOS = 8;
 
-function _cargarVRM(intento = 1) {
+function _cargarVRM(intento = 1, gen = _modeloGen) {
   const _t0Carga = performance.now();
-  loader.load('/' + MODELO_ACTIVO,
+  const ruta = MODELO_ACTIVO;
+  _cargandoModelo = true;
+  loader.load('/' + ruta.split('/').map(encodeURIComponent).join('/'),
     gltf => {
-      console.log(`[Modelo] "${MODELO_ACTIVO}" descargado+parseado en ${(performance.now() - _t0Carga).toFixed(0)}ms`);
+      if (gen !== _modeloGen) {
+        // Se pidió otro modelo mientras este cargaba: se tira sin montarlo.
+        console.log(`[Modelo] "${ruta}" llegó tarde (ya se pidió otro) — descartado`);
+        VRMUtils.deepDispose(gltf.scene);
+        return;
+      }
+      _cargandoModelo = false;
+      console.log(`[Modelo] "${ruta}" descargado+parseado en ${(performance.now() - _t0Carga).toFixed(0)}ms`);
       vrm = gltf.userData.vrm;
       window.__rem.vrm = vrm;
       VRMUtils.removeUnnecessaryJoints(vrm.scene);
-      vrm.scene.rotation.y = Math.PI;
+      // VRM 0.x mira a -Z: se gira 180° para que mire a la cámara (+Z). VRM 1.0
+      // ya mira a +Z. Ver _esVRM1.
+      _esVRM1 = vrm.meta?.metaVersion !== '0';
+      vrm.scene.rotation.y = _esVRM1 ? 0 : Math.PI;
+      console.log(`[Modelo] VRM ${_esVRM1 ? '1.0' : '0.x'} — "${vrm.meta?.name ?? vrm.meta?.title ?? '?'}"`
+                + ` de ${vrm.meta?.authors?.join(', ') ?? vrm.meta?.author ?? '?'}`);
       vrm.scene.scale.set(1, 1, 1);
       vrm.scene.position.set(0, 0, 0); // posición neutra: medir la caja sin offsets propios
       // Un clip VRMA puede sacar un miembro fuera del bounding box con el que se
@@ -1042,12 +1007,11 @@ function _cargarVRM(intento = 1) {
       // a mitad de animación (está en el ejemplo oficial de three-vrm-animation).
       vrm.scene.traverse(o => { o.frustumCulled = false; });
       scene.add(vrm.scene);
-      if (ES_OVERLAY) {
-        // Oculto hasta el primer frame ya posado y medido (ver animate()): el
-        // VRM nace en T-pose y sobre un fondo transparente ese frame se vería
-        // (y con el encuadre provisorio de cuerpo entero, mal recortado).
-        vrm.scene.visible = false;
-      } else {
+      // Oculto hasta el primer frame ya posado y medido (ver animate()): el VRM
+      // nace en T-pose, y con el encuadre provisorio (Box3) ese frame se vería
+      // mal — sobre todo en overlay (fondo transparente) y al cambiar de modelo.
+      vrm.scene.visible = false;
+      if (!ES_OVERLAY) {
         inicializarAnimacionClips(); // mixer + lista de huesos normalizados para la mezcla
         _catalogoListo.then(precargarClipsFijos); // clips de estado/pose base, sin bloquear el render
       }
@@ -1133,20 +1097,108 @@ function _cargarVRM(intento = 1) {
         }
       }
       _exprMap = buildExprMap(names);
-      localizarMallaFacial();
+      localizarMallaFacial(gltf);
+      _alMontarModelo();
     },
-    xhr => console.log('[VRM] cargando', Math.round(xhr.loaded / xhr.total * 100) + '%'),
+    xhr => { if (xhr.total) console.log('[VRM] cargando', Math.round(xhr.loaded / xhr.total * 100) + '%'); },
     err => {
+      if (gen !== _modeloGen) return;   // ya se pidió otro modelo
       console.error(`[VRM] error (intento ${intento}/${VRM_MAX_INTENTOS}):`, err);
       if (intento < VRM_MAX_INTENTOS) {
-        const espera = Math.min(500 * (2 ** intento), 5000);
+        const espera = Math.min(500 * (2 ** intento), 8000);
         console.warn(`[VRM] reintentando en ${espera}ms...`);
-        setTimeout(() => _cargarVRM(intento + 1), espera);
+        setTimeout(() => { if (gen === _modeloGen) _cargarVRM(intento + 1, gen); }, espera);
       } else {
-        console.error(`[VRM] no se pudo cargar tras ${VRM_MAX_INTENTOS} intentos — el avatar queda invisible por el resto de la sesión.`);
+        _cargandoModelo = false;
+        console.error(`[VRM] no se pudo cargar "${ruta}" tras ${VRM_MAX_INTENTOS} intentos — el avatar queda invisible hasta elegir otro modelo.`);
+        window.__remChat?.onSistema?.(`⚠ No se pudo cargar el modelo ${ruta}.`);
       }
     }
   );
+}
+
+// ═══════════════════════════════════════════════════
+// CAMBIO DE MODELO EN CALIENTE
+// ═══════════════════════════════════════════════════
+// Se pide desde el chat (botón 👤, /modelo) o el panel de control: los dos
+// mandan prefs_set {modelo: {vrm}} y el servidor difunde prefs_actualizadas,
+// que llega acá (ver WEBSOCKET). La elección queda guardada en
+// preferencias.json. Si Rem está hablando, espera a que termine.
+let _cargandoModelo = false;
+let _modeloCambioPendiente = null;
+
+function cambiarModelo(ruta) {
+  if (!ruta) return;
+  if (ruta === MODELO_ACTIVO && (vrm || _cargandoModelo)) { _modeloCambioPendiente = null; return; }
+  if (hayVozSonando()) {
+    if (_modeloCambioPendiente !== ruta) console.log(`[Modelo] cambio a "${ruta}" en espera: está hablando`);
+    _modeloCambioPendiente = ruta;
+    return;
+  }
+  _modeloCambioPendiente = null;
+  console.log(`[Modelo] cambiando "${MODELO_ACTIVO}" -> "${ruta}"`);
+  _modeloGen++;            // invalida cualquier carga en vuelo del modelo anterior
+  desmontarModelo();
+  MODELO_ACTIVO = ruta;
+  PERFIL_MODELO = CONFIG.modelos[ruta] ?? {};
+  _cargarVRM(1, _modeloGen);
+}
+
+function _memoriaRender() {
+  const m = renderer.info.memory;
+  return `geometrías=${m.geometries} texturas=${m.textures}`;
+}
+window.__rem.memoria = _memoriaRender;
+
+// Suelta TODO lo del modelo anterior: acciones y bindings del mixer, la escena
+// (geometrías, materiales MToon y sus texturas: VRMUtils.deepDispose), las
+// listas de render, y el estado del módulo que apuntaba a sus huesos/mallas.
+// No hay VRMLookAtQuaternionProxy que limpiar: no se usa createVRMAnimationClip.
+// Los clips VRMA parseados se conservan (son del rig, no del modelo): su
+// AnimationClip se reconstruye para el modelo nuevo (ver _clipParaModelo).
+function desmontarModelo() {
+  ++_tokenClip;
+  _reiniciarDirector();
+  if (!vrm) return;
+  const antes = _memoriaRender();
+  if (_mixer) {
+    _mixer.stopAllAction();
+    _mixer.uncacheRoot(vrm.scene);
+    for (const e of _clipCache.values()) if (e.clip) _mixer.uncacheClip(e.clip);
+    _mixer = null;
+  }
+  for (const e of _clipCache.values()) { e.clip = null; e.gen = -1; }
+  _accionActual = _accionAnterior = null;
+  _clipPeso = _clipPesoObjetivo = 0;
+  _clipTopeTimer = null;
+  _puente = null;
+  scene.remove(vrm.scene);
+  VRMUtils.deepDispose(vrm.scene);
+  renderer.renderLists.dispose();
+  vrm = null;
+  window.__rem.vrm = null;
+  _huesosNorm.length = 0;
+  _hipsNode = null;
+  _visemeSlots = {};
+  _visemeSlotsUnicos = [];
+  _viaLipsync = 'expressionManager';
+  _exprMap = {};
+  _expresionesSuprimirHabla = new Set();
+  for (const k of Object.keys(curExpr)) curExpr[k] = 0;
+  _modeloAlturaLocal = 1.5; _modeloCentroLocal = 0.75; _modeloAnchoLocal = 0;
+  _medirHuesosPendiente = false;
+  console.log(`[Modelo] desmontado — memoria de render: antes ${antes} | después ${_memoriaRender()}`);
+}
+
+// Recién montado (primera carga o cambio): saludo y aviso al chat.
+function _alMontarModelo() {
+  console.log(`[Modelo] montado — memoria de render: ${_memoriaRender()}`);
+  _saludoPendiente = !ES_OVERLAY;
+  // La pose base arranca ya (no espera a un cambio de estado).
+  _catalogoListo.then(() => { if (_mixer && vrm) sincronizarClipConEstado(); });
+  const titulo = vrm.meta?.name ?? vrm.meta?.title ?? MODELO_ACTIVO.split('/').pop();
+  const autor = vrm.meta?.authors?.join(', ') ?? vrm.meta?.author ?? null;
+  window.__remChat?.onModeloCargado?.(MODELO_ACTIVO, titulo, autor);
 }
 
 _cargarVRM();
@@ -1161,9 +1213,11 @@ const _exprCandidates = {
   happy:     ['happy', 'joy', 'blendshape.joy', 'preset.happy'],
   sad:       ['sad', 'sorrow', 'blendshape.sorrow', 'preset.sad'],
   angry:     ['angry', 'blendshape.angry', 'preset.angry'],
-  // En rem.vrm esta expresión no tiene presetName estándar (VRM 0.x, presetName='unknown'),
-  // three-vrm la expone por su nombre literal: 'Surprised' con mayúscula.
+  // En los VRM 0.x de VRoid esta expresión no tiene presetName estándar
+  // (presetName='unknown'): three-vrm la expone por su nombre literal, 'Surprised'.
   surprised: ['surprised', 'Surprised', 'blendshape.surprised', 'preset.surprised'],
+  // VRM 0.x "Fun" = VRM 1.0 "relaxed" (three-vrm ya traduce el preset).
+  relaxed:   ['relaxed', 'fun', 'blendshape.fun', 'preset.relaxed'],
   blink:     ['blink', 'blendshape.blink', 'blinkleft', 'blinkl'],
   // Presets estándar de VRM para los 5 visemes (vocales) — usados solo como
   // fallback vía expressionManager cuando el modelo no expone morph targets
@@ -1197,29 +1251,45 @@ function trySetExpr(key, value) {
 // ═══════════════════════════════════════════════════
 // SISTEMA DE EXPRESIONES EMOCIONALES
 // ═══════════════════════════════════════════════════
+// Claves que faltan en un perfil valen 0.
 const EXPR_PROFILES = {
-  idle:      { happy: 0.0, sad: 0.0, angry: 0.0, surprised: 0.0 },
-  talking:   { happy: 0.3, sad: 0.0, angry: 0.0, surprised: 0.0 },
-  thinking:  { happy: 0.0, sad: 0.1, angry: 0.0, surprised: 0.0 },
-  happy:     { happy: 1.0, sad: 0.0, angry: 0.0, surprised: 0.1 },
-  sad:       { happy: 0.0, sad: 0.9, angry: 0.0, surprised: 0.0 },
-  angry:     { happy: 0.0, sad: 0.0, angry: 0.8, surprised: 0.0 },
-  surprised: { happy: 0.1, sad: 0.0, angry: 0.0, surprised: 1.0 },
+  idle:      {},
+  talking:   { happy: 0.3 },
+  thinking:  { sad: 0.1 },
+  listening: { relaxed: 0.25 },   // escuchando el push-to-talk: atenta, amable
+  happy:     { happy: 1.0, surprised: 0.1 },
+  sad:       { sad: 0.9 },
+  angry:     { angry: 0.8 },
+  surprised: { happy: 0.1, surprised: 1.0 },
 };
-const curExpr = { happy: 0, sad: 0, angry: 0, surprised: 0 };
+const EXPR_CLAVES = ['happy', 'sad', 'angry', 'surprised', 'relaxed'];
+const curExpr = { happy: 0, sad: 0, angry: 0, surprised: 0, relaxed: 0 };
 
-// Qué expresiones (claves de EXPR_PROFILES/_exprMap) bindean morphs de boca
-// en ESTE modelo y hay que suprimir mientras hay audio, para que no compitan
-// con los visemes — ver CONFIG.modelos[...].expresionesSuprimirHabla. Un
-// Set, no el array crudo, para el chequeo por frame de abajo.
-const _expresionesSuprimirHabla = new Set(PERFIL_MODELO.expresionesSuprimirHabla ?? []);
+// Qué expresiones bindean morphs de boca en ESTE modelo y hay que suprimir
+// mientras hay audio, para que no compitan con los visemes. Lo calcula
+// _detectarSupresionHabla() al cargar (o lo fija el perfil del modelo).
+let _expresionesSuprimirHabla = new Set();
+
+// La cara de este frame: la del estado, y encima (por máximo, no suma) la
+// emoción del chat si hay una viva, o si no la del gesto de reposo en curso
+// (campo "expresion" del catálogo / estilo procedural), o el happy suave del
+// baile. Sin emoción ni gesto, solo la del estado.
+function _caraObjetivo() {
+  const obj = { ...(EXPR_PROFILES[estado] ?? EXPR_PROFILES.idle) };
+  const encima = cara => { for (const [k, v] of Object.entries(cara)) obj[k] = Math.max(obj[k] ?? 0, v); };
+  const E = CONFIG.expresiones;
+  if (_emocion) encima({ [_emocion.nombre]: E.emocionPeso[_emocion.nombre] ?? 0.8 });
+  else if (_caraGesto && estado === 'idle') encima(_caraGesto);
+  else if (_bailando) encima({ happy: E.bailePeso });
+  return obj;
+}
 
 function updateExpressions(dt) {
-  const profile = EXPR_PROFILES[estado] ?? EXPR_PROFILES.idle;
-  const suprimirBocaExpr = _audioActivo;
-  for (const [k, target] of Object.entries(profile)) {
-    curExpr[k] = lerp(curExpr[k], target, dt * 2.5);
-    trySetExpr(k, (suprimirBocaExpr && _expresionesSuprimirHabla.has(k)) ? 0 : curExpr[k]);
+  const obj = _caraObjetivo();
+  const f = _audioActivo ? CONFIG.expresiones.supresionHabla : 1;
+  for (const k of EXPR_CLAVES) {
+    curExpr[k] = lerp(curExpr[k], obj[k] ?? 0, dt * 2.5);
+    trySetExpr(k, _expresionesSuprimirHabla.has(k) ? curExpr[k] * f : curExpr[k]);
   }
 }
 
@@ -1378,114 +1448,138 @@ function actualizarHablaEnergia(dt) {
   _hablaEnergia = lerp(_hablaEnergia, objetivo, dt * 8);
 }
 
-// Dos vías de lipsync, en orden de preferencia:
-//   'directo'           — resuelve PERFIL_MODELO.lipsync.visemas contra
-//                         morphTargetDictionary (por NOMBRE, nunca por índice
-//                         fijo) y escribe morphTargetInfluences. Cubre tanto
-//                         un modelo con los 15 visemes completos (rem.vrm)
-//                         como uno con un set reducido (el modelo nuevo).
-//   'expressionManager' — último recurso, si el perfil del modelo no resolvió
-//                         NINGÚN morph real: 5 presets estándar de VRM
-//                         (aa/ee/ih/oh/ou) vía setValue().
+// Tres vías de lipsync, en orden de preferencia:
+//   'directo' (perfil)  — CONFIG.modelos[ruta].lipsync.visemas, resuelto por
+//                         NOMBRE contra morphTargetDictionary. Solo si el
+//                         modelo tiene perfil a mano.
+//   'directo' (vocales) — AUTODETECTADO: los binds de las expresiones
+//                         aa/ih/ou/ee/oh dicen qué (malla, índice de morph) es
+//                         cada vocal; las consonantes se aproximan con
+//                         _VISEMAS_POR_VOCAL. Sin depender del nombre del morph
+//                         (que este loader degenera a "0".."N", ver CLAUDE.md).
+//                         Es la vía de los VRM de VRoid (Fcl_MTH_A..O).
+//   'expressionManager' — último recurso: los 5 presets vía setValue().
 let _viaLipsync = 'expressionManager';
 const VRM_VISEME_KEYS = ['aa', 'ee', 'ih', 'oh', 'ou'];
 
-function localizarMallaFacial() {
-  _visemeSlots = {};
-  for (const nombre of VISEME_NAMES) _visemeSlots[nombre] = [];
+// Viseme canónico -> [vocal, peso]. sil/pp = boca cerrada de verdad (sin
+// morph). Es la tabla que se afinó a ojo con un modelo VRoid (solo vocales):
+// las 5 vocales 1:1 y las consonantes como un poco de "i" o "a".
+const _VISEMAS_POR_VOCAL = {
+  'vrc.v_sil': [], 'vrc.v_pp': [],
+  'vrc.v_aa': [['aa', 1]], 'vrc.v_e': [['ee', 1]], 'vrc.v_ih': [['ih', 1]],
+  'vrc.v_oh': [['oh', 1]], 'vrc.v_ou': [['ou', 1]],
+  'vrc.v_ff': [['ih', 0.3]], 'vrc.v_dd': [['ih', 0.2]], 'vrc.v_nn': [['ih', 0.2]],
+  'vrc.v_ss': [['ih', 0.3]], 'vrc.v_th': [['ih', 0.2]], 'vrc.v_kk': [['aa', 0.3]],
+  'vrc.v_rr': [['ih', 0.25]], 'vrc.v_ch': [['ih', 0.4]],
+};
 
-  let mallasConDiccionario = 0;
-  let mallasSinDiccionario = 0;
-  const clavesUnicas = new Set();   // diagnóstico: unión de TODAS las claves reales vistas
-  const mallasGrandes = [];         // diagnóstico: mallas con > 40 claves (candidatas a "la" malla facial)
-  // nombre real de morph (tal cual aparece en morphTargetDictionary) -> [{mesh, idx}, ...]
-  // — varias mallas (primitives de un mismo mesh baked) pueden compartir la
-  // misma clave, hay que escribir en todas o la cara se movería a trozos.
-  const todosLosMorphsPorNombre = {};
+// Binds de morph de una expresión (clave lógica de _exprMap):
+// [{mesh, idx, peso}] — una entrada por primitive (las mallas "baked" de VRoid
+// se cargan como varios Mesh que comparten geometría: hay que escribir en todos).
+function _bindsDeExpresion(clave) {
+  const nombre = _exprMap[clave];
+  const expr = nombre ? vrm.expressionManager?.getExpression(nombre) : null;
+  const res = [];
+  for (const b of expr?._binds ?? []) {
+    if (!b.primitives || b.index == null) continue;   // bind de material/textura, no de morph
+    for (const mesh of b.primitives) res.push({ mesh, idx: b.index, peso: Math.min(1, b.weight ?? 1) });
+  }
+  return res;
+}
 
-  vrm.scene.traverse(obj => {
-    if (!obj.isMesh) return;
+function _agregarSlot(nombre, mesh, idx, peso, vistos) {
+  _visemeSlots[nombre].push({ mesh, idx, peso });
+  const clave = mesh.uuid + ':' + idx;
+  if (!vistos.has(clave)) { vistos.add(clave); _visemeSlotsUnicos.push({ mesh, idx }); }
+}
 
-    const morphCount = obj.geometry?.morphAttributes?.position?.length ?? 0;
-
-    if (!obj.morphTargetDictionary) {
-      if (morphCount > 0) {
-        // GLTFLoader solo construye morphTargetDictionary si
-        // mesh.morphTargetInfluences.length === extras.targetNames.length.
-        // Si este primitive trae una cantidad de morph attributes distinta a
-        // la de targetNames (común cuando el exportador reparte los morphs
-        // de forma desigual entre primitives), el diccionario NUNCA se crea
-        // — sin importar el nombre. Buscá en la consola el warning
-        // "THREE.GLTFLoader: Invalid extras.targetNames length" para confirmarlo.
-        mallasSinDiccionario++;
-        console.warn(`[Lipsync] malla "${obj.name}": ${morphCount} morph attributes en la geometría` +
-          ` pero SIN morphTargetDictionary (mismatch de longitud con extras.targetNames — ver warning de GLTFLoader arriba)`);
-      }
-      return;
+function _resolverLipsyncPorVocales() {
+  const porVocal = {};
+  for (const v of VRM_VISEME_KEYS) porVocal[v] = _bindsDeExpresion(v);
+  const conBinds = VRM_VISEME_KEYS.filter(v => porVocal[v].length);
+  if (conBinds.length < 3) return 0;   // muy pocas vocales con morph propio: mejor expressionManager
+  const vistos = new Set();
+  for (const nombre of VISEME_NAMES) {
+    for (const [vocal, peso] of _VISEMAS_POR_VOCAL[nombre] ?? []) {
+      for (const b of porVocal[vocal]) _agregarSlot(nombre, b.mesh, b.idx, peso * b.peso, vistos);
     }
+  }
+  console.log(`[Lipsync] vocales autodetectadas por binds: ${conBinds.join(', ')}`
+            + (conBinds.length < 5 ? ` (faltan: ${VRM_VISEME_KEYS.filter(v => !conBinds.includes(v)).join(', ')})` : ''));
+  return VISEME_NAMES.filter(n => _visemeSlots[n].length).length;
+}
 
-    mallasConDiccionario++;
-    const claves = Object.keys(obj.morphTargetDictionary);
-    console.log(`[Lipsync] malla "${obj.name}" — ${claves.length} morph targets:`, claves.join(', '));
-    for (const c of claves) clavesUnicas.add(c);
-    if (claves.length > 40) mallasGrandes.push(obj.name);
-
-    for (const clave of claves) {
-      (todosLosMorphsPorNombre[clave] ??= []).push({ mesh: obj, idx: obj.morphTargetDictionary[clave] });
+function _resolverLipsyncPorPerfil(tabla) {
+  const todosLosMorphsPorNombre = {};
+  vrm.scene.traverse(obj => {
+    if (!obj.isMesh || !obj.morphTargetDictionary) return;
+    for (const [clave, idx] of Object.entries(obj.morphTargetDictionary)) {
+      (todosLosMorphsPorNombre[clave] ??= []).push({ mesh: obj, idx });
     }
   });
-
-  console.log(`[Lipsync][diag] claves únicas en los ${mallasConDiccionario} diccionarios `
-            + `(${clavesUnicas.size} distintas):`, [...clavesUnicas].sort());
-  console.log('[Lipsync][diag] mallas con más de 40 claves:', mallasGrandes);
-
-  // Resolver PERFIL_MODELO.lipsync.visemas contra lo que realmente existe en
-  // este archivo. Nunca se escribe a ciegas: un morph declarado que no
-  // aparece en NINGÚN diccionario queda logueado y sin efecto.
-  const tabla = PERFIL_MODELO.lipsync?.visemas ?? {};
-  const morphsNoEncontrados = [];
-  const visemesSinDeclarar = [];
-  const _visemeSlotsUnicosSet = new Set(); // dedupe por mesh+idx (mesh.uuid+':'+idx)
-
+  const vistos = new Set();
+  const noEncontrados = [];
   for (const nombre of VISEME_NAMES) {
-    const entradas = tabla[nombre];
-    if (entradas === undefined) { visemesSinDeclarar.push(nombre); continue; }
-    for (const { morph, peso } of entradas) {
-      const encontrados = todosLosMorphsPorNombre[morph];
-      if (!encontrados || encontrados.length === 0) {
-        morphsNoEncontrados.push(`${nombre} -> "${morph}"`);
-        continue;
-      }
-      for (const { mesh, idx } of encontrados) {
-        _visemeSlots[nombre].push({ mesh, idx, peso });
-        const clave = mesh.uuid + ':' + idx;
-        if (!_visemeSlotsUnicosSet.has(clave)) {
-          _visemeSlotsUnicosSet.add(clave);
-          _visemeSlotsUnicos.push({ mesh, idx });
-        }
-      }
+    for (const { morph, peso } of tabla[nombre] ?? []) {
+      const hits = todosLosMorphsPorNombre[morph];
+      if (!hits?.length) { noEncontrados.push(`${nombre} -> "${morph}"`); continue; }
+      for (const { mesh, idx } of hits) _agregarSlot(nombre, mesh, idx, peso, vistos);
     }
   }
+  if (noEncontrados.length) console.warn(`[Lipsync] morphs del perfil que NO existen en este VRM: ${noEncontrados.join(', ')}`);
+  return VISEME_NAMES.filter(n => _visemeSlots[n].length).length;
+}
 
-  const resueltos = VISEME_NAMES.filter(n => _visemeSlots[n].length > 0);
-  console.log(`[Lipsync] perfil "${MODELO_ACTIVO}": ${resueltos.length}/${VISEME_NAMES.length} `
-            + `visemes resueltos por nombre, ${_visemeSlotsUnicos.length} slot(s) de morph únicos ->`, resueltos);
-  if (visemesSinDeclarar.length) {
-    console.log(`[Lipsync] visemes sin declarar en el perfil (se quedan en 0 siempre): ${visemesSinDeclarar.join(', ')}`);
-  }
-  if (morphsNoEncontrados.length) {
-    console.warn(`[Lipsync] morphs del perfil que NO existen en este VRM (sin efecto): ${morphsNoEncontrados.join(', ')}`);
-  }
+// Nombres crudos de los morphs (extras.targetNames del glTF) de un Mesh de
+// three, vía parser.associations — el diccionario de three no los conserva.
+function _nombresMorph(gltf, mesh) {
+  try {
+    const a = gltf?.parser?.associations?.get(mesh);
+    const m = a != null ? gltf.parser.json.meshes?.[a.meshes] : null;
+    if (!m) return null;
+    return m.extras?.targetNames ?? m.primitives?.[a.primitives ?? 0]?.extras?.targetNames ?? null;
+  } catch { return null; }
+}
 
-  _viaLipsync = resueltos.length > 0 ? 'directo' : 'expressionManager';
-  if (_viaLipsync === 'expressionManager') {
-    console.warn(`[Lipsync] VÍA ACTIVA: fallback a vrm.expressionManager (aa/ee/ih/oh/ou) — `
-               + `el perfil de "${MODELO_ACTIVO}" no resolvió ningún morph real.`,
-               'expressionManager expone:', vrm.expressionManager?.expressions?.map(e => e.expressionName) ?? []);
+// Emociones que se apagan mientras habla: las que mueven la boca. Por nombre
+// del morph cuando se puede leer (MTH = boca, ALL = cara completa en VRoid,
+// vrc.v_* = visemes); si no, las que comparten malla con las vocales.
+function _detectarSupresionHabla(gltf) {
+  if (PERFIL_MODELO.expresionesSuprimirHabla) return new Set(PERFIL_MODELO.expresionesSuprimirHabla);
+  const mallasBoca = new Set(VRM_VISEME_KEYS.flatMap(v => _bindsDeExpresion(v).map(b => b.mesh)));
+  const res = new Set();
+  for (const clave of ['happy', 'sad', 'angry', 'surprised', 'relaxed']) {
+    for (const b of _bindsDeExpresion(clave)) {
+      const nombres = _nombresMorph(gltf, b.mesh);
+      const n = nombres?.[b.idx];
+      if (n != null ? /MTH|_ALL_|mouth|vrc\.v_/i.test(n) : mallasBoca.has(b.mesh)) { res.add(clave); break; }
+    }
+  }
+  return res;
+}
+
+function localizarMallaFacial(gltf) {
+  _visemeSlots = {};
+  _visemeSlotsUnicos = [];
+  for (const nombre of VISEME_NAMES) _visemeSlots[nombre] = [];
+
+  let resueltos = 0, via = '';
+  if (PERFIL_MODELO.lipsync?.visemas) {
+    resueltos = _resolverLipsyncPorPerfil(PERFIL_MODELO.lipsync.visemas);
+    via = 'perfil';
+  }
+  if (!resueltos) { resueltos = _resolverLipsyncPorVocales(); via = 'vocales'; }
+  _viaLipsync = resueltos > 0 ? 'directo' : 'expressionManager';
+  if (_viaLipsync === 'directo') {
+    console.log(`[Lipsync] VÍA ACTIVA: directo (${via}) — ${resueltos}/${VISEME_NAMES.length} visemes, `
+              + `${_visemeSlotsUnicos.length} slot(s) de morph`);
   } else {
-    console.log(`[Lipsync] VÍA ACTIVA: directo (por nombre) — ${resueltos.length}/${VISEME_NAMES.length} visemes`);
+    console.warn('[Lipsync] VÍA ACTIVA: expressionManager (aa/ee/ih/oh/ou) — sin binds de vocales usables');
   }
 
+  _expresionesSuprimirHabla = _detectarSupresionHabla(gltf);
+  console.log('[Lipsync] emociones que se apagan al hablar:', [..._expresionesSuprimirHabla].join(', ') || 'ninguna');
   diagnosticarExpressionBinds();
 }
 
@@ -1695,6 +1789,7 @@ const SPRING_CFG = {
   idle:      [18, 5.5, 14, 4.5],
   talking:   [20, 5.0, 16, 4.0],
   thinking:  [14, 6.0, 10, 5.0],
+  listening: [16, 6.0, 12, 5.0],
   happy:     [22, 4.5, 18, 3.5],
   sad:       [10, 7.0,  8, 6.0],
   angry:     [26, 3.0, 22, 2.8], // menos damping = más brusco
@@ -1725,7 +1820,7 @@ const estadoCorporal = () => ES_OVERLAY ? 'idle' : estado;
 // lo que hacía ver a Rem como un robot.
 function getStatePose(t) {
   // Velocidades de animación por estado
-  const SPEEDS = { idle:1.0, talking:1.8, thinking:0.5, happy:1.5, sad:0.4, angry:1.3, surprised:2.0 };
+  const SPEEDS = { idle:1.0, talking:1.8, thinking:0.5, listening:0.7, happy:1.5, sad:0.4, angry:1.3, surprised:2.0 };
   const est = estadoCorporal();
   const sp = SPEEDS[est] ?? 1.0;
   const ts = t * sp; // tiempo escalado por emoción
@@ -1799,6 +1894,22 @@ function getStatePose(t) {
         ruX:  0.35 + ruido(60, 0.035, ts) * 0.02, // codo adelantado, no solo el hombro
         luX: S.balanceoDelante,
         rlX: -0.95 + ruido(65, 0.03, ts) * 0.03,  // codo bien flexionado — la mano llega a la cara
+      };
+    }
+
+    case 'listening': {
+      // Escuchando el push-to-talk (estado local, ver WEBSOCKET/ptt_estado):
+      // cabeza ladeada hacia la cámara y un poco adelante, torso inclinado
+      // hacia el que habla, brazos quietos. Movimiento lento y contenido.
+      const S = CONFIG.brazos;
+      return {
+        hX:  0.06 + ruido(10, 0.10, ts) * 0.012,
+        hY:  ruido(20, 0.08, ts) * 0.015,
+        hZ:  0.13 + ruido(30, 0.09, ts) * 0.012,
+        bZ:  ruido(40, 0.06, ts) * 0.005,
+        bX:  0.035 + breath * 0.8,
+        ruZ: -S.separacion, luZ: S.separacion,
+        ruX:  S.balanceoDelante, luX: S.balanceoDelante,
       };
     }
 
@@ -2128,7 +2239,38 @@ function aplicarCurvaturaDedos(t) {
 // activo, y como fuente de la mezcla durante un crossfade procedural<->clip
 // (ver "ANIMACIÓN POR CLIPS VRMA" abajo). Lógica sin cambios respecto de
 // cuando era inline. Escribe .rotation en los huesos normalizados.
+// ── ESPEJO VRM 1.0 ────────────────────────────────────────────────────
+// Todo lo procedural (poses, springs, dedos, traslado de peso, respiración y
+// cabeza encima del clip) está escrito en la convención de ejes de VRM 0.x:
+// ahí los huesos normalizados tienen X/Z al revés que en VRM 1.0 (el modelo
+// mira a -Z). Pasar una rotación de una convención a la otra es conjugarla
+// por un giro de 180° en Y, o sea negar x y z del cuaternión (lo mismo que
+// clipDeVrma hace con las pistas de un VRMA). Se espeja ANTES de escribir
+// (la pose actual pasa a convención 0.x, así los ejes que el código no toca
+// quedan coherentes) y DESPUÉS (vuelta a 1.0). En VRM 0.x no hace nada.
+const _HUESOS_PROC = [
+  'hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
+  'leftShoulder', 'rightShoulder', 'leftUpperArm', 'rightUpperArm', 'leftLowerArm', 'rightLowerArm',
+  ...['left', 'right'].flatMap(l => ['Thumb', 'Index', 'Middle', 'Ring', 'Little']
+    .flatMap(d => ['Proximal', 'Intermediate', 'Distal'].map(f => `${l}${d}${f}`))),
+];
+let _nodosProc = [], _nodosProcGen = -1;
+function _espejarHuesos() {
+  if (!_esVRM1 || !vrm) return;
+  if (_nodosProcGen !== _modeloGen) {
+    _nodosProc = _HUESOS_PROC.map(getB).filter(Boolean);
+    _nodosProcGen = _modeloGen;
+  }
+  for (const b of _nodosProc) { const q = b.quaternion; q.set(-q.x, q.y, -q.z, q.w); }
+}
+
 function aplicarCuerpoProcedural(t, dt) {
+  _espejarHuesos();
+  _aplicarCuerpoProcedural(t, dt);
+  _espejarHuesos();
+}
+
+function _aplicarCuerpoProcedural(t, dt) {
   const pose = getStatePose(t);
 
   // Cabeza: pose base + drift de updateLook() + "sigue la mirada" (fracción
@@ -2236,17 +2378,21 @@ function aplicarCuerpoProcedural(t, dt) {
 // expresión/mirada que traiga el .vrma (pelean con el lipsync por índice y el
 // parpadeo, que ya funcionan). Respiración, parpadeo, saccades, mirada a
 // cámara y jaw se aplican SIEMPRE encima del mixer, también durante un clip.
-// Toda transición (procedural<->clip, clip<->clip) va con crossfade
-// (CONFIG.animaciones.crossfadeS, 0,3-0,5s). Carga perezosa + cache; si un
-// clip falta en disco o no parsea, se cae a lo procedural con un aviso.
+// Transiciones: procedural<->clip con el fundido de _clipPeso (fadeIn/fadeOut);
+// clip<->clip y la vuelta de un bucle con el PUENTE DE POSE (_iniciarPuente).
+// Carga perezosa + cache; si un clip falta en disco o no parsea, se cae a lo
+// procedural con un aviso. QUÉ se reproduce lo decide el DIRECTOR (más abajo).
 // Config: CONFIG.animaciones.
 let _mixer = null;
 let _accionActual = null;      // THREE.AnimationAction en curso, o null (= procedural puro)
-let _accionAnterior = null;    // la de antes, mantenida viva durante un crossfade clip->clip
+let _accionAnterior = null;    // solo la pose base de idle la usa (ver _cambiarAccion)
 let _clipPeso = 0;             // 0 = procedural puro, 1 = clip puro; rampa en actualizarAnimacionClips()
 let _clipPesoObjetivo = 0;
 let _clipTopeTimer = null;     // segundos restantes de un clip 'bucle' con duracionS, o null
-const _clipCache = new Map();  // id -> {archivo: id, clip} | {archivo: id, error} — orden = LRU
+// id -> {archivo, va, clip, gen} | {archivo, error} — orden = LRU. `va` (el
+// VRMAnimation parseado) es del rig y sirve para cualquier modelo; `clip` es
+// el AnimationClip armado para el modelo de generación `gen` (ver _clipParaModelo).
+const _clipCache = new Map();
 const _clipCargando = new Map(); // id -> Promise en vuelo, para no cargar dos veces el mismo
 // Declarados acá arriba, no junto a cargarCatalogo(): _gestoTimer (más abajo)
 // sortea su intervalo al cargar el módulo y lee los dos vía ajusteAnim().
@@ -2257,8 +2403,15 @@ const _clipsFallidos = new Set(); // ids que fallaron al cargar: fuera de la pal
 // traigan sale del catálogo. {categorias: {cat: bool}, clips: {id: bool},
 // pesos: {cat: n}, porEstado: {estado: [ids]}, enfriamientoMin, intervaloReposo}
 let _prefsAnim = {};
-const _huesosNorm = [];        // [{nombre, node, q:Quaternion}] — todos los huesos normalizados, para la mezcla
+const _huesosNorm = [];        // [{nombre, node, q, qPrev, qPuente}] — todos los huesos normalizados, para la mezcla
 let _hipsNode = null;
+
+// Puente de pose (ver CONFIG.animaciones.puenteS): foto de la pose visible
+// (qPuente por hueso + _puenteHips) y slerp desde ella hacia lo que escriba el
+// mixer, durante `dur` segundos. null = sin puente.
+let _puente = null;            // {t, dur}
+const _puenteHips = new THREE.Vector3();
+let _qPrevValido = false;      // qPrev tiene la pose del frame anterior (para el puente del bucle)
 
 // Clip de POSE BASE de idle (CONFIG.animaciones.idle): de él solo se toman los
 // brazos (el problema real: cuelgan rectos en procedural); el resto del cuerpo
@@ -2292,23 +2445,30 @@ function easeInOutCubic(x) {
 // curso, así que no hay flag de módulo que pueda quedarse pegado.
 function hayClipManual() { return _accionActual?._esManual === true; }
 
-// Gestos de reposo: máquina de estados chica (esperando -> reproduciendo).
+// Ruleta de reposo (ver DIRECTOR): cada intervaloReposo (60–120 s, de
+// catalogo.json -> ajustes) un intento; si en ese momento está ocupada,
+// pierde el turno y se sortea un intervalo completo nuevo (como Nerumi).
 let _gestoTimer = _sortearIntervaloGesto();
-let _gestoActivo = false;      // un gesto de reposo controla el cuerpo (incluida la salida con fundido)
-let _ultimoGestoDisparado = null; // id del último gesto — para no repetirlo dos veces seguidas
+let _gestoActivo = false;      // un gesto VRMA de reposo/saludo controla el cuerpo (incluida la salida con fundido)
+let _ultimoGestoDisparado = null; // id del último idle VRMA — para no repetirlo dos veces seguidas
 
 function _sortearIntervaloGesto() {
-  const { minS, maxS } = ajusteAnim('intervaloReposo', { minS: 4, maxS: 9 });
+  const { minS, maxS } = ajusteAnim('intervaloReposo', { minS: 60, maxS: 120 });
   return minS + Math.random() * (maxS - minS);
 }
 
 function inicializarAnimacionClips() {
   _mixer = new THREE.AnimationMixer(vrm.scene);
   _mixer.addEventListener('finished', _alTerminarClip);
+  // Vuelta de un bucle: puente cortito desde la pose del frame anterior.
+  _mixer.addEventListener('loop', e => {
+    if (e.action === _accionActual && _qPrevValido) _iniciarPuente(CONFIG.animaciones.puenteBucleS, true);
+  });
   _huesosNorm.length = 0;
   for (const nombre of Object.keys(vrm.humanoid.humanBones)) {
     const node = vrm.humanoid.getNormalizedBoneNode(nombre);
-    if (node) _huesosNorm.push({ nombre, node, q: new THREE.Quaternion() });
+    if (node) _huesosNorm.push({ nombre, node, q: new THREE.Quaternion(),
+                                 qPrev: new THREE.Quaternion(), qPuente: new THREE.Quaternion() });
   }
   _hipsNode = vrm.humanoid.getNormalizedBoneNode('hips');
   console.log(`[Anim] mixer listo — ${_huesosNorm.length} huesos normalizados para la mezcla`);
@@ -2373,12 +2533,12 @@ async function normalizarVrma(url) {
 // origen -> local del rig del modelo) ya lo hizo VRMAnimationLoaderPlugin.
 const _EXCLUIR_HUESOS_CLIP = new Set(['leftEye', 'rightEye', 'jaw']);
 function clipDeVrma(va) {
-  const metaV = vrm.meta?.metaVersion ?? '1';   // '0' para rem.vrm (VRM 0.x)
+  const metaV = vrm.meta?.metaVersion ?? '1';   // '0' para VRM 0.x
   const tracks = [];
   for (const [name, orig] of va.humanoidTracks.rotation) {
     if (_EXCLUIR_HUESOS_CLIP.has(name)) continue;
     const node = vrm.humanoid.getNormalizedBoneNode(name);
-    if (!node) continue;                          // hueso que rem.vrm no tiene → se ignora
+    if (!node) continue;                          // hueso que este modelo no tiene → se ignora
     // VRM0: espejo 180° en Y → negar x,z de cada cuaternión (índices pares del array plano).
     const values = metaV === '0'
       ? Float32Array.from(orig.values, (v, i) => (i % 2 === 0 ? -v : v))
@@ -2510,17 +2670,35 @@ function obtenerClip(id) {
   if (_clipCache.has(id)) {
     const e = _clipCache.get(id);
     _clipCache.delete(id); _clipCache.set(id, e);   // al final = usado hace poco
-    return Promise.resolve(e);
+    return Promise.resolve(_clipParaModelo(e));
   }
-  if (_clipCargando.has(id)) return _clipCargando.get(id);
+  if (_clipCargando.has(id)) return _clipCargando.get(id).then(_clipParaModelo);
   const p = _cargarClip(id).then(entry => {
     _clipCargando.delete(id);
     _clipCache.set(id, entry);
-    _podarCacheClips();
     return entry;
   });
   _clipCargando.set(id, p);
-  return p;
+  return p.then(e => { const r = _clipParaModelo(e); _podarCacheClips(); return r; });
+}
+
+// El AnimationClip depende del modelo (nombres de nodo, espejo VRM 0.x, escala
+// de la cadera): se arma para el modelo actual y se rearma tras un cambio.
+// Sin modelo montado (en pleno cambio) queda sin clip y el llamador no
+// reproduce nada (su token ya quedó viejo de todos modos).
+function _clipParaModelo(e) {
+  if (e.error || !e.va) return e;
+  if (e.clip && e.gen === _modeloGen) return e;
+  if (!vrm) { e.clip = null; return e; }
+  const clip = clipDeVrma(e.va);
+  if (clip.tracks.length === 0) {
+    console.warn(`[Anim] "${e.archivo}": 0 pistas de hueso para este modelo — se mantiene la animación procedural`);
+    _clipsFallidos.add(e.archivo);
+    return { archivo: e.archivo, error: new Error('0 pistas de hueso tras el filtrado') };
+  }
+  e.clip = clip;
+  e.gen = _modeloGen;
+  return e;
 }
 
 async function _cargarClip(id) {
@@ -2535,10 +2713,8 @@ async function _cargarClip(id) {
     }
     const va = gltf.userData?.vrmAnimations?.[0];
     if (!va) throw new Error('sin vrmAnimations (¿glTF sin extensión VRMC_vrm_animation?)');
-    const clip = clipDeVrma(va);
-    if (clip.tracks.length === 0) throw new Error('0 pistas de hueso tras el filtrado');
-    console.log(`[Anim] "${id}" cargado — ${clip.tracks.length} pistas, ${clip.duration.toFixed(2)}s`);
-    return { archivo: id, clip };
+    console.log(`[Anim] "${id}" cargado — ${va.duration?.toFixed?.(2) ?? '?'}s`);
+    return { archivo: id, va, clip: null, gen: -1 };
   } catch (e) {
     console.warn(`[Anim] "${id}" no disponible: ${e.message} — se mantiene la animación procedural`);
     _clipsFallidos.add(id);
@@ -2550,14 +2726,14 @@ async function _cargarClip(id) {
 // contar fijos ni fallos), salvo el que suena y el que se está desvaneciendo.
 function _podarCacheClips() {
   const fijos = _clipsFijos();
-  const candidatos = [..._clipCache].filter(([id, e]) => e.clip && !fijos.has(id));
+  const candidatos = [..._clipCache].filter(([id, e]) => e.va && !fijos.has(id));
   let sobran = candidatos.length - CONFIG.animaciones.cacheMax;
   for (const [id, e] of candidatos) {
     if (sobran <= 0) break;
     const acc = _mixer?.existingAction(e.clip);
     if (acc && (acc === _accionActual || acc === _accionAnterior)) continue;
     if (acc) acc.stop();
-    _mixer?.uncacheClip(e.clip);
+    if (e.clip) _mixer?.uncacheClip(e.clip);
     _clipCache.delete(id);
     sobran--;
   }
@@ -2573,78 +2749,109 @@ function precargarClipsFijos() {
   });
 }
 
-function reproducirClip(entry, { modo, duracionS, esGesto, esManual }) {
-  if (!_mixer || !entry?.clip) return;
+// ── PUENTE DE POSE ───────────────────────────────────────────────────────
+// Foto de la pose: la visible ahora (clip -> clip, llamado entre frames), o la
+// del frame anterior (desdePrev: la vuelta de un bucle, que el mixer ya aplicó
+// en este mismo update). Luego _aplicarPuente() hace slerp desde la foto.
+function _iniciarPuente(dur, desdePrev = false) {
+  if (!(dur > 0) || !_huesosNorm.length) return;
+  for (const h of _huesosNorm) h.qPuente.copy(desdePrev ? h.qPrev : h.node.quaternion);
+  if (_hipsNode) _puenteHips.copy(_hipsNode.position);
+  _puente = { t: 0, dur };
+}
+
+function _aplicarPuente(dt) {
+  if (!_puente) return;
+  _puente.t += dt;
+  const u = easeInOutCubic(clamp(_puente.t / _puente.dur, 0, 1));
+  for (const h of _huesosNorm) {
+    _qClipTmp.copy(h.node.quaternion);
+    h.node.quaternion.slerpQuaternions(h.qPuente, _qClipTmp, u);
+  }
+  if (_hipsNode) { _vClipTmp.copy(_hipsNode.position); _hipsNode.position.lerpVectors(_puenteHips, _vClipTmp, u); }
+  if (u >= 1) _puente = null;
+}
+
+// Cambia la acción en curso. Sin crossFadeTo: la vieja se corta y la nueva
+// entra a pleno peso; la suavidad la pone el puente (si había un clip a la
+// vista — si no, la entrada la hace el fundido de _clipPeso).
+function _cambiarAccion(nueva, durPuente) {
+  if (_accionActual && _accionActual !== nueva) {
+    if (_clipPeso > 0.001) _iniciarPuente(durPuente);
+    _accionActual.stop();
+  }
+  if (_accionAnterior && _accionAnterior !== nueva) _accionAnterior.stop();
+  _accionAnterior = null;
+  _accionActual = nueva;
+}
+
+// opciones: modo 'bucle'|'unaVez', duracionS (tope), y quién lo pidió:
+//   esGesto  — idle VRMA de la ruleta o saludo: lo corta el audio/estado.
+//   esManual — paleta /animaciones o 'clip <x>' de bench_chat.py: no lo corta nada.
+//   esEmocion— clip de la emoción del chat: tampoco lo corta el audio (sale
+//              justo cuando empieza a hablar).
+//   esBaile  — modo baile: al terminar, el director encadena el siguiente.
+function reproducirClip(entry, { modo, duracionS, esGesto, esManual, esEmocion, esBaile }) {
+  if (!_mixer || !entry?.clip) return false;
   // Clip que arranca con los brazos arriba (fundidoEntradaS del catálogo):
-  // fundido más largo, para que no los levante de golpe.
+  // entrada más larga, para que no los levante de golpe.
   const fundidoEntrada = infoClip(entry.archivo)?.fundidoEntradaS ?? null;
-  const CF = Math.max(CONFIG.animaciones.crossfadeS, fundidoEntrada ?? 0);
+  const durPuente = Math.max(CONFIG.animaciones.puenteS, fundidoEntrada ?? 0);
   const nueva = _mixer.clipAction(entry.clip);
+  const marcar = a => {
+    a._esGesto = !!esGesto; a._esManual = !!esManual; a._esEmocion = !!esEmocion; a._esBaile = !!esBaile;
+    a._esIdle = false;
+  };
   // Ya es el clip activo y a pleno peso (p.ej. thinking re-entrado en el mismo
   // turno): no reiniciar el loop desde t=0, solo refrescar el tope.
   if (nueva === _accionActual && _clipPesoObjetivo === 1 && !nueva.paused) {
     _clipTopeTimer = (duracionS != null) ? duracionS : null;
     _gestoActivo = !!esGesto;
-    nueva._esManual = !!esManual;
-    return;
+    marcar(nueva);
+    return true;
   }
   nueva.reset();
   nueva.setLoop(modo === 'bucle' ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
-  nueva.clampWhenFinished = (modo !== 'bucle'); // sostiene el último frame estable durante el crossfade de salida
+  nueva.clampWhenFinished = (modo !== 'bucle'); // sostiene el último frame mientras se funde la salida
   nueva.enabled = true;
   nueva.paused = false;
   nueva.timeScale = 1;
   nueva.setEffectiveWeight(1);
-  nueva._esGesto = !!esGesto;
-  nueva._esIdle = false;
-  // Disparo explícito (paleta "/animaciones" o 'clip <nombre>' de
-  // bench_chat.py): lo pedido a mano no lo interrumpe el audio ni un cambio de
-  // estado que no traiga clip propio — ver updateGestos/sincronizarClipConEstado.
-  // Vive en la ACCIÓN, no en una variable de módulo: cuando _accionActual
-  // cambia o se anula, el flag desaparece con ella y no puede quedar colgado.
-  nueva._esManual = !!esManual;
+  marcar(nueva);
   nueva.play();
-
-  if (_accionActual && _accionActual !== nueva) {
-    // clip -> clip: el mixer hace el crossfade; _clipPeso se queda en 1.
-    if (_accionAnterior && _accionAnterior !== nueva && _accionAnterior !== _accionActual) {
-      _accionAnterior.stop();
-    }
-    _accionActual.crossFadeTo(nueva, CF, false);
-    _accionAnterior = _accionActual;
-  }
-  _accionActual = nueva;
+  _cambiarAccion(nueva, durPuente);
   _gestoActivo = !!esGesto;
   _clipTopeTimer = (duracionS != null) ? duracionS : null;
   _clipFadeEntradaS = fundidoEntrada;
+  _clipFadeSalidaS = null;
   _clipPesoObjetivo = 1;
-  console.log(`[Anim] reproduciendo "${entry.archivo}" (${modo}${duracionS != null ? `, tope ${duracionS.toFixed(2)}s` : ''}${esGesto ? ', gesto' : ''})`);
+  const tipo = esBaile ? ', baile' : esEmocion ? ', emoción' : esManual ? ', manual' : esGesto ? ', gesto' : '';
+  console.log(`[Anim] reproduciendo "${entry.archivo}" (${modo}${duracionS != null ? `, tope ${duracionS.toFixed(2)}s` : ''}${tipo})`);
+  return true;
 }
 
 // No corta el mixer: solo baja el objetivo de mezcla. actualizarAnimacionClips()
 // rampa _clipPeso a 0 y recién ahí para las acciones y resetea la pose. La CARA
-// no se toca — la maneja updateExpressions() por 'estado', así que si el estado
-// emocional sigue activo la expresión se conserva mientras el cuerpo vuelve a
-// respirar/moverse en procedural.
+// no se toca — la maneja updateExpressions().
 function volverAProcedural(interrumpido = false) {
   _clipPesoObjetivo = 0;
   _clipTopeTimer = null;
   _clipFadeSalidaS = interrumpido ? CONFIG.animaciones.fadeOutInterrupcion : CONFIG.animaciones.fadeOut;
 }
 
-// Clip de POSE BASE de idle (CONFIG.animaciones.idle). No es un gesto ni un clip
-// de estado: es la base sobre la que corre todo lo demás. Loop continuo; cede a
-// gestos/clips de estado con crossfade y se vuelve a él al terminar (ver
-// volverABaseIdle). Marca _accionActual._esIdle para que actualizarAnimacionClips()
-// haga la mezcla especial (del clip solo los brazos, el resto procedural).
+// Clip de POSE BASE de idle (catalogo.json -> poseBase, hoy desactivado). No
+// es un gesto ni un clip de estado: es la base. Loop continuo; cede a gestos/
+// clips de estado y se vuelve a él al terminar (ver volverABaseIdle). Marca
+// _accionActual._esIdle para que actualizarAnimacionClips() haga la mezcla
+// especial (del clip solo los brazos, el resto procedural).
 async function reproducirIdle() {
   const archivo = poseBaseArchivo();
   const modo = poseBaseModo();
   if (!_mixer || !archivo) { volverAProcedural(); return; }
   const tok = ++_tokenClip;
   const entry = await obtenerClip(archivo);
-  if (tok !== _tokenClip || estado !== 'idle' || _audioActivo) return;
-  if (entry.error) { volverAProcedural(); return; }
+  if (tok !== _tokenClip) return;
+  if (entry.error || !entry.clip) { volverAProcedural(); return; }
 
   const acc = _mixer.clipAction(entry.clip);
   if (acc === _accionActual && _accionActual._esIdle) { _clipPesoObjetivo = 1; return; }
@@ -2655,21 +2862,14 @@ async function reproducirIdle() {
   acc.enabled = true;
   acc.paused = false;
   acc.setEffectiveWeight(1);
-  acc._esGesto = false;
+  acc._esGesto = acc._esManual = acc._esEmocion = acc._esBaile = false;
   acc._esIdle = true;
   acc.play();
   // 'poseFija': timeScale 0 (no 'paused') — el frame no avanza pero la acción
-  // sigue entrando en la mezcla, así que el crossfade hacia ella funciona.
+  // sigue entrando en la mezcla.
   acc.timeScale = (modo === 'poseFija') ? 0 : 1;
   if (modo === 'poseFija') acc.time = 0;
-
-  const CF = CONFIG.animaciones.crossfadeS;
-  if (_accionActual && _accionActual !== acc) {
-    if (_accionAnterior && _accionAnterior !== acc && _accionAnterior !== _accionActual) _accionAnterior.stop();
-    _accionActual.crossFadeTo(acc, CF, false);
-    _accionAnterior = _accionActual;
-  }
-  _accionActual = acc;
+  _cambiarAccion(acc, CONFIG.animaciones.puenteS);
   _gestoActivo = false;
   _clipTopeTimer = null;
   _idleVelObjetivo = 1.0;
@@ -2679,21 +2879,23 @@ async function reproducirIdle() {
   console.log(`[Anim] idle base: "${archivo}" (${modo})`);
 }
 
-// Fin de un gesto de reposo, o su interrupción: volver a la BASE — al clip de
-// idle si está configurado y seguimos elegibles, o a lo procedural.
-// interrumpido: true si esto es un corte forzado (audio/estado) en vez de un
-// final natural — decide fadeOutInterrupcion vs fadeOut en volverAProcedural.
+// Fin de un gesto, o su interrupción: volver a la BASE — al clip de idle si
+// está configurado y seguimos elegibles, o a lo procedural.
 function volverABaseIdle(interrumpido = false) {
-  if (estado === 'idle' && !_audioActivo && poseBaseArchivo()) {
-    reproducirIdle(); // entrada al clip de idle — fundido de ENTRADA (fadeIn), no de salida
+  // Un estado con clip propio (thinking, listening...) vuelve a ese clip.
+  if (_mixer && porEstadoEfectivo(estado) && !_esEstadoUnaVez()) { sincronizarClipConEstado(); return; }
+  if (_mixer && poseBaseArchivo()) {
+    reproducirIdle();
   } else {
     volverAProcedural(interrumpido);
   }
 }
 
-// Varía lento el timeScale del clip de idle en bucle (velMin..velMax) — un clip
-// de reposo de ~4s en loop se nota repetitivo enseguida; la velocidad variable
-// rompe el patrón sin leerse como "cámara lenta".
+// Los clips 'unaVez' de un estado (happy/sad... por 'state' de bench_chat.py)
+// no se repiten al terminar: vuelven a la base.
+function _esEstadoUnaVez() { return porEstadoEfectivo(estado)?.modo === 'unaVez'; }
+
+// Varía lento el timeScale del clip de idle en bucle (velMin..velMax).
 function _actualizarVelIdle(dt) {
   const cfg = CONFIG.animaciones.idle;
   _idleVelTimer -= dt;
@@ -2705,26 +2907,24 @@ function _actualizarVelIdle(dt) {
 }
 
 function _alTerminarClip(e) {
-  if (e.action !== _accionActual) return;   // una acción vieja terminando su fade — ignorar
-  // Backstop: el fundido de salida NATURAL ya debería estar en curso desde
-  // los últimos CONFIG.animaciones.fadeOut segundos del propio clip (ver el
-  // chequeo de "restante" en actualizarAnimacionClips) — esto solo cubre el
-  // caso de un clip más corto que fadeOut, o timeScale atípico, donde ese
-  // disparo anticipado no llegó a activarse. Si ya estaba en curso, esto es
-  // un no-op (el objetivo ya es 0).
-  if (e.action._esGesto) volverABaseIdle(false); else volverAProcedural(false);
-  // _gestoActivo/_gestoTimer NO se tocan acá: se liberan/resortean recién
-  // cuando el peso realmente llega a 0 (ver actualizarAnimacionClips) — si no,
-  // updateGestos() podría sortear y arrancar OTRO gesto encima mientras este
-  // todavía se está desvaneciendo.
+  if (e.action !== _accionActual) return;   // una acción vieja — ignorar
+  // Un baile terminado: el director encadena el siguiente de la bolsa con un
+  // puente desde el último frame (clampWhenFinished lo sostiene), sin pasar
+  // por lo procedural.
+  if (e.action._esBaile) { _siguienteBaile = true; return; }
+  // Backstop: la salida NATURAL ya debería estar en curso desde los últimos
+  // fadeOut segundos del clip (ver actualizarAnimacionClips); esto cubre un
+  // clip más corto que fadeOut. _gestoActivo se libera recién cuando el peso
+  // llega a 0, no acá.
+  volverABaseIdle(false);
 }
 
-// Estado -> clip (catálogo, porEstado). De varios clips, uno al azar sin
-// repetir el último de ese estado. Con 'enfriamiento', un clip reproducido por
-// estado hace menos de enfriamientoMin minutos no vuelve a salir: si no queda
-// ninguno, null — ese estado solo pone la cara.
+// Estado/emoción -> clip (catálogo, porEstado). De varios clips, uno al azar
+// sin repetir el último. Con 'enfriamiento', un clip reproducido hace menos de
+// enfriamientoMin minutos no vuelve a salir: si no queda ninguno, null — solo
+// la cara.
 const _ultimoClipEstado = new Map();   // estado -> id del último clip que salió
-const _ultimoUsoClipEstado = new Map(); // id -> performance.now() de su último disparo por estado
+const _ultimoUsoClipEstado = new Map(); // id -> performance.now() de su último disparo
 
 function _elegirClipDeEstado(est, m) {
   let ids = (m.clips ?? []).filter(clipUsable);
@@ -2742,52 +2942,46 @@ function _elegirClipDeEstado(est, m) {
   return ids.length ? ids[Math.floor(Math.random() * ids.length)] : null;
 }
 
-// Sin mapeo (talking/idle), o con el clip en enfriamiento -> procedural (la
-// cara sigue con la emoción). Con guarda de carrera: si el estado cambia
-// mientras el clip carga (async), el token no coincide y se descarta.
+// Cambio de 'estado' (lo manda el backend: thinking/talking/idle, o un
+// 'state happy' de bench_chat.py; listening es local). Un estado CON clip en
+// porEstado lo dispara (con guarda de carrera por token). Uno sin clip corta
+// los gestos de reposo, pero NO un baile, un clip de emoción ni uno manual:
+// esos los maneja el director (thinking -> talking pasa en cada turno).
 function sincronizarClipConEstado() {
   if (ES_OVERLAY) return; // overlay: sin clips VRMA (no hay mixer)
   const m = porEstadoEfectivo(estado);
-  const tok = ++_tokenClip;
-  _gestoActivo = false; // un cambio de estado siempre gana sobre un gesto de reposo
   const id = m ? _elegirClipDeEstado(estado, m) : null;
   if (id) {
+    const tok = ++_tokenClip;
+    _gestoActivo = false;
     const est = estado;
     obtenerClip(id).then(entry => {
       if (tok !== _tokenClip) return;                 // el estado cambió mientras cargaba
-      if (entry.error) { volverAProcedural(true); return; } // fallback a procedural, forzado
+      if (entry.error || !entry.clip) { volverAProcedural(true); return; }
       _ultimoClipEstado.set(est, id);
       if (m.enfriamiento) _ultimoUsoClipEstado.set(id, performance.now());
-      reproducirClip(entry, { modo: m.modo, duracionS: m.duracionS, esGesto: false });
+      reproducirClip(entry, { modo: m.modo, duracionS: m.duracionS });
     });
     return;
   }
-  // Un clip manual en curso sobrevive a un estado que no trae clip propio
-  // (idle/talking): si no, terminar de hablar (talking -> idle) cortaba a la
-  // mitad el clip que el usuario acababa de pedir. Un estado CON clip mapeado
-  // sí gana — lo resuelve el bloque de arriba, antes de llegar acá.
-  if (hayClipManual()) { _gestoActivo = true; return; }
-
-  // Sin clip de estado: idle usa el clip de pose base (si está configurado);
-  // talking (y idle con el clip desactivado) van a procedural. Un cambio de
-  // estado que corta lo que hubiera antes es siempre un corte FORZADO
-  // (fadeOutInterrupcion), nunca un final natural.
-  if (estado === 'idle' && poseBaseArchivo()) {
-    reproducirIdle();
-  } else {
-    volverAProcedural(true);
-  }
+  if (hayClipManual() || _bailando || _accionActual?._esEmocion) return;
+  // Sin clip propio (idle, talking): la pose base de reposo, también hablando.
+  // Un gesto de reposo en curso solo sigue si seguimos en idle.
+  if (_gestoActivo && estado === 'idle') return;
+  _gestoActivo = false;
+  if (poseBaseArchivo()) reproducirIdle();
+  else if (_accionActual) { ++_tokenClip; volverAProcedural(true); }
 }
 
-// Opciones de reproducción de un gesto (espontáneo o pedido a mano): una vez,
-// salvo un baile corto, que se repite hasta baileMinS en ciclos completos.
-function _opcionesGesto(id, entry, esManual = false) {
+// Opciones de reproducción de un gesto/baile: una vez, salvo un baile corto,
+// que se repite hasta baileMinS en ciclos completos.
+function _opcionesGesto(id, entry, extra = {}) {
   const dur = entry.clip.duration;
   const min = CONFIG.animaciones.baileMinS;
   if (infoClip(id)?.categoria === 'dance' && dur > 0 && dur < min) {
-    return { modo: 'bucle', duracionS: Math.ceil(min / dur) * dur, esGesto: true, esManual };
+    return { modo: 'bucle', duracionS: Math.ceil(min / dur) * dur, ...extra };
   }
-  return { modo: 'unaVez', esGesto: true, esManual };
+  return { modo: 'unaVez', ...extra };
 }
 
 function _sorteoPonderado(items) {
@@ -2798,92 +2992,262 @@ function _sorteoPonderado(items) {
   return items[items.length - 1];
 }
 
-// Gesto de reposo: primero la CATEGORÍA (por pesoCategoria, entre las que
-// tienen algún clip elegible) y después el clip dentro (por su peso). Así
-// "reposo 4 : bailes 1" es la proporción real, no algo que dependa de cuántos
-// clips tenga cada categoría. excluir: el último gesto — se evita solo si
-// queda otro candidato (de noche puede no haber más que uno).
-function _elegirGesto(excluir) {
-  if (!_catalogo) return null;
-  const hora = new Date().getHours();
-  const porCat = new Map();
-  for (const [id, c] of Object.entries(_catalogo.clips)) {
-    if (!clipUsable(id) || !clipActivo(id) || !(c.peso > 0)) continue;
-    if (c.horas && !(hora >= c.horas[0] && hora < c.horas[1])) continue;
-    if (!porCat.has(c.categoria)) porCat.set(c.categoria, []);
-    porCat.get(c.categoria).push({ id, peso: c.peso });
-  }
-  if (excluir != null) {
-    for (const [cat, lista] of porCat) {
-      const sin = lista.filter(x => x.id !== excluir);
-      if (sin.length) porCat.set(cat, sin);
-      else if (porCat.size > 1) porCat.delete(cat);
-    }
-  }
-  const cat = _sorteoPonderado([...porCat.keys()].map(cat => ({ cat, peso: pesoCategoria(cat) })))?.cat;
-  return cat ? _sorteoPonderado(porCat.get(cat))?.id ?? null : null;
-}
-
-// Log temporal de diagnóstico de frecuencia — cada disparo real, cada
-// cancelación, y el timestamp (clock.getElapsedTime()) de ambos. Se deja
-// permanente (bajo console.log, sin costo real) para poder auditar la
-// cadencia real sin instrumentar de nuevo si el reporte vuelve a diferir de
-// lo esperado.
 function _logGesto(msg) {
   console.log(`[Gesto] t=${clock.getElapsedTime().toFixed(1)}s ${msg}`);
 }
 
-function updateGestos(dt) {
-  const hayClipEstado = !!porEstadoEfectivo(estado);
+// ═══════════════════════════════════════════════════
+// DIRECTOR DE ANIMACIÓN — qué hace el cuerpo (inspirado en Nerumi)
+// ═══════════════════════════════════════════════════
+// Prioridad, de arriba abajo, cada frame:
+//   1. Clip manual o de emoción en curso: se respeta hasta que termine.
+//   2. Modo baile (/bailar o 💃), salvo escuchando: bailes de una bolsa sin
+//      repetición, encadenados; habla y piensa bailando (el lipsync va aparte).
+//   3. Saludo pendiente (al abrir y al cambiar de modelo), en reposo y callada.
+//   4. Gesto de reposo en curso: lo corta el audio o un estado que no sea idle.
+//   5. Ruleta de reposo: cada 60–120 s un intento; si está ocupada pierde el
+//      turno. Un idle VRMA: grupo raro 20 % / común 80 %, sin repetir el último.
+// El cuerpo se mueve SOLO con clips: entre gestos, la pose base (catálogo ->
+// poseBase, Respirar en bucle) — también hablando; thinking y listening
+// tienen su propio clip (porEstado). Lo procedural queda como respaldo
+// mientras carga el primer clip, y en overlay (sin mixer).
+// Los números salen de catalogo.json -> ajustes (probRaro,
+// probSuperRaro, intervaloReposo), pisables desde el panel.
+let _modoBaile = (() => { try { return localStorage.getItem('rem_modo_baile') === '1'; } catch { return false; } })();
+let _bailando = false;          // un baile del director controla el cuerpo
+let _siguienteBaile = false;    // el baile actual terminó: sacar el siguiente
+let _cargandoBaile = false;
+let _ultimoBaile = null;
+let _saludoPendiente = false;
+let _emocion = null;            // {nombre, hasta: ms | null (= hasta que termine de hablar)}
+let _caraGesto = null;          // {happy: 0.6, ...} del gesto de reposo en curso, o null
 
-  if (_gestoActivo) {
-    // Interrupción (regla: la voz manda): si dejó de ser elegible a mitad de
-    // gesto, fundido corto (fadeOutInterrupcion) de vuelta a la base (clip de
-    // idle o procedural). EXCEPCIÓN: un clip pedido a mano no se corta por
-    // audio ni por estado — se pidió explícitamente. Los que SÍ molestarían
-    // mientras habla (los de giraCuerpo, que la sacan de cámara) ni siquiera
-    // llegan acá: se encolan antes de dispararse (dispararClipManual).
-    if (!hayClipManual() && (estado !== 'idle' || _audioActivo)) {
-      _logGesto(`interrumpido (motivo: ${estado !== 'idle' ? `estado=${estado}` : 'audio'})`);
-      volverABaseIdle(true); // fundido CORTO (fadeOutInterrupcion) — la voz manda
-      _gestoActivo = false;
-      _gestoTimer = _sortearIntervaloGesto();
+function _reiniciarDirector() {
+  _gestoActivo = false;
+  _bailando = _siguienteBaile = _cargandoBaile = false;
+  _caraGesto = null;
+  _clipEnEspera = null;
+  _gestoTimer = _sortearIntervaloGesto();
+}
+
+function setModoBaile(on) {
+  _modoBaile = !!on;
+  try { localStorage.setItem('rem_modo_baile', _modoBaile ? '1' : '0'); } catch {}
+  console.log(`[Baile] modo baile ${_modoBaile ? 'ON' : 'OFF'}`);
+  window.__remChat?.onModoBaile?.(_modoBaile);
+}
+window.setModoBaile = setModoBaile;
+
+// ── Bolsas de bailes (muestreo sin reemplazo, como drawFromShuffleBag) ────
+// Cada baile sale UNA vez antes de que se repita cualquiera, y el último que
+// sonó nunca abre la ronda siguiente. Dos bolsas: regular y súper raro (los
+// "raro" de la categoría dance; un 3 % de las veces). Se guardan entre
+// sesiones (localStorage). Lo desactivado o faltante se filtra al sacar.
+const _bolsas = (() => {
+  try { return JSON.parse(localStorage.getItem('rem_bolsas_baile')) ?? {}; } catch { return {}; }
+})();
+function _bailesDisponibles(superRaro) {
+  if (!_catalogo) return [];
+  return Object.entries(_catalogo.clips)
+    .filter(([id, c]) => c.categoria === 'dance' && clipUsable(id) && clipActivo(id) && (c.raro === true) === superRaro)
+    .map(([id]) => id);
+}
+function _barajar(a) {
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+function _sacarDeBolsa(tipo, pool) {
+  const ok = new Set(pool);
+  let bolsa = (_bolsas[tipo] ?? []).filter(id => ok.has(id));
+  if (!bolsa.length) {
+    bolsa = _barajar([...pool]);
+    // pop() saca del final: el último que sonó, si cae ahí, va al principio.
+    if (bolsa.length > 1 && bolsa[bolsa.length - 1] === _ultimoBaile) [bolsa[0], bolsa[bolsa.length - 1]] = [bolsa[bolsa.length - 1], bolsa[0]];
+  }
+  const id = bolsa.pop() ?? null;
+  _bolsas[tipo] = bolsa;
+  try { localStorage.setItem('rem_bolsas_baile', JSON.stringify(_bolsas)); } catch {}
+  return id;
+}
+function _elegirBaile() {
+  const normales = _bailesDisponibles(false), raros = _bailesDisponibles(true);
+  const pRaro = ajusteAnim('probSuperRaro', 0.03);
+  if (raros.length && (Math.random() < pRaro || !normales.length)) return _sacarDeBolsa('superRaro', raros);
+  if (normales.length) return _sacarDeBolsa('regular', normales);
+  return null;
+}
+
+function _arrancarBaile() {
+  const id = _elegirBaile();
+  _siguienteBaile = false;
+  if (!id) { _bailando = false; return; }
+  _cargandoBaile = true;
+  _gestoActivo = false;
+  const tok = ++_tokenClip;
+  obtenerClip(id).then(entry => {
+    _cargandoBaile = false;
+    if (tok !== _tokenClip || !_modoBaile) return;
+    if (entry.error || !entry.clip) { _siguienteBaile = true; return; }   // probar con otro
+    _ultimoBaile = id;
+    _bailando = true;
+    reproducirClip(entry, _opcionesGesto(id, entry, { esBaile: true }));
+  });
+}
+
+// ── Ruleta de reposo: idle VRMA ────────────────────────────────────────────
+// Candidatos: clips usables y activos fuera de 'dance' (esos son del modo
+// baile), en su franja 'horas'. raro (catálogo) = grupo raro. Si el grupo
+// sorteado está vacío se usa el otro (menos idles, no cero). Dentro, por peso
+// de categoría × peso del clip, sin repetir el último.
+function _elegirGesto(excluir) {
+  if (!_catalogo) return null;
+  const hora = new Date().getHours();
+  const raros = [], comunes = [];
+  for (const [id, c] of Object.entries(_catalogo.clips)) {
+    if (c.categoria === 'dance' || !clipUsable(id) || !clipActivo(id) || !(c.peso > 0)) continue;
+    if (c.horas && !(hora >= c.horas[0] && hora < c.horas[1])) continue;
+    (c.raro ? raros : comunes).push({ id, peso: c.peso * pesoCategoria(c.categoria) });
+  }
+  let pool = Math.random() < ajusteAnim('probRaro', 0.2) ? raros : comunes;
+  if (!pool.length) pool = pool === raros ? comunes : raros;
+  if (pool.length > 1) pool = pool.filter(x => x.id !== excluir);
+  return _sorteoPonderado(pool)?.id ?? null;
+}
+
+function _dispararIdleVrma() {
+  const g = _elegirGesto(_ultimoGestoDisparado);
+  if (!g) return false;
+  _gestoActivo = true;
+  const tok = ++_tokenClip;
+  obtenerClip(g).then(entry => {
+    if (tok !== _tokenClip || estado !== 'idle' || _audioActivo || entry.error || !entry.clip) {
+      _logGesto(`cancelado antes de reproducir "${g}"` + (entry.error ? ` (${entry.error.message})` : ''));
+      if (tok === _tokenClip) _gestoActivo = false;
+      return;
     }
+    _ultimoGestoDisparado = g;
+    const expr = infoClip(g)?.expresion;
+    _caraGesto = expr ? { [expr]: CONFIG.expresiones.gestoPeso } : null;
+    _logGesto(`idle VRMA "${g}"${infoClip(g)?.raro ? ' (raro)' : ''}`);
+    reproducirClip(entry, _opcionesGesto(g, entry, { esGesto: true }));
+  });
+  return true;
+}
+
+// ── Saludo (al abrir y al cambiar de modelo) ──────────────────────────────
+// Los clips con "saludo": true, uniforme y sin repetir el anterior, que se
+// recuerda POR MODELO (como avatar-greetings.js de Nerumi).
+function _dispararSaludo() {
+  _saludoPendiente = false;
+  if (!_catalogo) return;
+  const clave = 'rem_ultimo_saludo:' + MODELO_ACTIVO;
+  let anterior = null;
+  try { anterior = localStorage.getItem(clave); } catch {}
+  let ids = Object.entries(_catalogo.clips).filter(([id, c]) => c.saludo && clipUsable(id)).map(([id]) => id);
+  if (ids.length > 1) ids = ids.filter(id => id !== anterior);
+  if (!ids.length) return;
+  const id = ids[Math.floor(Math.random() * ids.length)];
+  try { localStorage.setItem(clave, id); } catch {}
+  _gestoActivo = true;
+  const tok = ++_tokenClip;
+  obtenerClip(id).then(entry => {
+    if (tok !== _tokenClip || estado !== 'idle' || _audioActivo || entry.error || !entry.clip) {
+      if (tok === _tokenClip) _gestoActivo = false;
+      return;
+    }
+    _caraGesto = { happy: CONFIG.expresiones.gestoPeso };
+    _logGesto(`saludo "${id}"`);
+    reproducirClip(entry, { modo: 'unaVez', esGesto: true });
+  });
+}
+
+// ── Emoción del chat ──────────────────────────────────────────────────────
+// Llega por WS ({tipo:'emocion'}) apenas el modelo abre la respuesta con su
+// etiqueta (ver chat_sesion.py). Cara: la de la emoción mientras viva —
+// surprised es breve (emocionBreveS); las demás duran hasta que termine de
+// hablar + emocionTrasHablarS (en Nerumi, "hasta que se oculta la burbuja").
+// Cuerpo: el clip de esa emoción (catálogo -> porEstado), si no está en
+// enfriamiento, no está bailando y no gira el cuerpo mientras habla.
+function recibirEmocion(nombre) {
+  const breve = nombre === 'surprised';
+  _emocion = { nombre, hasta: breve ? performance.now() + ajusteAnim('emocionBreveS', 5) * 1000 : null };
+  console.log(`[Emoción] ${nombre}${breve ? ' (breve)' : ''}`);
+  if (ES_OVERLAY || !_mixer || _bailando || hayClipManual()) return;
+  const m = porEstadoEfectivo(nombre);
+  const id = m ? _elegirClipDeEstado(nombre, m) : null;
+  if (!id || (clipGiraCuerpo(id) && hayVozSonando())) return;
+  const tok = ++_tokenClip;
+  _gestoActivo = false;
+  obtenerClip(id).then(entry => {
+    if (tok !== _tokenClip || _bailando || entry.error || !entry.clip) return;
+    _ultimoClipEstado.set(nombre, id);
+    if (m.enfriamiento) _ultimoUsoClipEstado.set(id, performance.now());
+    reproducirClip(entry, { modo: 'unaVez', esEmocion: true });
+  });
+}
+window.recibirEmocion = recibirEmocion;
+
+function _actualizarEmocion() {
+  if (!_emocion) return;
+  const ahora = performance.now();
+  if (_emocion.hasta == null) {
+    if (!hayVozSonando() && estado !== 'thinking') _emocion.hasta = ahora + ajusteAnim('emocionTrasHablarS', 4) * 1000;
+  } else if (ahora > _emocion.hasta) {
+    console.log(`[Emoción] ${_emocion.nombre} terminó`);
+    _emocion = null;
+  }
+}
+
+function updateDirector(dt) {
+  _actualizarEmocion();
+  _gestoTimer -= dt;   // la ruleta corre siempre; ver paso 5
+
+  // 1. Manual / emoción: se respetan.
+  if (hayClipManual() || _accionActual?._esEmocion) return;
+
+  // 2. Baile.
+  const quiereBailar = _modoBaile && estado !== 'listening';
+  if (quiereBailar) {
+    if ((!_bailando || _siguienteBaile) && !_cargandoBaile) _arrancarBaile();
     return;
   }
-
-  // Un gesto SÍ puede dispararse sobre el clip de pose base de idle (crossfade
-  // idle -> gesto -> idle) — solo lo bloquean un clip de estado, audio, o no-idle.
-  if (estado !== 'idle' || _audioActivo || hayClipEstado) {
+  if (_bailando || _cargandoBaile) {
+    _bailando = _siguienteBaile = _cargandoBaile = false;
+    ++_tokenClip;
+    volverABaseIdle(false);     // salida de un baile: a la pose base
     _gestoTimer = _sortearIntervaloGesto();
     return;
   }
 
-  _gestoTimer -= dt;
-  if (_gestoTimer > 0) return;
+  // 3. Saludo.
+  if (_saludoPendiente && !_medirHuesosPendiente && vrm?.scene.visible && _catalogo
+      && estado === 'idle' && !_audioActivo && !_gestoActivo) {
+    _dispararSaludo();
+    return;
+  }
 
-  const g = _elegirGesto(_ultimoGestoDisparado);
-  if (!g) { _gestoTimer = _sortearIntervaloGesto(); return; }
-  _gestoActivo = true;
-  const tok = ++_tokenClip;
-  obtenerClip(g).then(entry => {
-    if (tok !== _tokenClip || estado !== 'idle' || _audioActivo) {
-      _logGesto(`cancelado antes de reproducir "${g}" (motivo: ${tok !== _tokenClip ? 'token obsoleto' : (estado !== 'idle' ? `estado=${estado}` : 'audio')})`);
+  // 4. Gesto de reposo en curso (VRMA o procedural).
+  if (_gestoActivo) {
+    if (estado !== 'idle' || _audioActivo) {
+      _logGesto(`interrumpido (motivo: ${estado !== 'idle' ? `estado=${estado}` : 'audio'})`);
+      volverABaseIdle(true);
       _gestoActivo = false;
+      _caraGesto = null;
       _gestoTimer = _sortearIntervaloGesto();
-      return;
     }
-    if (entry.error) {
-      _logGesto(`cancelado — "${g}" no disponible (${entry.error.message})`);
-      _gestoActivo = false;
-      _gestoTimer = _sortearIntervaloGesto();
-      return;
-    }
-    _ultimoGestoDisparado = g;
-    _logGesto(`disparando "${g}"`);
-    reproducirClip(entry, _opcionesGesto(g, entry));
-  });
+    return;
+  }
+
+  // 5. Ruleta.
+  if (_gestoTimer > 0) return;
+  _gestoTimer = _sortearIntervaloGesto();
+  if (estado !== 'idle' || _audioActivo || porEstadoEfectivo(estado)) {
+    _logGesto(`turno perdido (ocupada: ${estado !== 'idle' ? estado : 'audio'})`);
+    return;
+  }
+  _dispararIdleVrma();
 }
+
 
 // Depuración: dispara un clip por nombre bajo demanda, como si fuera un gesto
 // de reposo (unaVez + vuelta a la base con crossfade) — para grabar un clip
@@ -2905,14 +3269,14 @@ window.dispararClipDebug = function (nombre) {
     // puso en true por su cuenta; lo que NO puede pasar es que quede en true sin
     // dueño (un .vrma lento + un cambio de estado dejaría los gestos muertos).
     if (tok !== _tokenClip) { _gestoActivo = false; return; }
-    if (entry.error) {
+    if (entry.error || !entry.clip) {
       console.warn(`[Anim] debug_clip "${archivo}": no disponible — no se dispara`);
       _gestoActivo = false;
       return;
     }
     _gestoTimer = _sortearIntervaloGesto();
     console.log(`[Anim] debug_clip -> "${archivo}"`);
-    reproducirClip(entry, _opcionesGesto(archivo, entry, true));
+    reproducirClip(entry, _opcionesGesto(archivo, entry, { esManual: true }));
   });
 };
 
@@ -2961,6 +3325,11 @@ function _intentarLanzarClipEnEspera() {
 // respiración; cuando el clip domina, esta la reemplaza. Sin doble conteo en
 // la transición.
 function aplicarRespiracionEncima(t, k) {
+  _espejarHuesos();
+  _respiracionEncima(t, k);
+  _espejarHuesos();
+}
+function _respiracionEncima(t, k) {
   const respFase = Math.sin(t * 0.8) * k;
   const chestB = getB('upperChest') ?? getB('chest');
   if (chestB) chestB.rotation.x += respFase * 0.018;
@@ -2979,22 +3348,27 @@ function aplicarCabezaSigueMiradaEncima(k) {
   const f = CONFIG.mirada.cabezaFraccion * 0.5 * k;
   const headB = getB('head');
   if (!headB) return;
+  _espejarHuesos();
   headB.rotation.y += (_cabezaMiradaYaw   * Math.PI / 180) * f;
   headB.rotation.x -= (_cabezaMiradaPitch * Math.PI / 180) * f;
+  _espejarHuesos();
 }
 
 // Llamada desde animate() en lugar del bloque de pose de cuerpo. Decide entre
 // procedural puro, clip puro, o la mezcla de los dos durante un crossfade.
 function actualizarAnimacionClips(dt, t) {
-  if (!_mixer) { _idleAmpMult = 1; aplicarCuerpoProcedural(t, dt); return; } // aún no cargó el VRM
-  updateGestos(dt);
+  if (!_mixer) { _idleAmpMult = 1; aplicarCuerpoProcedural(t, dt); return; } // overlay, o aún no cargó el VRM
+  updateDirector(dt);
 
-  // Salida NATURAL de un clip 'bucle' con tope (sad/angry, duracionS): arranca
+  // Salida NATURAL de un clip 'bucle' con tope (baile corto, duracionS): arranca
   // el fundido en los últimos fadeOut segundos del tope, no de golpe al llegar
-  // a 0 — mismo criterio que el chequeo de abajo para clips 'unaVez'.
+  // a 0 — mismo criterio que el chequeo de abajo para clips 'unaVez'. Un baile
+  // no se funde: al vencer el tope el director encadena el siguiente (puente).
   if (_clipTopeTimer != null) {
     _clipTopeTimer -= dt;
-    if (_clipTopeTimer <= CONFIG.animaciones.fadeOut) { _clipTopeTimer = null; volverABaseIdle(false); }
+    if (_accionActual?._esBaile) {
+      if (_clipTopeTimer <= 0) { _clipTopeTimer = null; _siguienteBaile = true; }
+    } else if (_clipTopeTimer <= CONFIG.animaciones.fadeOut) { _clipTopeTimer = null; volverABaseIdle(false); }
   }
 
   // Salida NATURAL de un clip 'unaVez' (gesto, o surprised/happy): arranca el
@@ -3005,11 +3379,11 @@ function actualizarAnimacionClips(dt, t) {
   // vez de saltar del último frame a la pose procedural y ahí SÍ empezar a
   // desvanecer. Si ya se disparó un corte forzado este mismo frame (arriba,
   // en updateGestos), _clipPesoObjetivo ya es 0 y esto no hace nada.
-  if (_accionActual && _accionActual.loop === THREE.LoopOnce && !_accionActual.paused && _clipPesoObjetivo === 1) {
+  if (_accionActual && !_accionActual._esBaile && _accionActual.loop === THREE.LoopOnce && !_accionActual.paused && _clipPesoObjetivo === 1) {
     const dur = _accionActual.getClip().duration;
     const restante = isFinite(dur) ? (dur - _accionActual.time) / Math.abs(_accionActual.timeScale || 1) : Infinity;
     if (restante <= CONFIG.animaciones.fadeOut) {
-      if (_accionActual._esGesto) volverABaseIdle(false); else volverAProcedural(false);
+      volverABaseIdle(false);
     }
   }
 
@@ -3043,7 +3417,10 @@ function actualizarAnimacionClips(dt, t) {
         _gestoActivo = false;
         _gestoTimer = _sortearIntervaloGesto();
       }
+      if (eraGesto) _caraGesto = null;
     }
+    _puente = null;
+    _qPrevValido = false;
     _clipFadeSalidaS = null;
     _idleAmpMult = 1;
     aplicarCuerpoProcedural(t, dt);
@@ -3054,7 +3431,7 @@ function actualizarAnimacionClips(dt, t) {
   // (hombro/upperArm/lowerArm/mano), el resto del cuerpo queda 100% procedural
   // (getStatePose('idle') ya con ampProcedural). Durante el crossfade
   // (mezclando) todavía se mezclan todos los huesos por _clipPeso.
-  const idleBrazos = esIdleClip && _clipPeso >= 0.999;
+  const idleBrazos = esIdleClip && _clipPeso >= 0.999 && CONFIG.animaciones.idle.soloBrazos;
   const mezclando  = _clipPeso < 0.999;
 
   if (mezclando || idleBrazos) {
@@ -3064,6 +3441,10 @@ function actualizarAnimacionClips(dt, t) {
   }
 
   if (esIdleClip && poseBaseModo() === 'bucle') _actualizarVelIdle(dt);
+  // A pleno peso, lo que hay ahora en los huesos es la pose visible del frame
+  // anterior: se guarda por si este update da la vuelta a un bucle ('loop').
+  _qPrevValido = !mezclando && !idleBrazos;
+  if (_qPrevValido) for (const h of _huesosNorm) h.qPrev.copy(h.node.quaternion);
   _mixer.update(dt);                                          // el clip escribe .quaternion
 
   if (idleBrazos) {
@@ -3077,6 +3458,7 @@ function actualizarAnimacionClips(dt, t) {
       }
     }
     if (_hipsNode) _hipsNode.position.copy(_hipsPosProc);
+    _aplicarPuente(dt);
     // aplicarCuerpoProcedural ya puso respiración/mirada para todo el cuerpo;
     // NO se suman de nuevo (sería doble). La mínima pérdida de respiración en
     // hombros (mezclados 0.8 al clip) no se nota.
@@ -3094,7 +3476,9 @@ function actualizarAnimacionClips(dt, t) {
     }
   }
 
-  aplicarRespiracionEncima(t, pesoBlend);
+  _aplicarPuente(dt);
+  // Sin respiración por código encima: los clips ya respiran. Solo la cabeza
+  // acompaña un poco a la mirada (los ojos siguen a la cámara).
   if (estado !== 'thinking') aplicarCabezaSigueMiradaEncima(pesoBlend);
 }
 
@@ -3104,6 +3488,7 @@ function actualizarAnimacionClips(dt, t) {
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
+  if (_modeloCambioPendiente && !hayVozSonando()) cambiarModelo(_modeloCambioPendiente);
   if (!vrm) { renderer.render(scene, camera); return; }
 
   const t = clock.getElapsedTime();
@@ -3163,7 +3548,7 @@ function animate() {
     }
     // Overlay: recién ahora, con la pose de reposo aplicada y el encuadre
     // definitivo, se muestra el modelo (nace oculto, ver la carga del VRM).
-    if (ES_OVERLAY) vrm.scene.visible = true;
+    vrm.scene.visible = true;
   }
 
   // Visemes (vía vrc.*) + jaw: DESPUÉS de vrm.update(), porque expressionManager
@@ -3216,10 +3601,13 @@ function crearPanelChat() {
         <button data-modo="eco" type="button">Eco</button>
       </div>
       <div id="chat-header-actions">
+        <button id="chat-modelo" class="chat-btn-texto" type="button" title="Elegir el modelo del avatar">Modelo ▾</button>
+        <button id="chat-baile" class="chat-btn-texto" type="button" title="Activar o desactivar el modo baile">Bailar</button>
         <button id="chat-voz" type="button" title="Silenciar voz">🔊</button>
         <button id="chat-reset" type="button" title="Limpiar conversación">🗑</button>
       </div>
     </div>
+    <div id="chat-modelos" hidden></div>
     <div id="chat-messages"></div>
     <div id="chat-status"></div>
     <div id="chat-inputbar">
@@ -3238,6 +3626,37 @@ function crearPanelChat() {
   const $reset    = panel.querySelector('#chat-reset');
   const $modoBtns = panel.querySelectorAll('#chat-modeselect button');
   const $paleta   = panel.querySelector('#chat-paleta');
+  const $btnModelo = panel.querySelector('#chat-modelo');
+  const $btnBaile  = panel.querySelector('#chat-baile');
+  const $modelos   = panel.querySelector('#chat-modelos');
+
+  // ── Selector de modelo y modo baile ──
+  function pedirModelo(ruta) {
+    if (!_ws || _ws.readyState !== WebSocket.OPEN) { agregarSistema('Sin conexión con el servidor.'); return; }
+    _ws.send(JSON.stringify({ tipo: 'prefs_set', seccion: 'modelo', cambios: { vrm: ruta } }));
+    $modelos.hidden = true;
+    $btnModelo.classList.remove('activo');
+  }
+  function pintarModelos() {
+    $modelos.innerHTML = '';
+    if (!_modelosLista.length) { $modelos.textContent = 'No hay modelos en models/vrm/.'; return; }
+    for (const m of _modelosLista) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'modelo-item' + (m.ruta === MODELO_ACTIVO ? ' activo' : '');
+      b.textContent = `${m.titulo} — ${m.autor}${m.credito ? ' (crédito)' : ''} · VRM ${m.version ?? '?'}`;
+      b.title = m.ruta;
+      b.onclick = () => pedirModelo(m.ruta);
+      $modelos.appendChild(b);
+    }
+  }
+  $btnModelo.addEventListener('click', () => {
+    $modelos.hidden = !$modelos.hidden;
+    $btnModelo.classList.toggle('activo', !$modelos.hidden);
+    if (!$modelos.hidden) { pintarModelos(); _ws?.send(JSON.stringify({ tipo: 'modelos_get' })); }
+  });
+  $btnBaile.addEventListener('click', () => setModoBaile(!_modoBaile));
+  $btnBaile.classList.toggle('activo', _modoBaile);
 
   let modoActivo = 'ia';
   let esperandoRespuesta = false;
@@ -3340,6 +3759,22 @@ function crearPanelChat() {
   }
 
   const COMANDOS = {
+    modelo: {
+      descripcion: 'Cambiar de modelo VRM',
+      listar() {
+        return _modelosLista.map(m => ({ valor: m.ruta, titulo: m.titulo, desc: m.autor + (m.ruta === MODELO_ACTIVO ? ' · actual' : '') }));
+      },
+      ejecutar(arg) {
+        const f = (arg || '').trim().toLowerCase();
+        const hit = _modelosLista.find(m => m.ruta.toLowerCase() === f || m.titulo.toLowerCase() === f || m.archivo.toLowerCase().startsWith(f));
+        if (!f || !hit) { agregarSistema(`Modelos: ${_modelosLista.map(m => m.archivo).join(', ') || 'ninguno'}`); return; }
+        pedirModelo(hit.ruta);
+      },
+    },
+    bailar: {
+      descripcion: 'Activar/desactivar el modo baile',
+      ejecutar() { setModoBaile(!_modoBaile); },
+    },
     animaciones: {
       descripcion: 'Disparar un clip de animación',
       listar() {
@@ -3599,6 +4034,13 @@ function crearPanelChat() {
     },
     // Lo llama _intentarLanzarClipEnEspera() cuando por fin sale un clip que
     // estaba esperando a que Rem terminara de hablar.
+    onSistema(texto) { agregarSistema(texto); },
+    onModeloCargado(ruta, titulo, autor) {
+      agregarSistema(`Modelo: ${titulo}${autor ? ` — ${autor}` : ''}`);
+      if (!$modelos.hidden) pintarModelos();
+    },
+    onModelos() { if (!$modelos.hidden) pintarModelos(); },
+    onModoBaile(on) { $btnBaile.classList.toggle('activo', on); },
     onClipLanzado(archivo) {
       agregarSistema(`▶ ${etiquetaClip(archivo)}`);
     },
@@ -3610,7 +4052,8 @@ function crearPanelChat() {
       else if (est === 'ignorado')       { setEstadoUI('', ''); agregarSistema(`🎙 Ignorado: ${detalle}`); }
       else {
         if (!esperandoRespuesta) setEstadoUI('', '');
-        if (detalle) agregarSistema(`🎙 ${detalle}`);
+        // Un "stop" sin grabación (p. ej. el bindrt de soltar Super) no es noticia.
+        if (detalle && detalle !== 'no estaba grabando') agregarSistema(`🎙 ${detalle}`);
       }
     },
     onTranscripcion(texto) {
@@ -3771,6 +4214,7 @@ if (ES_OVERLAY) crearOverlayUI(); else crearPanelChat();
 // ═══════════════════════════════════════════════════
 let _wsRetries = 0;
 let _ws = null;
+let _modelosLista = [];   // modelos_lista del servidor (models/vrm/)
 
 (function conectar() {
   if (_wsRetries >= CONFIG.ws.maxRetries) {
@@ -3785,6 +4229,7 @@ let _ws = null;
     _ws.send(JSON.stringify({ tipo: 'hola', rol: 'avatar' }));
     // Preferencias del panel (repertorio de animaciones): llegan en prefs_estado.
     _ws.send(JSON.stringify({ tipo: 'prefs_get' }));
+    _ws.send(JSON.stringify({ tipo: 'modelos_get' }));
     _wsRetries = 0;
   };
   _ws.onmessage = e => {
@@ -3803,11 +4248,23 @@ let _ws = null;
         window.__remChat?.onError(d.mensaje ?? 'error desconocido');
       } else if (d.tipo === 'prefs_estado') {
         aplicarPrefsAnim(d.prefs?.animaciones);
+        if (d.prefs?.modelo?.vrm) cambiarModelo(d.prefs.modelo.vrm);
       } else if (d.tipo === 'prefs_actualizadas') {
         if (d.seccion === 'animaciones') aplicarPrefsAnim(d.prefs);
+        if (d.seccion === 'modelo' && d.prefs?.vrm) cambiarModelo(d.prefs.vrm);
+      } else if (d.tipo === 'prefs_error') {
+        if (d.seccion === 'modelo') window.__remChat?.onSistema?.(`⚠ ${d.mensaje}`);
+      } else if (d.tipo === 'modelos_lista') {
+        _modelosLista = Array.isArray(d.modelos) ? d.modelos.filter(m => !m.error) : [];
+        window.__remChat?.onModelos?.();
+      } else if (d.tipo === 'emocion') {
+        recibirEmocion(String(d.emocion ?? ''));
       } else if (d.tipo === 'debug_clip') {
         window.dispararClipDebug?.(String(d.nombre ?? ''));
       } else if (d.tipo === 'ptt_estado') {
+        // Escuchando: estado local 'listening' (pose atenta; corta el baile).
+        if (d.estado === 'escuchando' || d.estado === 'transcribiendo') { if (estado === 'idle') estado = 'listening'; }
+        else if (estado === 'listening') estado = 'idle';
         window.__remChat?.onPttEstado?.(d.estado, d.motivo || d.nota || '');
       } else if (d.tipo === 'ptt_transcripcion') {
         window.__remChat?.onTranscripcion?.(String(d.texto ?? ''), d.ms ?? 1000);

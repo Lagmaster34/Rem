@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """bench_chat.py — REPL de depuración para la capa LLM (llm/) y el pipeline de
-voz/lipsync/avatar, sin GUI. No importa Rem.py (no se puede: el Python
-3.10.14 del venv se compiló sin _tkinter).
+voz/lipsync/avatar, sin GUI.
 
 La APLICACIÓN es rem_chat.py (levanta el servidor HTTP/WS y abre la ventana).
 bench_chat.py es una herramienta de depuración que se adapta:

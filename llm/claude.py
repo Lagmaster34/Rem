@@ -7,8 +7,7 @@ Elección de modelo: Claude Sonnet 5 (familia intermedia), no el modelo tope
 la latencia importa más que la capacidad máxima de razonamiento, y cada
 turno reenvía el system prompt completo (aunque cacheado) — el modelo tope
 es caro y lento para charla. Sonnet 5 balancea fidelidad de personaje/
-instrucciones (necesaria para que el catálogo de acciones en JSON se
-formatee bien dentro de la respuesta) contra costo/latencia; Haiku 4.5 es la
+instrucciones (y tool calling fiable) contra costo/latencia; Haiku 4.5 es la
 alternativa más barata/rápida si hace falta apretar más la latencia, a costa
 de fidelidad de personaje. Ambos configurables vía config.toml [llm.claude].
 """

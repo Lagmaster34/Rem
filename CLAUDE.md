@@ -1,5 +1,25 @@
 # Rem — Asistente Virtual IA
 
+## ⚠ Cambio 2026-11-04: avatar multimodelo y director de animación (leer antes que lo de abajo)
+- **Rem (rem.vrm, rem_naenae.vrm) y los 17 clips de `VRMA_MotionPack/` ("Rem anterior") salieron del
+  proyecto** (respaldo en `~/Descargas/rem_respaldo/`). Lo que abajo hable de `rem.vrm`, sus visemes vrc.* o
+  `Thinking.vrma` es historia.
+- Modelos en `models/vrm/` (neru, ls15, lili, noir; créditos en `models/README.md`), solo locales: `*.vrm`/`*.glb`
+  en `.gitignore` y rechazados por `hooks/`. Cambio en caliente: botón 👤 / `/modelo` → `prefs_set modelo.vrm` →
+  `prefs_actualizadas` → `cambiarModelo()` (desmonta con `VRMUtils.deepDispose`, `uncacheRoot`, invalida por
+  `_modeloGen`). `modelos_vrm.py` + WS `modelos_get`/`modelos_lista`.
+- Autodetección por modelo: VRM 1.0 sin giro de 180° y con la pose procedural espejada (`_espejarHuesos`: x/z del
+  cuaternión negados); lipsync por los binds de aa/ih/ou/ee/oh; emociones a apagar al hablar por nombre de morph.
+  `CONFIG.modelos` queda solo para overrides.
+- Director (`updateDirector`, ideas del documento de Nerumi): ruleta de reposo cada 60–120 s (35 % idle procedural
+  —`IDLES_PROCEDURALES`—, 65 % VRMA con grupo raro 20 %), modo baile (`/bailar`, 💃) con bolsas sin repetición
+  (súper raro 3 %), saludo al abrir/cambiar de modelo, estado `listening` durante el push-to-talk, puente de pose
+  0,5 s entre clips y 0,12 s en la vuelta del bucle (reemplaza `crossFadeTo`). Catálogo v2: `raro`, `expresion`,
+  `saludo`, `ajustes.prob*`; `thinking` ya no tiene clip (procedural).
+- Emoción del chat: el modelo abre con `[FELIZ]`/`[TRISTE]`/`[ENOJADA]`/`[SORPRENDIDA]` (regla EMOCIÓN +
+  ejemplos de tono); `chat_sesion._extraer_emocion` la quita antes del chat/voz y el servidor manda `emocion`
+  → cara + clip de `porEstado`. **Sin banco de cumplimiento todavía** (cuántas respuestas la traen).
+
 ## Qué es este proyecto
 Asistente personal de IA con personalidad de Rem de Re:Zero. Corre en **Linux (Arch)**.  
 Habla (voz de Yoru, Piper local), escucha, recuerda, ejecuta acciones en el sistema y muestra un avatar
@@ -2176,7 +2196,6 @@ eliminó con `Rem.py` (recuperable del commit del 2026-09-22, «feat: portar 4 h
 > **Histórico**: las mediciones de abajo (jerga, "chimba", tú/vos...) son de la personalidad paisa,
 > reemplazada el 2026-11-04 por Kuroki Yoru (ver "Personalidad" más arriba). El mecanismo
 > (orden del prefijo, caché, sin ejemplos en eco) sigue igual.
-
 
 `EJEMPLOS_TONO` (turnos user/assistant falsos) define el tono de Rem en vez de describirlo en el
 prompt. `chat_sesion.procesar_turno()` arma cada turno así:

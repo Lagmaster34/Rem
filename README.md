@@ -134,7 +134,18 @@ dependencias, incluido torch); el historial está en git hasta el commit del 202
 
 ## 👤 Avatar
 
-`rem.vrm` (23,9 MB, **VRM 0.x**) renderizado con Three.js dentro de un WebView WebKit2GTK — una ventana de escritorio normal (`rem_chat.py`), decorada y opaca, con panel de chat a la derecha.
+**El modelo VRM no viene en el repo**: hay que colocarlo a mano. El que se usa por defecto es el
+**modelo VRM de Rem por NaeNae (VRoid Hub)**:
+
+- Va en `models/rem_naenae.vrm` (ruta en `config.toml` → `[avatar].modelo`). Se descarga de VRoid
+  Hub como `.glb` y se renombra a `.vrm`, sin modificarlo.
+- Licencia (del meta del archivo): sin modificaciones, sin uso comercial, redistribución permitida
+  con crédito. Detalle en [`models/README.md`](models/README.md).
+
+Alternativa: `rem.vrm` (VRM 0.x, autor "Skadi" en VRoid Hub) en la raíz; tampoco va en el repo,
+porque su licencia prohíbe redistribuirlo.
+
+Se renderiza con Three.js dentro de un WebView WebKit2GTK — una ventana de escritorio normal (`rem_chat.py`), decorada y opaca, con panel de chat a la derecha.
 
 **Animación de cuerpo:** clips `.vrma` reales (`Animaciones/`, se descargan a mano — ver `Animaciones/README.md`) reproducidos con `THREE.AnimationMixer`; mapeo estado→clip y gestos de reposo en `CONFIG.animaciones`. Los clips solo mueven huesos de cuerpo — respiración, parpadeo, saccades, mirada a cámara y lipsync se aplican siempre encima.
 
@@ -308,7 +319,7 @@ venv/bin/python rem_chat.py   # consola del frontend volcada a rem_chat.log; ins
 
 ## 🗺️ Pendiente
 
-1. **Ventana GTK (`rem_chat.py`) con panel de chat — hecha.** El overlay transparente (`rem_overlay.py`) se eliminó: `rem_chat.py` lo sustituye por completo.
+1. **Ventana y overlay — hechos.** Los dos son `rem_chat.py` (`--modo ventana|overlay`), en un mismo proceso con un solo servidor.
 2. **`Rem.py` / Tkinter — eliminado.** Lo que no se portó (extracción automática de memoria larga, el resto del catálogo de acciones) queda en el historial de git (commit del 2026-09-22, «feat: portar 4 herramientas del ejecutor de acciones a rem_chat (tool calling nativo)»).
 3. Extracción de memoria larga en `rem_chat.py`: hoy la memoria larga se lee pero nada la actualiza (antes lo hacía `extraer_memoria_importante()` en `Rem.py`).
 
@@ -322,5 +333,5 @@ Sin cariño ni romance. Natural, con la tecnología como su fuerte, y que **cont
 
 - TTS: [Piper](https://github.com/OHF-voice/piper1-gpl) (GPL-3.0)
 - Avatar: [three.js](https://threejs.org) y [three-vrm](https://github.com/pixiv/three-vrm) (MIT), vendorizados en `vendor/`
+- Modelo VRM de Rem por NaeNae (VRoid Hub)
 - LLM local: [Ollama](https://ollama.com) + Qwen3.5-4B
-- Avatar: [three-vrm](https://github.com/pixiv/three-vrm)

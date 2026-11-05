@@ -9,7 +9,7 @@ import json
 import struct
 import sys
 
-RUTA_VRM = "rem.vrm"
+RUTA_VRM = "models/vrm/neru.vrm"
 
 GLB_MAGIC = b"glTF"
 CHUNK_TYPE_JSON = b"JSON"

@@ -1,9 +1,8 @@
 """Convierte el stream de un LLMProvider en oraciones completas, para poder
 hablar (TTS) apenas termina cada una en vez de esperar la respuesta entera.
 
-Reutiliza la misma regla de corte que _partir_oraciones() en Rem.py: partir en
-. ! ? seguidos de espacio (así "…" queda pegado a la frase), descartando
-fragmentos de menos de 3 caracteres.
+Regla de corte: partir en . ! ? seguidos de espacio (así "…" queda pegado a
+la frase), descartando fragmentos de menos de 3 caracteres.
 """
 import re
 from typing import AsyncIterator

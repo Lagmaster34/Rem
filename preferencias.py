@@ -7,7 +7,7 @@ tampoco está ahí, del default del código. Prioridad:
     preferencias.json  >  config.toml  >  default del código
 
 Se lee por sección (`obtener("modelo")`) y se escribe por parche
-(`aplicar("modelo", {"vrm": "rem.vrm"})`), validado contra ESQUEMA: un parche con
+(`aplicar("modelo", {"vrm": "models/vrm/neru.vrm"})`), validado contra ESQUEMA: un parche con
 una clave desconocida o un valor inválido se rechaza ENTERO, sin tocar nada
 (mismo criterio de atomicidad que SesionChat.cambiar_modo()). Un valor `None`
 en el parche borra la preferencia y la sección vuelve al valor de config.toml.
@@ -153,7 +153,7 @@ def _toml(seccion, clave, default):
 # EFECTIVO (con estas preferencias encima) y sería circular.
 ESQUEMA: dict[str, dict[str, Campo]] = {
     "modelo": {
-        "vrm": Campo(_validar_vrm, lambda: _toml("avatar", "modelo", "rem.vrm")),
+        "vrm": Campo(_validar_vrm, lambda: _toml("avatar", "modelo", "models/vrm/neru.vrm")),
     },
     # Las cuatro primeras son EXCEPCIONES al catálogo ({} = todo como dice
     # catalogo.json); las dos últimas tienen su default en catalogo.json ->
