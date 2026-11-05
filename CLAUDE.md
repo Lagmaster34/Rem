@@ -224,8 +224,11 @@ muletilla まあ、どうでもいい. Reemplazó a la "amiga paisa" (voseo, jer
 conserva las reglas duras (longitud, honestidad —corrige lo falso con burla en la primera frase—, no
 inventar, herramientas, cuándo hablar de tecnología, emoción: casi nunca etiqueta, [FELIZ] solo
 excepcional) y está en tú, no en voseo. El tono sale de los 6 ejemplos de `ejemplos_tono.py`.
-Antes del TTS, `chat_sesion._para_voz()` cambia "!"/"¡" por puntos y la muletilla japonesa por
-"maa, dou de mo ii" (Piper/espeak "es" no lee japonés); el chat muestra el texto tal cual.
+Antes del TTS, `chat_sesion._para_voz()` cambia "!"/"¡" por puntos, la muletilla japonesa por
+"maa, dou demo íi" (Piper/espeak "es" no lee japonés; con "ii" leía el romano II, "dos", y una "í" sola
+como "í acentuada") y "skill issue"/"npc(s)" por "skil íshiu"/"enpisí(s)". Medido con
+`voz.phonemize()`; los WAV de las variantes probadas están en `~/Descargas/prueba-voz/`. El chat
+muestra el texto tal cual.
 Si se agrega o quita una tool, actualizar la regla "HERRAMIENTAS" del prompt.
 
 ## Configuración (.env en la raíz del proyecto)

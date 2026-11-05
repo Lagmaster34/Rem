@@ -262,11 +262,17 @@ async def _quitar_marcas(chunks, on_quitado):
 # ── Filtro previo al TTS (solo el audio: el chat muestra el texto tal cual) ──
 # Yoru nunca exclama: "!" y "¡" pasan a punto, así Piper no le pone entonación
 # de exclamación si al modelo se le escapa una. Y Piper (espeak "es") no lee
-# japonés: la muletilla va en romaji.
+# japonés: la muletilla va en romaji. Ojo con lo que espeak "es" hace con el
+# romaji (medido con voz.phonemize, WAV en ~/Descargas/prueba-voz): "ii" lo lee
+# como el número romano II ("dos") y una "í" sola como "í acentuada"; "íi" da
+# una i larga. La jerga en inglés va escrita como suena.
 _SUSTITUCIONES_VOZ = (
-    ("まあ、どうでもいい", "maa, dou de mo ii"),
-    ("¡", "."),
-    ("!", "."),
+    (re.compile(r"まあ[、,\s]*どうでもいい"), "maa, dou demo íi"),
+    (re.compile(r"\bskill issue\b", re.IGNORECASE), "skil íshiu"),
+    (re.compile(r"\bnpcs\b", re.IGNORECASE), "enpisís"),
+    (re.compile(r"\bnpc\b", re.IGNORECASE), "enpisí"),
+    (re.compile(r"¡"), ""),     # el de apertura se quita: como punto partía la frase
+    (re.compile(r"!"), "."),
 )
 
 
@@ -276,8 +282,8 @@ def _para_voz(texto: str) -> str:
     texto, quitados = _limpiar_marcas(texto)
     if quitados:
         print(f"  [Marcas] quitado antes del TTS: {quitados}", flush=True)
-    for a, b in _SUSTITUCIONES_VOZ:
-        texto = texto.replace(a, b)
+    for patron, reemplazo in _SUSTITUCIONES_VOZ:
+        texto = patron.sub(reemplazo, texto)
     # "¡Hola" quedaría ".Hola": sin punto suelto al inicio.
     return texto.lstrip(". ").strip() or texto.strip()
 
