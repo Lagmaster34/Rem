@@ -54,6 +54,7 @@ no basta con copiar la carpeta.
 | `personalidad.py` / `ejemplos_tono.py` | System prompt + contexto dinámico / turnos few-shot del tono. Ver "Ejemplos de tono (few-shot)" |
 | `Animaciones/` | Clips `.vrma` del avatar — no van al repo, se descargan a mano. Ver `Animaciones/README.md` y "Animación de cuerpo con clips VRMA" más abajo |
 | `chat_sesion.py` | `SesionChat` + `procesar_turno()` — estado de una conversación y el turno "en crudo" contra el LLM, compartido entre `bench_chat.py` y el panel/caja de chat de `rem_chat.py`. Ver "Panel de chat" más abajo |
+| `tokens_contexto.py` | Recorte del historial para caber en `num_ctx` + contador de tokens exacto (CLI). Ver "Recorte del historial (num_ctx)" |
 | `habla.py` | Pipeline de voz de salida de un turno (Piper -> timeline -> `enviar_audio()`), compartido entre `bench_chat.py` y `rem_chat.py`. Ver "Voz de Yoru (Piper)" |
 | `lipsync.py` | Alineaciones fonema→audio de Piper → timeline de visemes. Ver "Lipsync desde las duraciones del propio modelo" |
 | `stt/` | Capa de abstracción de voz de ENTRADA (STT): contrato + provider (`local.py` = faster-whisper). Ver "Modo overlay: push-to-talk" más abajo |
@@ -2155,23 +2156,40 @@ el propio modelo de 4B con la personalidad técnica.
 ### Acciones del sistema en rem_chat (`acciones.py`)
 
 rem_chat ejecuta acciones por **tool calling nativo** (`stream_chat(tools=...)`), no por JSON en el
-texto (que en modo voz se leería en voz alta). `acciones.py` tiene 6 tools: `abrir_programa` (solo
+texto (que en modo voz se leería en voz alta). `acciones.py` tiene 4 tools: `abrir_programa` (solo
 resuelve contra `.desktop` instalados, nunca ejecuta un nombre arbitrario), `apagar_pc` (con
-confirmación; no se ofrece en overlay), `buscar_en_navegador`, `buscar_archivos`, y dos de solo
-lectura: `estado_pc` (CPU/RAM/disco vía psutil) y `calcular`. Si el modelo pide
+confirmación; no se ofrece en overlay), `buscar_en_navegador` y `buscar_archivos`. Si el modelo pide
 una tool, `procesar_turno()` descarta el texto que la acompañe y habla la respuesta de
 `acciones.ejecutar_tool_async()`. `bench_chat.py` llama a `procesar_turno()` **sin** `tools=`.
 
-**`calcular`** evalúa la expresión recorriendo el AST (`ast.parse(mode="eval")`), **nunca `eval()`**:
-solo números, `+ - * / // % **`, `sqrt`/`raiz`/`abs` de un argumento y `pi`. Acepta `×`, `÷`, `^` y
-coma decimal entre dígitos. Topes: 200 caracteres, exponente ≤ 100, |resultado| ≤ 1e15 (así
-`9**9**9` no cuelga el proceso). Responde "Da 84." con coma decimal, para que el TTS lo lea bien. El
-prompt (regla HERRAMIENTAS) dice "Para cualquier cuenta, usá calcular; nunca hagás cuentas de cabeza".
+**`estado_pc` y `calcular` se quitaron (2026-11-05)**: con las tools en cada turno, el modelo de 4B las
+llamaba sin motivo — "me despidieron del trabajo" → `estado_pc` en 2 de 2, "examen de cálculo" →
+`calcular` ("Da 30."), y después imitaba esas cifras de CPU/RAM en respuestas normales. Su código
+(evaluador AST de `calcular` incluido) está en git hasta el commit anterior a ese cambio. `psutil` salió
+de `requirements.txt` (nada más lo usaba). La regla HERRAMIENTAS ahora dice "No ves el estado de la PC:
+nunca inventes esas cifras".
 
-**`estado_pc` no da la hora**: sin aclararlo en su descripción, "¿qué hora es?" la disparaba en 4 de 9
-(respondía con la RAM en vez de leer la `[FECHA Y HORA ACTUAL]` del mensaje). Con la aclaración, 0 de 9.
+**Tools bajo demanda** (`chat_sesion.pide_herramientas()`): las tools solo se le mandan al modelo si el
+mensaje contiene un disparador de `config.toml` → `[herramientas].disparadores` (palabra completa, sin
+tildes; `"busca*"` acepta cualquier terminación; formas verbales a propósito: `lanza`/`lanzar*`, no
+`lanza*`, que pegaba con "lanzamiento"). Se loguea `[Tools] sí, por 'abre*'` / `no`. Prefijo medido:
+**1597 tok sin tools, 2126 con tools** (antes 2374 siempre, con 6 tools). Alternar no rompe la caché:
+Ollama conserva los dos prefijos, y solo la primera aparición de cada variante paga la evaluación
+completa (~0,9 s sin tools, ~1,7 s con tools); después cada turno evalúa en ~130 ms alterne o no.
+Por eso `precargar_prefijo()` calienta las dos variantes. Banco del 2026-11-05 (33 turnos): tools
+ofrecidas 1 vez ("abre steam" → `abrir_programa`), 0 llamadas espurias. Efecto secundario visto: sin
+tools en una conversación larga, Yoru empieza a ofrecer acciones que no tiene ("si quieres que busque
+X, dímelo", "déjame ver la lista de paquetes") y el patrón se repite turno a turno.
 
-**Prueba con stubs (2026-09-27, tools de ventana, prompt real)**: las tools con efectos
+**Marcas en el texto** (`chat_sesion._quitar_marcas()`): el modelo a veces escribe como texto una tool
+call o una etiqueta inventada (`[ENJOYED abrir_programa('steam')]`). Un filtro del stream quita todo
+lo que va entre corchetes y las llamadas tipo `nombre_con_guion('...')` o `nombre('...')` antes del
+chat, la voz y el historial, y lo loguea (`[Marcas] quitado de la respuesta ...`). Retiene solo la
+última palabra (o un `[` abierto) hasta ver qué la sigue. Probado con 500 particiones aleatorias de
+cada caso: resultado idéntico. `_para_voz()` aplica la misma limpieza como red de seguridad. Efecto
+aceptado: un `print('hola')` en una explicación técnica también se quita.
+
+**Prueba con stubs (2026-09-27, histórica: aún con 6 tools siempre presentes)**: las tools con efectos
 (abrir/apagar/navegador/archivos) se reemplazan por stubs; `estado_pc`/`calcular` corren de verdad.
 15/15 llamadas correctas (2 por tool con efectos, 4 `estado_pc`, 3 `calcular` con el resultado
 correcto). Controles sin tool: 5/6 — "abrí tu mente, parce" abrió un programa (el falso positivo
@@ -2190,6 +2208,29 @@ eliminó con `Rem.py` (recuperable del commit del 2026-09-22, «feat: portar 4 h
 
     # IMPORTANTE: 
     AL MOMENTO DE HACER COMMIT NO PONGAS TU AUDITORIA Claude/Anthropic DETRO DEL COMMIT
+
+## Recorte del historial (num_ctx) — `tokens_contexto.py`
+
+**Qué hace Ollama si el turno no cabe** (verificado 2026-11-05, Ollama 0.33.3, num_ctx 4096: system con
+un secreto, un ejemplo con otro, 40 pares de relleno): conserva el mensaje de system pero descarta los
+mensajes más viejos, que son **los ejemplos de tono** (el modelo recordaba el secreto del system y había
+perdido el del ejemplo), y llena hasta ~3968 tok sin dejar sitio a la respuesta. Por eso
+`procesar_turno()` recorta antes: `PresupuestoContexto.recortar()` quita turnos completos del principio
+del historial (un user + sus respuestas) hasta que prompt + 400 tok de margen quepa en num_ctx. Nunca
+toca system, tools, ejemplos ni memoria larga, ni el último mensaje. Solo con providers que exponen
+`num_ctx` (Ollama).
+
+- **Sin llamadas extra por turno**: Ollama no tiene `/api/tokenize`, y tokenizar con otra petición
+  evicta la caché KV. El costo del prefijo fijo sale exacto del `prompt_eval_count` de la respuesta
+  anterior (incluye lo cacheado: medido, 819 tok las dos veces con 640 → 74 ms); el historial se estima
+  por caracteres con una razón chars/token recalibrada con cada respuesta (`eval_count`). Costo: ~0,45 ms.
+  Error medido (40 turnos): ±30 tok en régimen, hasta -84 justo tras un recorte grande.
+- **Histéresis de 600 tok**: quitar el turno más viejo invalida la caché KV de todo el historial. Sin
+  histéresis se recortaba un par por turno y cada turno pasaba de ~0,8 a ~2 s; con ella, un recorte
+  grande cada varios turnos.
+- `venv/bin/python tokens_contexto.py` imprime el desglose exacto del prefijo (system, ejemplos, cada
+  tool); con rutas de archivo como argumentos, cuenta sus tokens. Usa el tokenizador real vía Ollama
+  (evicta la caché KV: nunca dentro de un turno).
 
 ## Ejemplos de tono (few-shot) — `ejemplos_tono.py`
 

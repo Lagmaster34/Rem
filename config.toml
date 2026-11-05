@@ -144,6 +144,23 @@ cpu_threads  = 0
 initial_prompt = "Conversación con Rem, una asistente virtual. Vocabulario: Rem, Esteban, Ollama, Claude, Anthropic, Hyprland, Arch Linux, Python, PipeWire, GTK, WebKit, Whisper, Piper, VRM."
 
 
+[herramientas]
+# Las tools (abrir programa, apagar, buscar en internet, buscar archivos) solo
+# se le mandan al modelo si el mensaje del usuario contiene alguna de estas
+# palabras. Sin ninguna, el turno va sin tools: ~530 tok menos de prompt, y el
+# modelo de 4B no puede llamarlas por error ("me despidieron" -> estado_pc,
+# medido 2 de 2 cuando las tools iban siempre).
+# Coincidencia por palabra completa, sin mayúsculas ni tildes; "*" al final =
+# cualquier terminación ("busca*" -> busca, buscar, búscame, buscalo).
+disparadores = [
+    "abre*", "abrir*", "abrime",
+    "lanza", "lanzar*", "lanzame", "inicia", "iniciar*", "iniciame", "ejecuta*", "arranca*",
+    "busca*", "googlea*", "google",
+    "apaga*", "shutdown",
+    "archivo*", "carpeta*", "encuentra*", "encontrar", "localiza*",
+]
+
+
 [contexto]
 # Contexto que rem_chat (ventana y overlay) antepone al mensaje del usuario:
 # solo la línea de fecha/hora, según su modo:
@@ -153,8 +170,8 @@ initial_prompt = "Conversación con Rem, una asistente virtual. Vocabulario: Rem
 # Con la FECHA siempre puesta, ~2 de 23 respuestas a "Hola, Rem." la leyeron en
 # voz alta sin que nadie la pidiera — por eso es condicional (ver CLAUDE.md).
 # El estado de la PC ya NO va acá: con la línea de PC inyectada, 6 de 6 "Hola"
-# comentaban el disco. Ahora es la herramienta de solo lectura estado_pc
-# (acciones.py), que el modelo llama solo si le preguntan por la PC.
+# comentaban el disco. Después fue la herramienta estado_pc, quitada el
+# 2026-11-05 porque el modelo la llamaba sin que nadie preguntara.
 linea_fecha = "condicional"
 # Coincidencia por PALABRA COMPLETA (o frase), sin distinguir mayúsculas ni
 # tildes. Incluye variantes con y sin tilde por lo que pueda devolver el STT.

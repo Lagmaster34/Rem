@@ -86,6 +86,12 @@ class OllamaProvider(LLMProvider):
         self._client: httpx.AsyncClient | None = None
         self._client_loop: asyncio.AbstractEventLoop | None = None
 
+    @property
+    def num_ctx(self) -> int | None:
+        """Tamaño del contexto: chat_sesion recorta el historial para caber
+        (ver tokens_contexto.py). Los providers sin este atributo no recortan."""
+        return self._options.get("num_ctx")
+
     def _obtener_cliente(self) -> httpx.AsyncClient:
         loop = asyncio.get_running_loop()
         if self._client is None or self._client_loop is not loop:

@@ -92,8 +92,8 @@ _PALABRAS_FECHA_DEFAULT = [
 def leer_config_contexto() -> dict:
     """[contexto] de config.toml: cuándo se le inyecta al LLM la línea de
     fecha/hora del contexto dinámico (ver personalidad.construir_contexto_dinamico()).
-    El estado de la PC ya no va en el contexto: es la herramienta estado_pc
-    (acciones.py).
+    El estado de la PC ya no va en el contexto (ni existe la herramienta
+    estado_pc desde 2026-11-05).
 
     linea_fecha: "condicional" (default; solo si el mensaje del usuario
                  contiene alguna palabra de palabras_fecha), "siempre" o "nunca".
@@ -106,3 +106,21 @@ def leer_config_contexto() -> dict:
         "linea_fecha": _modo("linea_fecha"),
         "palabras_fecha": [str(x) for x in cfg.get("palabras_fecha", _PALABRAS_FECHA_DEFAULT)],
     }
+
+
+# Ver [herramientas] en config.toml. "*" al final = cualquier terminación.
+DISPARADORES_HERRAMIENTAS_DEFAULT = [
+    "abre*", "abrir*", "abrime",
+    "lanza", "lanzar*", "lanzame", "inicia", "iniciar*", "iniciame", "ejecuta*", "arranca*",
+    "busca*", "googlea*", "google",
+    "apaga*", "shutdown",
+    "archivo*", "carpeta*", "encuentra*", "encontrar", "localiza*",
+]
+
+
+def leer_disparadores_herramientas() -> list[str]:
+    """[herramientas].disparadores de config.toml: palabras que, si aparecen en
+    el mensaje del usuario, hacen que el turno le ofrezca las tools al modelo
+    (ver chat_sesion.pide_herramientas()). Sin ninguna, el turno va sin tools."""
+    cfg = leer_config_toml().get("herramientas", {})
+    return [str(x) for x in cfg.get("disparadores", DISPARADORES_HERRAMIENTAS_DEFAULT)]

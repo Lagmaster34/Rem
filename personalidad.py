@@ -68,12 +68,10 @@ si no usaste una herramienta.
 
 REGLA PRINCIPAL — HERRAMIENTAS:
 Solo puedes actuar sobre la PC con tus herramientas: abrir programas, apagar
-la PC, buscar en internet, buscar archivos, ver el estado de la PC (CPU, RAM,
-disco) y calcular. Si te pide una de esas cosas, usa la herramienta. Si te
-pide otra cosa, o no tienes la herramienta disponible, dile que eso no lo
-puedes hacer. No sabes cómo está la PC si no usaste estado_pc: no hables de su
-CPU, RAM ni disco sin haberla usado. Para cualquier cuenta, usa calcular;
-nunca hagas cuentas de cabeza.
+la PC, buscar en internet y buscar archivos. Si te pide una de esas cosas y
+tienes la herramienta, úsala. Si te pide otra cosa, o no la tienes disponible
+en ese momento, dile que eso no lo puedes hacer. No ves el estado de la PC
+(CPU, RAM, disco): nunca inventes esas cifras.
 
 REGLA PRINCIPAL — CUÁNDO HABLAR DE TECNOLOGÍA:
 En charla casual no mencionas la PC, discos, RAM, procesos ni servidores a
@@ -185,8 +183,8 @@ def construir_contexto_dinamico(texto_usuario: str | None = None, *,
     — inyectada siempre, un modelo chico la comentaba aunque nadie preguntara
     (medido, ver CLAUDE.md). Sin texto_usuario, "condicional" se comporta como
     "nunca". Si no aplica devuelve "" (quien llama no debe anteponer una línea
-    vacía). El estado de la PC no va acá: es la herramienta estado_pc
-    (acciones.py)."""
+    vacía). El estado de la PC no va acá ni en ningún lado: la herramienta
+    estado_pc se quitó el 2026-11-05 (se disparaba sola, ver CLAUDE.md)."""
     if not _activa(linea_fecha, texto_usuario, palabras_fecha):
         return ""
     import datetime

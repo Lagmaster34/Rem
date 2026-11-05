@@ -23,6 +23,7 @@ import personalidad
 from ejemplos_tono import EJEMPLOS_TONO
 from llm import Done, Message, TextDelta, ToolCallChunk, dividir_en_oraciones, get_provider
 from llm.echo import EchoProvider
+from tokens_contexto import PresupuestoContexto
 
 MODOS_VALIDOS = ("ia", "eco")
 
@@ -54,10 +55,19 @@ def precargar_prefijo(tools=None):
     caché de Ollama y el primer turno tras una (re)carga no lo pague. `tools`
     tienen que ser las mismas que ofrecerá el panel (acciones.tools_disponibles()
     del modo activo): en el template del modelo van dentro del bloque system,
-    y si difieren el prefijo ya no coincide. No hace nada con Claude."""
+    y si difieren el prefijo ya no coincide. No hace nada con Claude.
+
+    Con tools bajo demanda (pide_herramientas()) hay dos prefijos: sin tools
+    (el caso normal) y con tools. Se precargan los dos: Ollama conserva ambos
+    en caché y alternar después cuesta lo mismo que no alternar (medido
+    2026-11-05: solo la primera aparición de cada variante paga la evaluación
+    completa, ~0,9 s sin tools y ~1,7 s con tools; luego ~130 ms por turno)."""
     import llm
-    llm.precargar_provider(personalidad.construir_prompt_sistema(),
-                           _prefijo_fijo(personalidad.cargar_memoria_larga()), tools)
+    system = personalidad.construir_prompt_sistema()
+    prefijo = _prefijo_fijo(personalidad.cargar_memoria_larga())
+    if tools:
+        llm.precargar_provider(system, prefijo, tools)
+    llm.precargar_provider(system, prefijo, None)
 
 
 class SesionChat:
@@ -95,6 +105,10 @@ class SesionChat:
         self.modo = modo
         self.provider = nuevo_provider
         self.historial = []
+        # Presupuesto de contexto (tokens_contexto.py): solo si el provider
+        # tiene un num_ctx que respetar (Ollama); Claude y eco no recortan.
+        num_ctx = getattr(nuevo_provider, "num_ctx", None)
+        self.presupuesto = PresupuestoContexto(num_ctx) if num_ctx else None
         return True
 
 
@@ -166,6 +180,85 @@ async def _extraer_emocion(chunks, on_etiqueta):
         yield TextDelta(retenido.lstrip())
 
 
+# ── Marcas que el modelo no debería escribir nunca ───────────────────────
+# El modelo chico a veces escribe como TEXTO lo que debería ser una tool call o
+# una etiqueta inventada ("[ENJOYED abrir_programa('steam')]", medido en el
+# banco del 2026-11-05). Se quita del texto antes de que llegue al chat, a la
+# voz y al historial (si quedara en el historial, el modelo lo imitaría), y se
+# registra en el log. La etiqueta de emoción del principio ya la sacó antes
+# _extraer_emocion(). Una llamada es un nombre con "_" seguido de paréntesis,
+# o cualquier nombre con un único argumento entre comillas: "print('hola')"
+# también se quita (Yoru habla, no escribe código).
+_RE_CORCHETES = re.compile(r"\[[^\[\]\n]{0,200}\]")
+_RE_LLAMADA = re.compile(r"\b\w*_\w*\([^()\n]{0,200}\)"
+                         r"|\b[^\W\d]\w*\(\s*(['\"])[^'\"\n]{0,200}\1\s*\)")
+# Lo que podría ser el principio de una marca todavía incompleta al final del
+# texto recibido: un "[" sin cerrar, o la última palabra (con o sin "(..."
+# abierto), que se retiene hasta ver qué la sigue.
+_RE_MARCA_PENDIENTE = re.compile(r"(\[[^\]\n]{0,200}|\b\w+(\([^)\n]{0,200})?)$")
+
+
+def _limpiar_marcas(texto: str) -> tuple[str, list[str]]:
+    """Quita corchetes y llamadas tipo funcion('...'). Devuelve (texto, quitados)."""
+    quitados = []
+
+    def _quitar(m):
+        quitados.append(m.group(0))
+        return ""
+    texto = _RE_LLAMADA.sub(_quitar, _RE_CORCHETES.sub(_quitar, texto))
+    if quitados:
+        texto = re.sub(r"[ \t]{2,}", " ", texto)
+        texto = re.sub(r" +([.,;:…?])", r"\1", texto)
+        texto = re.sub(r"[,;:]+([.…?])", r"\1", texto)
+    return texto, quitados
+
+
+async def _quitar_marcas(chunks, on_quitado):
+    """Deja pasar el stream sin las marcas de _limpiar_marcas(). Retiene solo
+    la cola que podría ser una marca a medio llegar (un "[" abierto o la
+    última palabra): el texto visible va como mucho una palabra por detrás."""
+    pendiente = ""
+    fin_con_espacio = True   # lo ya emitido termina en espacio (o no hay nada)
+    tras_marca = False       # se quitó una marca y todavía no salió texto después
+
+    def _soltar(final):
+        nonlocal pendiente, fin_con_espacio, tras_marca
+        limpio, quitados = _limpiar_marcas(pendiente)
+        for q in quitados:
+            on_quitado(q)
+        tras_marca = tras_marca or bool(quitados)
+        if tras_marca and fin_con_espacio:
+            # El espacio de antes de la marca ya salió: no duplicarlo.
+            limpio = limpio.lstrip(" \t")
+        m = None if final else _RE_MARCA_PENDIENTE.search(limpio)
+        corte = m.start() if m else len(limpio)
+        pendiente = limpio[corte:]
+        listo = limpio[:corte]
+        if final and tras_marca:
+            listo = listo.rstrip(" \t")
+        if listo:
+            fin_con_espacio = listo[-1].isspace()
+            tras_marca = tras_marca and not listo.strip()
+        return listo
+
+    async for chunk in chunks:
+        if isinstance(chunk, TextDelta):
+            pendiente += chunk.text
+            listo = _soltar(final=False)
+            if listo:
+                yield TextDelta(listo)
+            continue
+        if pendiente:
+            listo = _soltar(final=True)
+            if listo:
+                yield TextDelta(listo)
+        yield chunk
+    if pendiente:
+        listo = _soltar(final=True)
+        if listo:
+            yield TextDelta(listo)
+
+
 # ── Filtro previo al TTS (solo el audio: el chat muestra el texto tal cual) ──
 # Yoru nunca exclama: "!" y "¡" pasan a punto, así Piper no le pone entonación
 # de exclamación si al modelo se le escapa una. Y Piper (espeak "es") no lee
@@ -178,6 +271,11 @@ _SUSTITUCIONES_VOZ = (
 
 
 def _para_voz(texto: str) -> str:
+    # Red de seguridad: el stream ya viene sin marcas (_quitar_marcas), pero
+    # nada entre corchetes ni ninguna llamada a función debe llegar a Piper.
+    texto, quitados = _limpiar_marcas(texto)
+    if quitados:
+        print(f"  [Marcas] quitado antes del TTS: {quitados}", flush=True)
     for a, b in _SUSTITUCIONES_VOZ:
         texto = texto.replace(a, b)
     # "¡Hola" quedaría ".Hola": sin punto suelto al inicio.
@@ -199,6 +297,21 @@ async def _pasar_por(chunks, on_chunk):
 # puede llegar como abrir_programa('firefox') sin nombrarlo, así que basta el
 # verbo; sin verbo, tiene que aparecer el nombre del programa.
 _RE_PEDIDO_ABRIR = re.compile(r"\b(abr|lanz|inici|ejecut|arranc|corr[ea]|pon(e|me|le)?\b|open)")
+
+
+def pide_herramientas(texto_usuario: str, disparadores: list[str]) -> str | None:
+    """¿El mensaje muestra intención clara de usar una tool? Devuelve el primer
+    disparador que coincide (config.toml [herramientas]) o None. Palabra
+    completa, sin mayúsculas ni tildes; "*" al final acepta cualquier
+    terminación ("busca*" -> "búscame"). Sin coincidencia, el turno va sin
+    tools: el modelo chico no puede llamarlas por error y el prompt pesa menos."""
+    t = personalidad._normalizar(texto_usuario)
+    for d in disparadores:
+        raiz = personalidad._normalizar(d.rstrip("*"))
+        cola = r"\w*" if d.endswith("*") else ""
+        if raiz and re.search(r"\b" + re.escape(raiz) + cola + r"\b", t):
+            return d
+    return None
 
 
 def _tool_pertinente(call, texto_usuario: str) -> bool:
@@ -270,15 +383,22 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
     # arrastraba para siempre su propio bloque de fecha (y antes, de estado de la PC) — datos caducos que
     # el modelo, además, terminaba comentando.
     sesion.historial.append(Message(role="user", content=texto))
-    mensajes = sesion.historial
+    # Tools bajo demanda: solo si el mensaje muestra intención clara (ver
+    # pide_herramientas()). Ir y venir entre con/sin tools cambia el bloque
+    # system de la plantilla y rompe la caché del prefijo — medido, ver CLAUDE.md.
+    if tools:
+        disparo = pide_herramientas(texto, config.leer_disparadores_herramientas())
+        print(f"  [Tools] {'sí, por ' + repr(disparo) if disparo else 'no (sin intención clara)'}",
+              flush=True)
+        if not disparo:
+            tools = None
+    contexto = ""
     if incluir_contexto:
         cfg = config.leer_config_contexto()
         contexto = personalidad.construir_contexto_dinamico(
             texto, linea_fecha=cfg["linea_fecha"], palabras_fecha=cfg["palabras_fecha"])
         print(f"  [Contexto] {'fecha' if contexto else 'nada'} (fecha={cfg['linea_fecha']})",
               flush=True)
-        if contexto:
-            mensajes = sesion.historial[:-1] + [Message(role="user", content=f"{contexto}\n{texto}")]
 
     # Orden final: system → ejemplos de tono → memoria larga → historial, con
     # el contexto dinámico pegado solo al último mensaje. Todo lo que cambia
@@ -287,11 +407,24 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
     # contexto va en el último mensaje y no antes del historial: si fuera
     # antes, cada turno que lo trae invalidaría también todo el historial.
     # En eco no va nada de esto: no hay modelo del otro lado.
-    if not isinstance(sesion.provider, EchoProvider):
-        mensajes = _prefijo_fijo(memoria_larga) + mensajes
-
+    es_llm = not isinstance(sesion.provider, EchoProvider)
+    prefijo = _prefijo_fijo(memoria_larga) if es_llm else []
     # Sin la memoria larga, que va como mensaje aparte (ver arriba).
     system = personalidad.construir_prompt_sistema()
+
+    # Si no cabe en num_ctx, fuera los turnos más viejos del historial (nunca
+    # system/tools/ejemplos/memoria): si no, Ollama recortaría por su cuenta
+    # empezando por los ejemplos de tono (ver tokens_contexto.py). Se estima
+    # con las tools de la primera llamada; el reintento sin tools pesa menos.
+    presupuesto = getattr(sesion, "presupuesto", None) if es_llm else None
+    if presupuesto:
+        presupuesto.recortar(sesion.historial, system, prefijo, tools, contexto)
+
+    mensajes = sesion.historial
+    if contexto:
+        mensajes = sesion.historial[:-1] + [Message(role="user", content=f"{contexto}\n{texto}")]
+    historial_enviado = list(mensajes)
+    mensajes = prefijo + mensajes
     partes = []
     done_chunk = None
     tool_calls_recibidas = []
@@ -324,10 +457,16 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
         from habla import TurnoHabla
         turno_habla = TurnoHabla(t_ref)
 
+    tools_usadas = tools  # las de la última llamada real (para calibrar el prefijo)
+
     async def _consumir(tools_turno):
+        nonlocal tools_usadas
+        tools_usadas = tools_turno
         stream = sesion.provider.stream_chat(system, mensajes, tools=tools_turno)
         if not isinstance(sesion.provider, EchoProvider):
             stream = _extraer_emocion(stream, _on_etiqueta)
+            stream = _quitar_marcas(stream, lambda q: print(
+                f"  [Marcas] quitado de la respuesta (chat, voz e historial): {q!r}", flush=True))
         if cola_habla is not None:
             async for oracion in dividir_en_oraciones(_pasar_por(stream, _on_chunk)):
                 cola_habla.put_nowait((_para_voz(oracion), turno_habla))
@@ -348,6 +487,13 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
         await _consumir(None)
 
     texto_completo = "".join(partes)
+
+    if presupuesto and done_chunk and done_chunk.usage:
+        # Sin llamadas extra: el prompt_eval_count de esta respuesta (incluye
+        # lo cacheado) fija el costo exacto del prefijo para el próximo turno.
+        presupuesto.calibrar(done_chunk.usage.get("prompt_eval_count"),
+                             None if tool_calls_recibidas else done_chunk.usage.get("eval_count"),
+                             texto_completo, system, prefijo, tools_usadas, historial_enviado)
 
     if tool_calls_recibidas:
         # Se descarta cualquier texto que el modelo haya generado junto a la
