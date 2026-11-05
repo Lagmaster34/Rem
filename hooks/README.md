@@ -5,10 +5,10 @@ Hay que hacerlo una vez por clon.
 
 | Hook | Qué rechaza |
 |---|---|
-| `pre-commit` | Un commit que incluya `*.onnx`, `*.onnx.json` o algo bajo `models/piper/` (o la ruta vieja `models/yoru_piper/`), aunque se haya agregado con `git add -f`. También una copia renombrada del modelo (compara el contenido con los SHA-256 del `manifest.json` local). |
+| `pre-commit` | Un commit que incluya `*.onnx`, `*.onnx.json` o algo bajo `models/piper/` (o la ruta vieja `models/yoru_piper/`), aunque se haya agregado con `git add -f`. También una copia renombrada del modelo (compara el contenido con los SHA-256 del `manifest.json` local). Y cualquier modelo del avatar: `*.vrm`, `*.glb` o algo bajo `models/vrm/` (salvo `models/vrm/README.md`). |
 | `pre-push` | Un push cuyos commits contengan esas rutas — segunda barrera por si un commit se hizo con `--no-verify`. |
 
-Los modelos de voz Piper no se versionan nunca (además están en `.gitignore`).
+Los modelos de voz Piper y los VRM del avatar no se versionan nunca (además están en `.gitignore`).
 
 ## Instalar
 

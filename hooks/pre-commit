@@ -1,6 +1,7 @@
 #!/bin/bash
-# Rechaza cualquier commit que incluya un modelo de voz Piper: *.onnx,
-# *.onnx.json o algo bajo models/piper/ (o la ruta vieja models/yoru_piper/)
+# Rechaza cualquier commit que incluya un modelo de voz Piper (*.onnx,
+# *.onnx.json o algo bajo models/piper/, o la ruta vieja models/yoru_piper/)
+# o un modelo del avatar (*.vrm, *.glb, o algo bajo models/vrm/ salvo su README)
 # — también si se agregó con
 # `git add -f`, y también una copia renombrada (se compara el contenido con
 # los SHA-256 del manifest.json local, que nunca se versiona).
@@ -11,7 +12,9 @@ bloqueados=()
 # 1) Por ruta (agregados, copiados, modificados o renombrados).
 while IFS= read -r -d '' ruta; do
     case "$ruta" in
+        models/vrm/README.md) ;;
         *.onnx|*.onnx.json|models/piper/*|models/yoru_piper/*) bloqueados+=("$ruta (ruta prohibida)") ;;
+        *.[vV][rR][mM]|*.[gG][lL][bB]|models/vrm/*) bloqueados+=("$ruta (modelo VRM: solo local)") ;;
     esac
 done < <(git diff --cached --name-only -z --diff-filter=ACMR)
 
@@ -30,7 +33,7 @@ for manifest in "$raiz/models/piper/manifest.json" "$raiz/models/yoru_piper/mani
 done
 
 if [ ${#bloqueados[@]} -gt 0 ]; then
-    echo "pre-commit: RECHAZADO — la voz de Piper no se versiona nunca:" >&2
+    echo "pre-commit: RECHAZADO — la voz de Piper y los modelos VRM no se versionan nunca:" >&2
     printf '  %s\n' "${bloqueados[@]}" >&2
     echo "Sácalo del índice con: git rm --cached <archivo>" >&2
     exit 1

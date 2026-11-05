@@ -15,19 +15,21 @@ __pycache__/
 pruebas_voz/
 tmp_audio/
 
-# Modelos de terceros: no se versionan (licencias que no permiten redistribuirlos).
-# Los de RVC ya no se usan; rem.vrm prohíbe la redistribución (meta VRoid Hub).
+# Modelos de terceros: no se versionan (licencias de terceros; ver models/README.md).
+# Los de RVC ya no se usan.
 rmvpe.pt
 hubert_base.pt
 models/Rem_600e_6600s/
 models/**/*.pth
 models/**/*.index
-rem.vrm
 
-# Modelos VRM alternativos (ver README de models/ para la fuente y licencia
-# de cada uno) — nunca se versionan, igual que rem.vrm arriba.
+# Modelos VRM del avatar (models/vrm/): solo locales, nunca se versionan,
+# estén donde estén — los hooks/ también los rechazan (ver hooks/README.md).
+*.vrm
+*.VRM
 *.glb
-models/*.vrm
+models/vrm/*
+!models/vrm/README.md
 
 # Modelos de voz Piper: nunca se versionan, estén donde estén (ver hooks/).
 *.onnx

@@ -1,15 +1,19 @@
 #!/bin/bash
 # Segunda barrera (un commit hecho con --no-verify se salta el pre-commit):
 # rechaza el push si algún commit que se va a subir contiene *.onnx,
-# *.onnx.json o models/piper/ (o la ruta vieja models/yoru_piper/). Instalación: ver hooks/README.md.
+# *.onnx.json o models/piper/ (o la ruta vieja models/yoru_piper/), o un
+# modelo del avatar (*.vrm, *.glb, models/vrm/ salvo su README). Los borrados
+# no cuentan (--diff-filter=d): sacar un modelo del repo es justo lo deseado.
+# Instalación: ver hooks/README.md.
 cero=0000000000000000000000000000000000000000
 mal=0
 while read -r _ref_local sha_local _ref_remota sha_remoto; do
     [ "$sha_local" = "$cero" ] && continue          # borrado de rama
     if [ "$sha_remoto" = "$cero" ]; then rango="$sha_local --not --remotes"; else rango="$sha_remoto..$sha_local"; fi
-    encontrados=$(git log --format= --name-only $rango -- '*.onnx' '*.onnx.json' 'models/piper/*' 'models/yoru_piper/*' | sort -u)
+    encontrados=$(git log --format= --name-only --diff-filter=d $rango -- '*.onnx' '*.onnx.json' 'models/piper/*' 'models/yoru_piper/*' \
+                     '*.vrm' '*.VRM' '*.glb' 'models/vrm/*' ':!models/vrm/README.md' | sort -u)
     if [ -n "$encontrados" ]; then
-        echo "pre-push: RECHAZADO — estos commits contienen la voz de Piper:" >&2
+        echo "pre-push: RECHAZADO — estos commits contienen la voz de Piper o un modelo VRM:" >&2
         sed 's/^/  /' <<<"$encontrados" >&2
         mal=1
     fi
