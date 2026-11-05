@@ -383,7 +383,7 @@ async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None):
         return
     with _chat_lock:
         if _chat_turno_activo:
-            _broadcast_ws({"tipo": "error", "mensaje": "Rem ya está respondiendo — esperá a que termine."})
+            _broadcast_ws({"tipo": "error", "mensaje": "Yoru ya está respondiendo — espera a que termine."})
             return
         _chat_turno_activo = True
 
@@ -511,14 +511,14 @@ def _ptt_motivo_ocupada():
                 "grabando": "ya se está grabando",
                 "transcribiendo": "todavía transcribiendo lo anterior"}[_ptt_estado]
     if _chat_turno_activo:
-        return "Rem está respondiendo"
+        return "Yoru está respondiendo"
     cola = _chat_cola_habla
     # _unfinished_tasks: lo que Queue.join() espera — frases encoladas O en
     # síntesis que el worker aún no marcó con task_done().
     if cola is not None and getattr(cola, "_unfinished_tasks", 0) > 0:
-        return "Rem está preparando su voz"
+        return "Yoru está preparando su voz"
     if _ws_reproduciendo:
-        return "Rem está hablando"
+        return "Yoru está hablando"
     import stt
     if time.monotonic() - _ultimo_fin_habla < stt.leer_config_stt()["espera_tras_habla_s"]:
         return "Rem acaba de terminar de hablar"

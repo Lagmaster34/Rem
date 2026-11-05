@@ -111,7 +111,7 @@ async def _chat(sesion, texto, memoria_larga, memoria_sistema, cola_habla=None,
     contexto dinámico, sentence-splitting hacia voz) lo hace la función
     compartida con el panel de chat de rem_chat.py, no una copia propia acá."""
     from chat_sesion import procesar_turno
-    print("Rem> ", end="", flush=True)
+    print("Yoru> ", end="", flush=True)
 
     def _imprimir(fragmento):
         print(fragmento, end="", flush=True)
@@ -272,7 +272,7 @@ def enviar_estado_o_avisa(estado):
     if n:
         log(f"estado -> {estado}  ({n} cliente{'s' if n != 1 else ''})")
         return n
-    log(f"estado -> {estado}  — NADIE conectado al avatar (abrí rem_chat.py para verlo)")
+    log(f"estado -> {estado}  — NADIE conectado al avatar (abre rem_chat.py para verlo)")
     return None
 
 
@@ -354,7 +354,7 @@ async def repl_cliente(args):
                     continue
                 turno_hecho.clear()
                 if await _enviar({"tipo": "chat_message", "texto": resto}):
-                    print("Rem> ", end="", flush=True)
+                    print("Yoru> ", end="", flush=True)
                     try:
                         await asyncio.wait_for(turno_hecho.wait(), timeout=120)
                     except asyncio.TimeoutError:

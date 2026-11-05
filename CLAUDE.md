@@ -195,19 +195,17 @@ TTS; `bench_chat.py` siempre pasa por `dividir_en_oraciones()`, así que un text
 oraciones se parte en llamadas `_decir()` separadas — sin efecto perceptible con texto normal, solo
 importa para probar la síntesis de una frase larga sin cortes.
 
-## Personalidad de Rem (`personalidad.py`)
-`_INSTRUCCIONES_BASE` prioriza dos reglas por encima de todo (longitud y honestidad, en ese orden,
-al principio del prompt) en vez de enterrar "respondé corto" como el punto 7 de 8 entre rasgos de
-personalidad — con un modelo chico (Ollama, 4B, ver "Capa de abstracción de LLM" más arriba) esa
-regla se perdía entre el resto y las respuestas salían de 100-180 tokens en vez de 1-3 frases. El
-personaje es una amiga paisa de confianza (sin romance, sin halagos) con foco en lo técnico, que
-contradice a Esteban cuando hace falta. **El tono ya no se describe en el prompt: sale de los
-ejemplos few-shot** (ver "Ejemplos de tono (few-shot)" más abajo) — el prompt solo guarda las reglas
-duras (longitud, honestidad, no inventar, herramientas, cuándo hablar de tecnología, sin romance).
-El viejo catálogo de acciones en JSON (ACCIONES DEL SISTEMA/REGLAS DE SEGURIDAD/MEMORIA DEL SISTEMA)
-ya no existe: se fue con `Rem.py`. Las acciones van por tool calling nativo (`acciones.py`), y la
-regla "HERRAMIENTAS" del prompt tiene que seguir listando lo que las tools realmente hacen — si se
-agrega o quita una tool, actualizar esa regla, o el modelo va a prometer acciones que no existen.
+## Personalidad: Kuroki Yoru (`personalidad.py`)
+Desde 2026-11-04 el personaje es **Kuroki Yoru**: otaku hikikomori de 19 años, fría, seca y desganada,
+que llama "sirviente" al usuario, se cree superior y en el fondo le tiene aprecio (amistad, cero
+romance). Sin signos de exclamación, "…" para las pausas, jerga otaku/internet ocasional y la
+muletilla まあ、どうでもいい. Reemplazó a la "amiga paisa" (voseo, jerga antioqueña). El prompt
+conserva las reglas duras (longitud, honestidad —corrige lo falso con burla en la primera frase—, no
+inventar, herramientas, cuándo hablar de tecnología, emoción: casi nunca etiqueta, [FELIZ] solo
+excepcional) y está en tú, no en voseo. El tono sale de los 6 ejemplos de `ejemplos_tono.py`.
+Antes del TTS, `chat_sesion._para_voz()` cambia "!"/"¡" por puntos y la muletilla japonesa por
+"maa, dou de mo ii" (Piper/espeak "es" no lee japonés); el chat muestra el texto tal cual.
+Si se agrega o quita una tool, actualizar la regla "HERRAMIENTAS" del prompt.
 
 ## Configuración (.env en la raíz del proyecto)
 ```
@@ -2174,6 +2172,11 @@ eliminó con `Rem.py` (recuperable del commit del 2026-09-22, «feat: portar 4 h
     AL MOMENTO DE HACER COMMIT NO PONGAS TU AUDITORIA Claude/Anthropic DETRO DEL COMMIT
 
 ## Ejemplos de tono (few-shot) — `ejemplos_tono.py`
+
+> **Histórico**: las mediciones de abajo (jerga, "chimba", tú/vos...) son de la personalidad paisa,
+> reemplazada el 2026-11-04 por Kuroki Yoru (ver "Personalidad" más arriba). El mecanismo
+> (orden del prefijo, caché, sin ejemplos en eco) sigue igual.
+
 
 `EJEMPLOS_TONO` (turnos user/assistant falsos) define el tono de Rem en vez de describirlo en el
 prompt. `chat_sesion.procesar_turno()` arma cada turno así:

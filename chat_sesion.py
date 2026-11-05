@@ -16,6 +16,8 @@ procesar_turno() cubre los dos casos (con y sin voz) mediante callbacks: cada
 consumidor decide qué hacer con el texto (on_delta) y si quiere que se hable
 (cola_habla) — ver su docstring.
 """
+import re
+
 import config
 import personalidad
 from ejemplos_tono import EJEMPLOS_TONO
@@ -96,6 +98,92 @@ class SesionChat:
         return True
 
 
+# ── Emoción de la respuesta ─────────────────────────────────────────────
+# El modelo abre la respuesta con una etiqueta [FELIZ]/[TRISTE]/[ENOJADA]/
+# [SORPRENDIDA] cuando hay una emoción clara (regla EMOCIÓN de personalidad.py
+# y los ejemplos de tono). Se quita del texto ANTES de que llegue al chat y a
+# la voz (si no, Piper la leería en voz alta) y se avisa por on_emocion(). Idea
+# tomada del sistema de animación de Nerumi (etiqueta al inicio, sin
+# etiqueta = neutral). Solo se mira el PRINCIPIO: el resto pasa tal cual.
+EMOCIONES = {
+    "FELIZ": "happy", "ALEGRE": "happy", "CONTENTA": "happy", "HAPPY": "happy",
+    "TRISTE": "sad", "SAD": "sad",
+    "ENOJADA": "angry", "ENOJADO": "angry", "BRAVA": "angry", "ANGRY": "angry",
+    "SORPRENDIDA": "surprised", "SORPRENDIDO": "surprised", "SURPRISED": "surprised",
+}
+# Cualquier palabra entre corchetes al inicio se trata como etiqueta y se
+# quita (también una desconocida, p. ej. [NEUTRAL] o [PENSATIVA]: leerla en
+# voz alta sería peor); solo las de EMOCIONES disparan algo.
+_RE_ETIQUETA = re.compile(r"\s*\[([A-Za-zÁÉÍÓÚÑáéíóúñ]{3,15})\]\s*")
+_MAX_ETIQUETA = 24  # más que esto sin cerrar el corchete: no era una etiqueta
+
+
+async def _extraer_emocion(chunks, on_etiqueta):
+    """Deja pasar el stream, pero retiene el principio del texto hasta saber
+    si empieza con una etiqueta de emoción; si sí, la quita y llama
+    on_etiqueta(palabra). Si no, suelta lo retenido tal cual."""
+    retenido = ""
+    decidido = False
+    inicio_pendiente = True   # el espacio inicial (tras la etiqueta o no) se quita
+    async for chunk in chunks:
+        if decidido:
+            if inicio_pendiente and isinstance(chunk, TextDelta):
+                texto = chunk.text.lstrip()
+                if not texto:
+                    continue
+                inicio_pendiente = False
+                chunk = TextDelta(texto)
+            yield chunk
+            continue
+        if not isinstance(chunk, TextDelta):
+            # Tool call o fin antes de decidir: lo retenido no era etiqueta.
+            decidido = True
+            if retenido:
+                yield TextDelta(retenido)
+            yield chunk
+            continue
+        retenido += chunk.text
+        inicio = retenido.lstrip()
+        if not inicio:
+            continue
+        if not inicio.startswith("["):
+            decidido = True
+            inicio_pendiente = False
+            yield TextDelta(inicio)
+            continue
+        m = _RE_ETIQUETA.match(retenido)
+        if m:
+            decidido = True
+            on_etiqueta(m.group(1))
+            if retenido[m.end():].strip():
+                inicio_pendiente = False
+                yield TextDelta(retenido[m.end():].lstrip())
+        elif "]" in inicio or len(inicio) > _MAX_ETIQUETA:
+            decidido = True
+            inicio_pendiente = False
+            yield TextDelta(inicio)
+    if not decidido and retenido.strip():
+        yield TextDelta(retenido.lstrip())
+
+
+# ── Filtro previo al TTS (solo el audio: el chat muestra el texto tal cual) ──
+# Yoru nunca exclama: "!" y "¡" pasan a punto, así Piper no le pone entonación
+# de exclamación si al modelo se le escapa una. Y Piper (espeak "es") no lee
+# japonés: la muletilla va en romaji.
+_SUSTITUCIONES_VOZ = (
+    ("まあ、どうでもいい", "maa, dou de mo ii"),
+    ("¡", "."),
+    ("!", "."),
+)
+
+
+def _para_voz(texto: str) -> str:
+    for a, b in _SUSTITUCIONES_VOZ:
+        texto = texto.replace(a, b)
+    # "¡Hola" quedaría ".Hola": sin punto suelto al inicio.
+    return texto.lstrip(". ").strip() or texto.strip()
+
+
 async def _pasar_por(chunks, on_chunk):
     """Deja pasar cada chunk tal cual, pero además llama on_chunk(chunk) al
     vuelo. Los async generators son de un solo consumidor — esto es lo que
@@ -110,7 +198,7 @@ async def _pasar_por(chunks, on_chunk):
 async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
                           on_delta=None, on_tool_call=None, cola_habla=None,
                           incluir_contexto=True, t_ref=None,
-                          tools=None, on_confirmar_accion=None):
+                          tools=None, on_confirmar_accion=None, on_emocion=None):
     """Manda `texto` al provider activo de `sesion` y consume stream_chat().
     Compartido entre el REPL de bench_chat.py y el panel de chat de
     rem_chat.py (vía rem_avatar_server.py) — cada consumidor decide qué hacer
@@ -149,6 +237,10 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
     `on_confirmar_accion` se reenvía tal cual a ejecutar_tool_async() para las
     tools que requieren confirmación; una ConfirmacionExpirada se deja
     propagar sin atrapar, para que el llamador libere el turno.
+
+    `on_emocion(emocion)` (opcional): la emoción de la etiqueta con que abre la
+    respuesta ("happy"/"sad"/"angry"/"surprised", ver EMOCIONES), una vez por
+    turno y solo si la hay. La etiqueta nunca llega a on_delta ni a la voz.
 
     Devuelve (texto_completo, done_chunk, turno_habla) — turno_habla es la
     instancia de habla.TurnoHabla (mide tiempo hasta el primer audio) si
@@ -200,13 +292,23 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
             done_chunk = chunk
 
     stream = sesion.provider.stream_chat(system, mensajes, tools=tools)
+    etiqueta = None
+    if not isinstance(sesion.provider, EchoProvider):
+        def _on_etiqueta(palabra):
+            nonlocal etiqueta
+            etiqueta = palabra.upper()
+            emocion = EMOCIONES.get(etiqueta)
+            print(f"  [Emoción] [{etiqueta}] -> {emocion or 'sin efecto'}", flush=True)
+            if emocion and on_emocion:
+                on_emocion(emocion)
+        stream = _extraer_emocion(stream, _on_etiqueta)
 
     turno_habla = None
     if cola_habla is not None:
         from habla import TurnoHabla
         turno_habla = TurnoHabla(t_ref)
         async for oracion in dividir_en_oraciones(_pasar_por(stream, _on_chunk)):
-            cola_habla.put_nowait((oracion, turno_habla))
+            cola_habla.put_nowait((_para_voz(oracion), turno_habla))
     else:
         async for chunk in stream:
             _on_chunk(chunk)
@@ -228,7 +330,10 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
             if turno_habla is None:
                 from habla import TurnoHabla
                 turno_habla = TurnoHabla(t_ref)
-            cola_habla.put_nowait((texto_completo, turno_habla))
+            cola_habla.put_nowait((_para_voz(texto_completo), turno_habla))
 
-    sesion.historial.append(Message(role="assistant", content=texto_completo))
+    # El historial conserva la etiqueta (si el turno no fue una tool): así el
+    # modelo ve sus respuestas anteriores en el mismo formato que se le pide.
+    guardado = f"[{etiqueta}] {texto_completo}" if etiqueta and not tool_calls_recibidas else texto_completo
+    sesion.historial.append(Message(role="assistant", content=guardado))
     return texto_completo, done_chunk, turno_habla

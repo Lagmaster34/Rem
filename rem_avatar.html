@@ -3224,7 +3224,7 @@ function crearPanelChat() {
     <div id="chat-status"></div>
     <div id="chat-inputbar">
       <div id="chat-paleta"></div>
-      <input id="chat-input" type="text" placeholder="Escribile algo a Rem... (/ para comandos)" autocomplete="off">
+      <input id="chat-input" type="text" placeholder="Escríbele algo a Yoru... (/ para comandos)" autocomplete="off">
       <button id="chat-send" type="button" title="Enviar">➤</button>
     </div>
   `;
@@ -3329,7 +3329,7 @@ function crearPanelChat() {
     const etiqueta = etiquetaClip(archivo);
     if (clipGiraCuerpo(archivo) && hayVozSonando()) {
       ponerClipEnEspera(archivo);   // reemplaza al anterior; solo se guarda uno
-      agregarSistema(`⏳ ${etiqueta} — en espera: gira el cuerpo y Rem está hablando`);
+      agregarSistema(`⏳ ${etiqueta} — en espera: gira el cuerpo y Yoru está hablando`);
       return;
     }
     // El disparo manual corre el temporizador de gestos espontáneos, para que
@@ -3499,7 +3499,7 @@ function crearPanelChat() {
     esperandoRespuesta = true;
     burbujaRemActual = null;
     actualizarInputHabilitado();
-    setEstadoUI('Rem está pensando…', 'pensando');
+    setEstadoUI('Yoru está pensando…', 'pensando');
   }
 
   $send.addEventListener('click', enviarMensaje);
@@ -3570,7 +3570,7 @@ function crearPanelChat() {
     onDelta(fragmento) {
       if (!burbujaRemActual) {
         burbujaRemActual = agregarBurbuja('', 'rem');
-        setEstadoUI('Rem está hablando…', 'hablando');
+        setEstadoUI('Yoru está hablando…', 'hablando');
       }
       burbujaRemActual.textContent += fragmento;
       alFondo();
@@ -3618,7 +3618,7 @@ function crearPanelChat() {
       esperandoRespuesta = true;
       burbujaRemActual = null;
       actualizarInputHabilitado();
-      setEstadoUI('Rem está pensando…', 'pensando');
+      setEstadoUI('Yoru está pensando…', 'pensando');
     },
     // Una tool que requiere confirmación (ver acciones.py) está esperando
     // sí/no del panel antes de ejecutarse — ver _pedir_confirmacion_accion
@@ -3713,7 +3713,7 @@ function crearOverlayUI() {
 
   function actualizarCaja() {
     $input.readOnly = mostrandoTranscripcion;
-    $input.placeholder = esperandoRespuesta ? 'Rem está respondiendo…' : 'Escríbele a Rem…';
+    $input.placeholder = esperandoRespuesta ? 'Yoru está respondiendo…' : 'Escríbele a Yoru…';
   }
 
   function enviar() {

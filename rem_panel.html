@@ -564,7 +564,7 @@ function pintarAnimaciones(cuerpo, prefs) {
 
   if (estado.modo === 'overlay') {
     cuerpo.appendChild(el('div', 'aviso-modo',
-      'Rem está en modo overlay: ahí el cuerpo es procedural y no usa clips. Los cambios se guardan igual y se aplican en modo ventana.'));
+      'Yoru está en modo overlay: ahí el cuerpo es procedural y no usa clips. Los cambios se guardan igual y se aplican en modo ventana.'));
   }
   const m = estado.mensajes['animaciones._'];
   const linea = el('div', 'linea-estado' + (m ? ` ${m.tipo}` : ''), m?.texto ?? '');
