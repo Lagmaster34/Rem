@@ -84,8 +84,10 @@ def leer_config_overlay() -> dict:
 
 
 _PALABRAS_FECHA_DEFAULT = [
-    "hora", "fecha", "día", "dia", "hoy", "mañana", "ayer", "semana", "mes", "año",
-    "anoche", "madrugada", "tarde", "noche",
+    "qué hora", "hora es", "tienes hora", "dime la hora",
+    "qué fecha", "fecha de hoy", "dime la fecha",
+    "qué día es", "qué día estamos", "a qué día estamos", "a cuántos estamos",
+    "día de la semana", "qué año es", "en qué año estamos", "qué mes es", "en qué mes estamos",
 ]
 
 
@@ -124,3 +126,22 @@ def leer_disparadores_herramientas() -> list[str]:
     (ver chat_sesion.pide_herramientas()). Sin ninguna, el turno va sin tools."""
     cfg = leer_config_toml().get("herramientas", {})
     return [str(x) for x in cfg.get("disparadores", DISPARADORES_HERRAMIENTAS_DEFAULT)]
+
+
+def leer_config_modo_serio() -> dict:
+    """[modo_serio] de config.toml: disparadores y excepciones (ver
+    chat_sesion.detectar_modo_serio()). Sin la sección, el modo serio no se
+    dispara nunca."""
+    cfg = leer_config_toml().get("modo_serio", {})
+    return {
+        "disparadores": [str(x) for x in cfg.get("disparadores", [])],
+        "excepciones": [str(x) for x in cfg.get("excepciones", [])],
+    }
+
+
+def leer_max_oraciones() -> int:
+    """[respuesta].max_oraciones: tope de oraciones por respuesta (0 = sin tope)."""
+    try:
+        return max(0, int(leer_config_toml().get("respuesta", {}).get("max_oraciones", 0)))
+    except (TypeError, ValueError):
+        return 0

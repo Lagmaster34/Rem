@@ -161,6 +161,50 @@ disparadores = [
 ]
 
 
+[modo_serio]
+# Si el mensaje del usuario contiene un disparador (y ninguna excepción), al
+# final de ESE turno se le pega al mensaje una instrucción corta de modo serio
+# con un mini-ejemplo (chat_sesion.INSTRUCCION_MODO_SERIO). No va en el system
+# ni queda en el historial: no toca la caché del prefijo. Medido 2026-11-05:
+# con la regla larga siempre en el system, 0 de 5 frases serias salían bien.
+# Coincidencia por palabra completa o frase, sin mayúsculas ni tildes; "*" al
+# final = cualquier terminación.
+disparadores = [
+    # muerte
+    "murió", "falleció", "fallecimiento", "perdí a mi", "funeral", "velorio",
+    # ruptura
+    "me dejó", "lo dejamos", "nos dejamos", "terminamos", "terminé con", "rompimos",
+    "ruptura", "me fue infiel",
+    # trabajo
+    "me echaron", "me despidieron", "perdí el trabajo", "perdí mi trabajo",
+    "me quedé sin trabajo", "despido",
+    # soledad ("solo" suelto no: "solo quería saber..." dispararía)
+    "me siento solo", "me siento sola", "estoy solo", "estoy sola", "muy solo", "muy sola",
+    "aislado", "aislada", "soledad", "nadie me quiere",
+    # estrés y ánimo
+    "estresado", "estresada", "estrés", "ansioso", "ansiosa", "ansiedad", "agobiado", "agobiada",
+    "no aguanto", "no puedo más", "todo me sale mal", "deprimido", "deprimida", "depresión",
+    "triste", "mal en serio", "estoy fatal", "destrozado", "destrozada", "quiero llorar", "llorando",
+]
+# Si aparece alguna, el turno NO es serio aunque haya disparador ("se murió mi
+# personaje", "me echaron de la partida"). Contrapartida aceptada: un mensaje
+# serio que mencione un juego ("murió mi tío y no tengo ganas ni de jugar la
+# partida") no activa el modo.
+excepciones = [
+    "personaje", "pj", "jefe", "boss", "juego", "videojuego", "partida", "nivel",
+    "elden ring", "malenia", "anime", "serie", "manga", "película", "capítulo", "episodio",
+]
+
+
+[respuesta]
+# Tope de oraciones por respuesta: al completar la N-ésima se corta la
+# generación (se cierra la conexión con Ollama) y lo cortado no llega ni al
+# chat, ni a la voz, ni al historial. 0 = sin tope. La regla LONGITUD del
+# prompt pide 1-3, pero en conversaciones largas el 4B se iba a 4-6 y el
+# historial lo realimentaba (medido 2026-11-05).
+max_oraciones = 3
+
+
 [contexto]
 # Contexto que rem_chat (ventana y overlay) antepone al mensaje del usuario:
 # solo la línea de fecha/hora, según su modo:
@@ -173,9 +217,14 @@ disparadores = [
 # comentaban el disco. Después fue la herramienta estado_pc, quitada el
 # 2026-11-05 porque el modelo la llamaba sin que nadie preguntara.
 linea_fecha = "condicional"
-# Coincidencia por PALABRA COMPLETA (o frase), sin distinguir mayúsculas ni
-# tildes. Incluye variantes con y sin tilde por lo que pueda devolver el STT.
+# Solo preguntas EXPLÍCITAS por la hora, la fecha o el día (2026-11-05): con
+# palabras sueltas ("hoy", "día", "tarde"...) la fecha se inyectaba en charla
+# normal y Yoru la recitaba ("Jueves 5 de noviembre de 2026, 18:31" ante "me
+# compré un teclado"). Frases completas, sin distinguir mayúsculas ni tildes
+# ("qué hora" también pega con "que hora").
 palabras_fecha = [
-    "hora", "fecha", "día", "dia", "hoy", "mañana", "ayer", "semana", "mes", "año",
-    "anoche", "madrugada", "tarde", "noche",
+    "qué hora", "hora es", "tienes hora", "dime la hora",
+    "qué fecha", "fecha de hoy", "dime la fecha",
+    "qué día es", "qué día estamos", "a qué día estamos", "a cuántos estamos",
+    "día de la semana", "qué año es", "en qué año estamos", "qué mes es", "en qué mes estamos",
 ]

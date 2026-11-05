@@ -16,6 +16,7 @@ procesar_turno() cubre los dos casos (con y sin voz) mediante callbacks: cada
 consumidor decide qué hacer con el texto (on_delta) y si quiere que se hable
 (cola_habla) — ver su docstring.
 """
+import functools
 import re
 
 import config
@@ -63,11 +64,12 @@ def precargar_prefijo(tools=None):
     2026-11-05: solo la primera aparición de cada variante paga la evaluación
     completa, ~0,9 s sin tools y ~1,7 s con tools; luego ~130 ms por turno)."""
     import llm
-    system = personalidad.construir_prompt_sistema()
     prefijo = _prefijo_fijo(personalidad.cargar_memoria_larga())
     if tools:
-        llm.precargar_provider(system, prefijo, tools)
-    llm.precargar_provider(system, prefijo, None)
+        llm.precargar_provider(personalidad.construir_prompt_sistema(con_herramientas=True),
+                               prefijo, tools)
+    llm.precargar_provider(personalidad.construir_prompt_sistema(con_herramientas=False),
+                           prefijo, None)
 
 
 class SesionChat:
@@ -132,6 +134,28 @@ _RE_ETIQUETA = re.compile(r"\s*\[([A-Za-zÁÉÍÓÚÑáéíóúñ]{3,15})\]\s*")
 _MAX_ETIQUETA = 24  # más que esto sin cerrar el corchete: no era una etiqueta
 
 
+def _cierra_entrada(filtro):
+    """Para los filtros del stream (generadores async que reciben `chunks`):
+    cuando el filtro termina o se cierra, cierra también su entrada. Así, si
+    uno de más abajo corta la respuesta (_limitar_oraciones), el cierre baja
+    filtro por filtro hasta stream_chat(), que cierra la conexión HTTP y Ollama
+    deja de generar. Sin esto, salir de un `async for` NO cierra el generador
+    de entrada: quedaría suspendido hasta que el GC lo finalice (el problema de
+    "Task was destroyed but it is pending!" documentado en llm/local.py)."""
+    @functools.wraps(filtro)
+    async def envuelto(chunks, *args, **kwargs):
+        gen = filtro(chunks, *args, **kwargs)
+        try:
+            async for x in gen:
+                yield x
+        finally:
+            await gen.aclose()
+            if hasattr(chunks, "aclose"):
+                await chunks.aclose()
+    return envuelto
+
+
+@_cierra_entrada
 async def _extraer_emocion(chunks, on_etiqueta):
     """Deja pasar el stream, pero retiene el principio del texto hasta saber
     si empieza con una etiqueta de emoción; si sí, la quita y llama
@@ -213,6 +237,7 @@ def _limpiar_marcas(texto: str) -> tuple[str, list[str]]:
     return texto, quitados
 
 
+@_cierra_entrada
 async def _quitar_marcas(chunks, on_quitado):
     """Deja pasar el stream sin las marcas de _limpiar_marcas(). Retiene solo
     la cola que podría ser una marca a medio llegar (un "[" abierto o la
@@ -223,16 +248,21 @@ async def _quitar_marcas(chunks, on_quitado):
 
     def _soltar(final):
         nonlocal pendiente, fin_con_espacio, tras_marca
-        limpio, quitados = _limpiar_marcas(pendiente)
+        # Con un "[" todavía abierto, lo que va desde ahí ni se mira: quitar
+        # ya una llamada de dentro y después "[ENJOYED ]" daría el mismo texto
+        # pero un log distinto según cómo llegue partido.
+        abierto = None if final else re.search(r"\[[^\]\n]{0,200}$", pendiente)
+        retenido = pendiente[abierto.start():] if abierto else ""
+        limpio, quitados = _limpiar_marcas(pendiente[:abierto.start()] if abierto else pendiente)
         for q in quitados:
             on_quitado(q)
         tras_marca = tras_marca or bool(quitados)
         if tras_marca and fin_con_espacio:
             # El espacio de antes de la marca ya salió: no duplicarlo.
             limpio = limpio.lstrip(" \t")
-        m = None if final else _RE_MARCA_PENDIENTE.search(limpio)
+        m = None if final or retenido else _RE_MARCA_PENDIENTE.search(limpio)
         corte = m.start() if m else len(limpio)
-        pendiente = limpio[corte:]
+        pendiente = limpio[corte:] + retenido
         listo = limpio[:corte]
         if final and tras_marca:
             listo = listo.rstrip(" \t")
@@ -257,6 +287,46 @@ async def _quitar_marcas(chunks, on_quitado):
         listo = _soltar(final=True)
         if listo:
             yield TextDelta(listo)
+
+
+# ── Tope de oraciones ([respuesta].max_oraciones) ─────────────────────────
+# Mismo criterio de "oración" que llm/sentence_splitter (. ! ? seguidos de
+# espacio; "…" no corta; fragmentos de menos de 3 caracteres no cuentan).
+_FIN_ORACION = re.compile(r"(?<=[.!?])\s+")
+
+
+@_cierra_entrada
+async def _limitar_oraciones(chunks, max_oraciones, on_corte):
+    """Deja pasar el stream hasta completar `max_oraciones` oraciones; ahí
+    emite un Done(reason="limite_oraciones", usage=None) y termina, y
+    _cierra_entrada() cierra la conexión con el modelo. Lo que vendría después
+    nunca se genera, así que no llega al chat, a la voz ni al historial. Una
+    oración solo se da por terminada cuando llega el espacio que la sigue: si
+    la respuesta acaba justo en la N-ésima, no hay corte."""
+    acum = ""
+    emitido = 0
+    async for chunk in chunks:
+        if not isinstance(chunk, TextDelta):
+            yield chunk
+            continue
+        acum += chunk.text
+        cuenta, desde, corte = 0, 0, None
+        for m in _FIN_ORACION.finditer(acum):
+            if len(acum[desde:m.start()].strip()) >= 3:
+                cuenta += 1
+                if cuenta == max_oraciones:
+                    corte = m.start()
+                    break
+            desde = m.end()
+        if corte is None:
+            yield TextDelta(acum[emitido:])
+            emitido = len(acum)
+            continue
+        if corte > emitido:
+            yield TextDelta(acum[emitido:corte])
+        on_corte(max_oraciones)
+        yield Done(reason="limite_oraciones", usage=None)
+        return
 
 
 # ── Filtro previo al TTS (solo el audio: el chat muestra el texto tal cual) ──
@@ -311,13 +381,31 @@ def pide_herramientas(texto_usuario: str, disparadores: list[str]) -> str | None
     completa, sin mayúsculas ni tildes; "*" al final acepta cualquier
     terminación ("busca*" -> "búscame"). Sin coincidencia, el turno va sin
     tools: el modelo chico no puede llamarlas por error y el prompt pesa menos."""
-    t = personalidad._normalizar(texto_usuario)
-    for d in disparadores:
-        raiz = personalidad._normalizar(d.rstrip("*"))
-        cola = r"\w*" if d.endswith("*") else ""
-        if raiz and re.search(r"\b" + re.escape(raiz) + cola + r"\b", t):
-            return d
-    return None
+    return personalidad.palabra_clave(texto_usuario, disparadores)
+
+
+# ── Modo serio ([modo_serio] de config.toml) ─────────────────────────────
+# Se detecta en código, como la fecha: con la regla larga siempre en el system,
+# el 4B no la seguía (0 de 5 frases serias bien, 2026-11-05). La instrucción va
+# pegada al final del último mensaje SOLO en ese turno: no toca el prefijo
+# cacheado ni queda en el historial. Va entre corchetes: si el modelo la
+# repitiera, _quitar_marcas la saca. Está escrita en positivo a propósito (qué
+# hacer, no qué evitar): la hipótesis medida es que las negaciones del tipo
+# "no le busques el lado bueno" sembraban justo eso.
+INSTRUCCION_MODO_SERIO = (
+    "[Modo serio: esto le duele de verdad. Contesta en una o dos frases sencillas, "
+    "sin burla ni jerga y sin llamarlo sirviente. Nombra lo que pasó tal como él lo "
+    "cuenta, quédate a su lado y, como mucho, hazle una pregunta. "
+    "Ejemplo de tono: «…Lo siento mucho. Eso es muy duro. ¿Cómo estás tú?»]")
+
+
+def detectar_modo_serio(texto_usuario: str, cfg: dict) -> str | None:
+    """El disparador de [modo_serio] que aparece en el mensaje, o None si no
+    hay ninguno o si también aparece una excepción ("se murió mi personaje")."""
+    disparo = personalidad.palabra_clave(texto_usuario, cfg["disparadores"])
+    if disparo and personalidad.palabra_clave(texto_usuario, cfg["excepciones"]):
+        return None
+    return disparo
 
 
 def _tool_pertinente(call, texto_usuario: str) -> bool:
@@ -415,8 +503,20 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
     # En eco no va nada de esto: no hay modelo del otro lado.
     es_llm = not isinstance(sesion.provider, EchoProvider)
     prefijo = _prefijo_fijo(memoria_larga) if es_llm else []
-    # Sin la memoria larga, que va como mensaje aparte (ver arriba).
-    system = personalidad.construir_prompt_sistema()
+    # Sin la memoria larga, que va como mensaje aparte (ver arriba). El final
+    # del system cambia según haya tools o no (regla HERRAMIENTAS o "solo
+    # conversas", ver personalidad.construir_prompt_sistema()).
+    system = personalidad.construir_prompt_sistema(con_herramientas=bool(tools))
+
+    # Modo serio (ver INSTRUCCION_MODO_SERIO): solo este turno, pegado al final
+    # del último mensaje, como el contexto dinámico.
+    instruccion = ""
+    if es_llm:
+        disparo_serio = detectar_modo_serio(texto, config.leer_config_modo_serio())
+        if disparo_serio:
+            instruccion = INSTRUCCION_MODO_SERIO
+            print(f"  [Serio] sí, por {disparo_serio!r}", flush=True)
+    extra_turno = "\n".join(x for x in (contexto, instruccion) if x)
 
     # Si no cabe en num_ctx, fuera los turnos más viejos del historial (nunca
     # system/tools/ejemplos/memoria): si no, Ollama recortaría por su cuenta
@@ -424,11 +524,16 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
     # con las tools de la primera llamada; el reintento sin tools pesa menos.
     presupuesto = getattr(sesion, "presupuesto", None) if es_llm else None
     if presupuesto:
-        presupuesto.recortar(sesion.historial, system, prefijo, tools, contexto)
+        presupuesto.recortar(sesion.historial, system, prefijo, tools, extra_turno)
 
     mensajes = sesion.historial
-    if contexto:
-        mensajes = sesion.historial[:-1] + [Message(role="user", content=f"{contexto}\n{texto}")]
+    if extra_turno:
+        ultimo = texto
+        if contexto:
+            ultimo = f"{contexto}\n{ultimo}"
+        if instruccion:
+            ultimo = f"{ultimo}\n\n{instruccion}"
+        mensajes = sesion.historial[:-1] + [Message(role="user", content=ultimo)]
     historial_enviado = list(mensajes)
     mensajes = prefijo + mensajes
     partes = []
@@ -464,15 +569,21 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
         turno_habla = TurnoHabla(t_ref)
 
     tools_usadas = tools  # las de la última llamada real (para calibrar el prefijo)
+    system_usado = system
 
     async def _consumir(tools_turno):
-        nonlocal tools_usadas
+        nonlocal tools_usadas, system_usado
         tools_usadas = tools_turno
-        stream = sesion.provider.stream_chat(system, mensajes, tools=tools_turno)
+        system_usado = personalidad.construir_prompt_sistema(con_herramientas=bool(tools_turno))
+        stream = sesion.provider.stream_chat(system_usado, mensajes, tools=tools_turno)
         if not isinstance(sesion.provider, EchoProvider):
             stream = _extraer_emocion(stream, _on_etiqueta)
             stream = _quitar_marcas(stream, lambda q: print(
                 f"  [Marcas] quitado de la respuesta (chat, voz e historial): {q!r}", flush=True))
+            max_oraciones = config.leer_max_oraciones()
+            if max_oraciones:
+                stream = _limitar_oraciones(stream, max_oraciones, lambda n: print(
+                    f"  [Longitud] corte tras {n} oraciones: el resto no se genera", flush=True))
         if cola_habla is not None:
             async for oracion in dividir_en_oraciones(_pasar_por(stream, _on_chunk)):
                 cola_habla.put_nowait((_para_voz(oracion), turno_habla))
@@ -499,7 +610,7 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
         # lo cacheado) fija el costo exacto del prefijo para el próximo turno.
         presupuesto.calibrar(done_chunk.usage.get("prompt_eval_count"),
                              None if tool_calls_recibidas else done_chunk.usage.get("eval_count"),
-                             texto_completo, system, prefijo, tools_usadas, historial_enviado)
+                             texto_completo, system_usado, prefijo, tools_usadas, historial_enviado)
 
     if tool_calls_recibidas:
         # Se descarta cualquier texto que el modelo haya generado junto a la

@@ -223,7 +223,9 @@ romance). Sin signos de exclamación, "…" para las pausas, jerga otaku/interne
 muletilla まあ、どうでもいい. Reemplazó a la "amiga paisa" (voseo, jerga antioqueña). El prompt
 conserva las reglas duras (longitud, honestidad —corrige lo falso con burla en la primera frase—, no
 inventar, herramientas, cuándo hablar de tecnología, emoción: casi nunca etiqueta, [FELIZ] solo
-excepcional) y está en tú, no en voseo. El tono sale de los 6 ejemplos de `ejemplos_tono.py`.
+excepcional) y está en tú, no en voseo. El tono sale de los 11 ejemplos de `ejemplos_tono.py`. Desde 2026-11-05 el prompt incluye "Cómo se te
+nota el aprecio" (ideas de las personalidades tsundere/bro de Nerumi, reescritas) y el modo serio se
+detecta en código (ver "Modo serio y tope de oraciones"); 3 ejemplos serios (perro, ruptura, soledad).
 Antes del TTS, `chat_sesion._para_voz()` cambia "!"/"¡" por puntos, la muletilla japonesa por
 "maa, dou demo íi" (Piper/espeak "es" no lee japonés; con "ii" leía el romano II, "dos", y una "í" sola
 como "í acentuada") y "skill issue"/"npc(s)" por "skil íshiu"/"enpisí(s)". Medido con
@@ -2137,6 +2139,9 @@ compartido `chat_sesion.procesar_turno()` (ventana y overlay lo usan igual):
    prompt sin acciones) la fecha se leyó en voz alta sin que nadie la pidiera en 1 de 5 y 1 de 12
    respuestas a "Hola, Rem." (~2 de 23, ≈9%). La regla acordada era "si no desvía, la fecha va siempre": no se cumplía del todo, así que
    `linea_fecha = "condicional"` (palabras: hora, fecha, día, hoy, mañana, ayer, semana, mes, año…).
+   **Desde 2026-11-05 los disparadores son solo preguntas explícitas** ("qué hora", "hora es", "qué
+   día es", "a cuántos estamos", "día de la semana", "qué año es"...): con palabras sueltas ("hoy",
+   "día", "tarde") la fecha se colaba en charla normal y Yoru la recitaba.
    Volver a "siempre" es una línea de config.
 3. **El historial guarda solo el texto del usuario.** Antes cada turno se guardaba con su bloque de
    fecha/PC pegado y lo arrastraba para siempre (datos caducos que el modelo terminaba comentando). Ahora
@@ -2179,7 +2184,12 @@ tildes; `"busca*"` acepta cualquier terminación; formas verbales a propósito: 
 **1597 tok sin tools, 2126 con tools** (antes 2374 siempre, con 6 tools). Alternar no rompe la caché:
 Ollama conserva los dos prefijos, y solo la primera aparición de cada variante paga la evaluación
 completa (~0,9 s sin tools, ~1,7 s con tools); después cada turno evalúa en ~130 ms alterne o no.
-Por eso `precargar_prefijo()` calienta las dos variantes. Banco del 2026-11-05 (33 turnos): tools
+Por eso `precargar_prefijo()` calienta las dos variantes. Además el **final del system prompt** cambia con la
+variante (`construir_prompt_sistema(con_herramientas=)`): con tools lleva la regla HERRAMIENTAS; sin
+tools, una sola línea ("solo hablas; no ofreces hacer nada en la PC ni fuera de ella"). Prefijo: **1518
+tok sin tools, 2133 con tools**; la caché se comporta igual (cada variante paga su primera evaluación,
+1,4 s / 1,85 s en frío, y luego ~140-165 ms alternando). Ofrecimientos de acciones no pedidas: 10 de 20
+turnos largos con la regla siempre presente → 1 de 34 turnos con la línea de "solo conversas". Banco del 2026-11-05 (33 turnos): tools
 ofrecidas 1 vez ("abre steam" → `abrir_programa`), 0 llamadas espurias. Efecto secundario visto: sin
 tools en una conversación larga, Yoru empieza a ofrecer acciones que no tiene ("si quieres que busque
 X, dímelo", "déjame ver la lista de paquetes") y el patrón se repite turno a turno.
@@ -2234,6 +2244,37 @@ toca system, tools, ejemplos ni memoria larga, ni el último mensaje. Solo con p
 - `venv/bin/python tokens_contexto.py` imprime el desglose exacto del prefijo (system, ejemplos, cada
   tool); con rutas de archivo como argumentos, cuenta sus tokens. Usa el tokenizador real vía Ollama
   (evicta la caché KV: nunca dentro de un turno).
+
+## Modo serio y tope de oraciones (2026-11-05)
+
+**Modo serio detectado en código**, como la fecha: `config.toml` → `[modo_serio]` tiene `disparadores`
+(muerte, ruptura, despido, soledad, estrés/ánimo; frases, no "solo" suelto) y `excepciones` ("personaje",
+"jefe", "partida", "juego"...: "se murió mi personaje" no dispara). Si dispara, `procesar_turno()` pega
+`INSTRUCCION_MODO_SERIO` (87 tok, entre corchetes, con un mini-ejemplo) al final del último mensaje,
+solo en ese turno: no toca el prefijo cacheado ni queda en el historial (el turno serio evaluó el
+prompt en ~140 ms, como cualquier otro). En el system queda una línea ("cuando algo le duele de verdad,
+cambias de tono"). Por qué: con la regla larga siempre en el system, 0 de 5 frases serias salían bien;
+con la detección, 6 de 6 (serio, sin juicio, sin jerga ni "sirviente") — **pero 4 de 6 copian literal el
+mini-ejemplo** ("…Lo siento mucho. Eso es muy duro. ¿Cómo estás tú?"). Pendiente: variar el ejemplo o
+quitarlo.
+
+**"No le buscas el lado bueno" sembraba lo contrario**: con esa negación en el system, la conversación
+larga de 20 turnos tuvo 8 "…pero al menos…"; sin ella, 1 (y 0 en la ronda anterior a añadirla). Una
+muestra por variante, temperatura 0,7: indicio, no prueba. Las instrucciones nuevas van en positivo.
+
+**Tope de oraciones** (`[respuesta].max_oraciones`, 3): `_limitar_oraciones()` corta el stream al
+completar la N-ésima oración (mismo criterio que `llm/sentence_splitter`) y emite
+`Done(reason="limite_oraciones", usage=None)`. El cierre baja filtro por filtro hasta `stream_chat()`
+(decorador `_cierra_entrada`: salir de un `async for` no cierra el generador de entrada) y Ollama
+cancela la generación (`srv stop: cancel task` en su log). Lo cortado no llega al chat, a la voz ni al
+historial. Esos turnos no calibran el presupuesto de contexto (no hay `prompt_eval_count`). Medido en la
+conversación larga: 5 cortes en 20 turnos, media 2,8 oraciones y máximo 3 (antes: media 2,9, máximo 4, y
+respuestas de dos párrafos).
+
+**Tests**: `venv/bin/python tests/test_filtros_texto.py` — etiqueta de emoción (al inicio va a la cara;
+a mitad de texto la quita `_quitar_marcas`), marcas, tope de oraciones, `_para_voz()` y detección del
+modo serio con falsos positivos. Los casos de stream se prueban con 300 particiones aleatorias: el texto
+y lo registrado en el log tienen que salir idénticos en todas.
 
 ## Ejemplos de tono (few-shot) — `ejemplos_tono.py`
 

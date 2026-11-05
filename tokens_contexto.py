@@ -213,16 +213,18 @@ def informe() -> None:
     import personalidad
     from ejemplos_tono import EJEMPLOS_TONO
 
-    system = personalidad.construir_prompt_sistema()
+    system = personalidad.construir_prompt_sistema(con_herramientas=False)
+    system_t = personalidad.construir_prompt_sistema(con_herramientas=True)
     hola = [{"role": "user", "content": "hola"}]
     tools = acciones.tools_disponibles("ventana")
     base = contar_chat(system, hola)
     con_ej = contar_chat(system, list(EJEMPLOS_TONO) + hola)
-    con_tools = contar_chat(system, list(EJEMPLOS_TONO) + hola, tools)
-    print(f"system prompt (texto solo):      {contar_exacto(system)} tok")
+    con_tools = contar_chat(system_t, list(EJEMPLOS_TONO) + hola, tools)
+    print(f"system prompt (texto solo):      {contar_exacto(system)} tok sin tools / "
+          f"{contar_exacto(system_t)} con tools")
     print(f"system + 'hola' (plantilla):     {base} tok")
     print(f"+ ejemplos de tono ({len(EJEMPLOS_TONO) // 2} pares):  {con_ej} (+{con_ej - base})")
-    print(f"+ tools de ventana ({len(tools)}):        {con_tools} (+{con_tools - con_ej})")
+    print(f"+ tools de ventana ({len(tools)}) y regla: {con_tools} (+{con_tools - con_ej})")
     num_ctx = _modelo_y_url()[2]
     print(f"libre para historial+respuesta:  {num_ctx - con_ej} sin tools / "
           f"{num_ctx - con_tools} con tools, de {num_ctx}")
