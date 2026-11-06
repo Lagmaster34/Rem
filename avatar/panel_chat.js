@@ -47,7 +47,7 @@ function crearPanelChat() {
     <div id="chat-status"></div>
     <div id="chat-inputbar">
       <div id="chat-paleta"></div>
-      <input id="chat-input" type="text" placeholder="Escríbele algo a Yoru... (/ para comandos)" autocomplete="off">
+      <input id="chat-input" type="text" placeholder="Escríbele algo a ${NOMBRE_PERSONAJE}... (/ para comandos)" autocomplete="off">
       <button id="chat-send" type="button" title="Enviar">➤</button>
     </div>
   `;
@@ -183,7 +183,7 @@ function crearPanelChat() {
     const etiqueta = etiquetaClip(archivo);
     if (clipGiraCuerpo(archivo) && hayVozSonando()) {
       ponerClipEnEspera(archivo);   // reemplaza al anterior; solo se guarda uno
-      agregarSistema(`⏳ ${etiqueta} — en espera: gira el cuerpo y Yoru está hablando`);
+      agregarSistema(`⏳ ${etiqueta} — en espera: gira el cuerpo y ${NOMBRE_PERSONAJE} está hablando`);
       return;
     }
     // El disparo manual corre el temporizador de gestos espontáneos, para que
@@ -369,7 +369,7 @@ function crearPanelChat() {
     esperandoRespuesta = true;
     burbujaRemActual = null;
     actualizarInputHabilitado();
-    setEstadoUI('Yoru está pensando…', 'pensando');
+    setEstadoUI(`${NOMBRE_PERSONAJE} está pensando…`, 'pensando');
   }
 
   $send.addEventListener('click', enviarMensaje);
@@ -440,7 +440,7 @@ function crearPanelChat() {
     onDelta(fragmento) {
       if (!burbujaRemActual) {
         burbujaRemActual = agregarBurbuja('', 'rem');
-        setEstadoUI('Yoru está hablando…', 'hablando');
+        setEstadoUI(`${NOMBRE_PERSONAJE} está hablando…`, 'hablando');
       }
       burbujaRemActual.textContent += fragmento;
       alFondo();
@@ -496,7 +496,7 @@ function crearPanelChat() {
       esperandoRespuesta = true;
       burbujaRemActual = null;
       actualizarInputHabilitado();
-      setEstadoUI('Yoru está pensando…', 'pensando');
+      setEstadoUI(`${NOMBRE_PERSONAJE} está pensando…`, 'pensando');
     },
     // Una tool que requiere confirmación (ver acciones.py) está esperando
     // sí/no del panel antes de ejecutarse — ver _pedir_confirmacion_accion

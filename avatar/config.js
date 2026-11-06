@@ -20,6 +20,9 @@
 //     recibe el ratón. Ver CONFIG.overlay y crearOverlayUI().
 const MODO = new URLSearchParams(location.search).get('modo') === 'overlay' ? 'overlay' : 'ventana';
 const ES_OVERLAY = MODO === 'overlay';
+// Nombre del personaje para los textos de la interfaz: lo manda el backend en la
+// URL (personalidad.NOMBRE_PERSONAJE, vía rem_avatar_server.url_avatar()).
+const NOMBRE_PERSONAJE = new URLSearchParams(location.search).get('personaje') || 'Yoru';
 console.log(`[Modo] ${MODO}`);
 
 // ═══════════════════════════════════════════════════

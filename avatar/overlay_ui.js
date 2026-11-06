@@ -24,7 +24,7 @@ function crearOverlayUI() {
   raiz.id = 'ov-root';
   raiz.innerHTML = `
     <div id="ov-status"><span id="ov-status-txt"></span></div>
-    <div id="ov-box"><input id="ov-input" type="text" placeholder="Escríbele a Rem…" autocomplete="off"></div>
+    <div id="ov-box"><input id="ov-input" type="text" placeholder="Escríbele a ${NOMBRE_PERSONAJE}…" autocomplete="off"></div>
   `;
   document.body.appendChild(raiz);
 
@@ -88,7 +88,7 @@ function crearOverlayUI() {
 
   function actualizarCaja() {
     $input.readOnly = mostrandoTranscripcion;
-    $input.placeholder = esperandoRespuesta ? 'Yoru está respondiendo…' : 'Escríbele a Yoru…';
+    $input.placeholder = esperandoRespuesta ? `${NOMBRE_PERSONAJE} está respondiendo…` : `Escríbele a ${NOMBRE_PERSONAJE}…`;
   }
 
   function enviar() {

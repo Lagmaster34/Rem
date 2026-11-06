@@ -10,6 +10,9 @@ import json
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Nombre corto del personaje para la interfaz ("Escríbele a Yoru…"): la página lo
+# recibe por la URL (rem_avatar_server.url_avatar()). El system prompt lo nombra aparte.
+NOMBRE_PERSONAJE = "Yoru"
 MEMORIA_LARGA_ARCHIVO   = os.path.join(BASE_DIR, "memoria_larga.json")
 MEMORIA_SISTEMA_ARCHIVO = os.path.join(BASE_DIR, "memoria_sistema.json")
 

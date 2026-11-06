@@ -227,8 +227,10 @@ def url_avatar(modo: str = "ventana") -> str:
     CONFIG.modelos (ver "Selección de modelo" en ese archivo)."""
     import config as _config
     import urllib.parse
+    import personalidad as _personalidad
     modelo = _config.leer_modelo_avatar()
-    qs = urllib.parse.urlencode({"modo": modo, "modelo": modelo})
+    qs = urllib.parse.urlencode({"modo": modo, "modelo": modelo,
+                                 "personaje": _personalidad.NOMBRE_PERSONAJE})
     return f"http://localhost:{HTTP_PORT}/rem_avatar.html?{qs}"
 
 

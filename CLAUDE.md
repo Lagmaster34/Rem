@@ -2560,3 +2560,6 @@ copia casi literal de Nerumi y no van al repo).
 - **Visto en la línea base, ya existía antes de la etapa 1**: en el overlay dentro del Hyprland anidado
   el avatar se ve al cargar pero no en las capturas tomadas mientras habla ni tras cambiar de modelo. Sin
   confirmar si pasa también en la sesión real.
+- **Nombre del personaje en la interfaz**: `personalidad.NOMBRE_PERSONAJE` llega a la página por la URL
+  (`url_avatar()` → `?personaje=`, `NOMBRE_PERSONAJE` en `avatar/config.js`) y lo usan la caja de texto
+  ("Escríbele a Yoru…", antes "Rem" fijo en el overlay) y los estados del panel ("Yoru está pensando…").
