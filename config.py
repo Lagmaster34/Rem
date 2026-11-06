@@ -129,13 +129,16 @@ def leer_disparadores_herramientas() -> list[str]:
 
 
 def leer_config_modo_serio() -> dict:
-    """[modo_serio] de config.toml: disparadores y excepciones (ver
-    chat_sesion.detectar_modo_serio()). Sin la sección, el modo serio no se
-    dispara nunca."""
+    """[modo_serio] de config.toml (ver chat_sesion.detectar_modo_serio()):
+    `categorias` {nombre: [disparadores]} en el orden del archivo (la primera
+    que coincide gana), `excepciones` y `glosario` {"la u": "la universidad"}.
+    Sin la sección, el modo serio no se dispara nunca."""
     cfg = leer_config_toml().get("modo_serio", {})
     return {
-        "disparadores": [str(x) for x in cfg.get("disparadores", [])],
+        "categorias": {str(k): [str(x) for x in v]
+                       for k, v in dict(cfg.get("categorias", {})).items()},
         "excepciones": [str(x) for x in cfg.get("excepciones", [])],
+        "glosario": {str(k): str(v) for k, v in dict(cfg.get("glosario", {})).items()},
     }
 
 

@@ -162,37 +162,49 @@ disparadores = [
 
 
 [modo_serio]
-# Si el mensaje del usuario contiene un disparador (y ninguna excepción), al
-# final de ESE turno se le pega al mensaje una instrucción corta de modo serio
-# con un mini-ejemplo (chat_sesion.INSTRUCCION_MODO_SERIO). No va en el system
-# ni queda en el historial: no toca la caché del prefijo. Medido 2026-11-05:
-# con la regla larga siempre en el system, 0 de 5 frases serias salían bien.
+# Si el mensaje del usuario contiene un disparador de alguna categoría (y
+# ninguna excepción), al final de ESE turno se le pega al mensaje una
+# instrucción corta de modo serio con el ejemplo de esa categoría
+# (chat_sesion.EJEMPLOS_MODO_SERIO). No va en el system ni queda en el
+# historial: no toca la caché del prefijo. Medido 2026-11-05: con la regla
+# larga siempre en el system, 0 de 5 frases serias salían bien.
 # Coincidencia por palabra completa o frase, sin mayúsculas ni tildes; "*" al
 # final = cualquier terminación.
-disparadores = [
-    # muerte
-    "murió", "falleció", "fallecimiento", "perdí a mi", "funeral", "velorio",
-    # ruptura
-    "me dejó", "lo dejamos", "nos dejamos", "terminamos", "terminé con", "rompimos",
-    "ruptura", "me fue infiel",
-    # trabajo
-    "me echaron", "me despidieron", "perdí el trabajo", "perdí mi trabajo",
-    "me quedé sin trabajo", "despido",
-    # soledad ("solo" suelto no: "solo quería saber..." dispararía)
-    "me siento solo", "me siento sola", "estoy solo", "estoy sola", "muy solo", "muy sola",
-    "aislado", "aislada", "soledad", "nadie me quiere",
-    # estrés y ánimo
-    "estresado", "estresada", "estrés", "ansioso", "ansiosa", "ansiedad", "agobiado", "agobiada",
-    "no aguanto", "no puedo más", "todo me sale mal", "deprimido", "deprimida", "depresión",
-    "triste", "mal en serio", "estoy fatal", "destrozado", "destrozada", "quiero llorar", "llorando",
-]
-# Si aparece alguna, el turno NO es serio aunque haya disparador ("se murió mi
-# personaje", "me echaron de la partida"). Contrapartida aceptada: un mensaje
-# serio que mencione un juego ("murió mi tío y no tengo ganas ni de jugar la
-# partida") no activa el modo.
+#
+# Si aparece alguna excepción, el turno NO es serio aunque haya disparador
+# ("se murió mi personaje", "me echaron de la partida"). Contrapartida
+# aceptada: un mensaje serio que mencione un juego ("murió mi tío y no tengo
+# ganas ni de jugar la partida") no activa el modo.
 excepciones = [
     "personaje", "pj", "jefe", "boss", "juego", "videojuego", "partida", "nivel",
     "elden ring", "malenia", "anime", "serie", "manga", "película", "capítulo", "episodio",
+]
+# Aclaraciones que se añaden a la instrucción si el mensaje las contiene: el
+# 4B leyó "ya no aguanto la u" como "la uva".
+glosario = { "la u" = "la universidad" }
+
+[modo_serio.categorias]
+# Una categoría por tipo de golpe; si el mensaje cae en dos, gana la primera en
+# este orden ("mi novia me dejó, estoy destrozado" -> ruptura). Cada una tiene
+# su ejemplo en chat_sesion.EJEMPLOS_MODO_SERIO.
+muerte = ["murió", "falleció", "fallecimiento", "perdí a mi", "funeral", "velorio"]
+ruptura = [
+    "me dejó", "lo dejamos", "nos dejamos", "terminamos", "terminé con", "rompimos",
+    "ruptura", "me fue infiel",
+]
+trabajo = [
+    "me echaron", "me despidieron", "perdí el trabajo", "perdí mi trabajo",
+    "me quedé sin trabajo", "despido",
+]
+# "solo" suelto no: "solo quería saber..." dispararía.
+soledad = [
+    "me siento solo", "me siento sola", "estoy solo", "estoy sola", "muy solo", "muy sola",
+    "aislado", "aislada", "soledad", "nadie me quiere",
+]
+estres = [
+    "estresado", "estresada", "estrés", "ansioso", "ansiosa", "ansiedad", "agobiado", "agobiada",
+    "no aguanto", "no puedo más", "todo me sale mal", "deprimido", "deprimida", "depresión",
+    "triste", "mal en serio", "estoy fatal", "destrozado", "destrozada", "quiero llorar", "llorando",
 ]
 
 

@@ -17,8 +17,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config  # noqa: E402
-from chat_sesion import (_extraer_emocion, _limitar_oraciones, _para_voz,  # noqa: E402
-                         _quitar_marcas, detectar_modo_serio)
+from chat_sesion import (EJEMPLOS_MODO_SERIO, _extraer_emocion, _limitar_oraciones,  # noqa: E402
+                         _para_voz, _quitar_marcas, _un_parrafo, detectar_modo_serio,
+                         instruccion_modo_serio)
 from llm import Done, TextDelta  # noqa: E402
 
 PARTICIONES = 300
@@ -35,7 +36,7 @@ def _trozos(texto, semilla):
 
 
 def _pipeline(texto, semilla, max_oraciones=None):
-    """Mismo orden que procesar_turno(): emoción -> marcas -> límite."""
+    """Mismo orden que procesar_turno(): emoción -> marcas -> párrafo -> límite."""
     etiquetas, quitados, cortes = [], [], []
 
     async def gen():
@@ -44,7 +45,7 @@ def _pipeline(texto, semilla, max_oraciones=None):
         yield Done(reason="stop")
 
     async def correr():
-        s = _quitar_marcas(_extraer_emocion(gen(), etiquetas.append), quitados.append)
+        s = _un_parrafo(_quitar_marcas(_extraer_emocion(gen(), etiquetas.append), quitados.append))
         if max_oraciones:
             s = _limitar_oraciones(s, max_oraciones, cortes.append)
         out = ""
@@ -89,6 +90,40 @@ def test_marcas():
         assert out == esperado, f"{entrada!r} -> {out!r}"
 
 
+def test_un_parrafo():
+    casos = {
+        "…Eso pesa.\nCuéntame qué te pasa.": "…Eso pesa. Cuéntame qué te pasa.",
+        "…Técnicamente, nada.\n\nSolo sé que eres mi sirviente.  \n¿Algo más?":
+            "…Técnicamente, nada. Solo sé que eres mi sirviente. ¿Algo más?",
+        "\n…ah. Hola.": "…ah. Hola.",
+        "Sin saltos, tal cual.": "Sin saltos, tal cual.",
+    }
+    for entrada, esperado in casos.items():
+        out = _unico(entrada)[0]
+        assert out == esperado, f"{entrada!r} -> {out!r}"
+
+
+def test_bloque_codigo_y_lista():
+    """En el chat y el historial: fuera de los bloques ``` se aplana (la lista
+    también); dentro no se toca nada, ni siquiera marcas como arr[0] o
+    print('x'). La voz lo aplana todo."""
+    entrada = ("…Mira, así:\n```python\narr = [1, 2]\nprint(arr[0])\n```\n"
+               "Y recuerda:\n- uno\n- dos\nNo es difícil.")
+    esperado = ("…Mira, así:\n```python\narr = [1, 2]\nprint(arr[0])\n```\n"
+                "Y recuerda: - uno - dos No es difícil.")
+    out, _, quitados, _ = _unico(entrada)
+    assert out == esperado, repr(out)
+    assert quitados == (), quitados
+    # Dos bloques seguidos y un bloque al principio.
+    out = _unico("```\na\n```\n```\nb\n```")[0]
+    assert out == "```\na\n```\n```\nb\n```", repr(out)
+    # Fuera del bloque las marcas se siguen quitando.
+    out, _, quitados, _ = _unico("Hecho [ENJOYED]. Código:\n```\nx[0]\n```")
+    assert out == "Hecho. Código:\n```\nx[0]\n```" and quitados == ("[ENJOYED]",), (out, quitados)
+    voz = _para_voz(esperado)
+    assert "\n" not in voz and "```" not in voz, repr(voz)
+
+
 def test_limite_oraciones():
     texto = "…Uno. Dos, con coma. ¿Tres? Cuatro. Cinco."
     out, _, _, cortes = _unico(texto, max_oraciones=3)
@@ -97,6 +132,9 @@ def test_limite_oraciones():
     # Los "…" del principio o a mitad de frase no cuentan como final.
     out, _, _, cortes = _unico("…ah. Sí… pero no. Vale. Otra.", max_oraciones=3)
     assert out == "…ah. Sí… pero no. Vale.", out
+    # Los puntos de dentro de un bloque de código no cuentan como oraciones.
+    out, _, _, cortes = _unico("Mira. ```\nx = 1. y = 2. z = 3. w = 4.\n``` Listo. Otra. Y otra.", max_oraciones=3)
+    assert out == "Mira. ```\nx = 1. y = 2. z = 3. w = 4.\n``` Listo. Otra.", repr(out)
     # Con menos oraciones que el límite no se corta nada.
     out, _, _, cortes = _unico("Una. Dos.", max_oraciones=3)
     assert out == "Una. Dos." and cortes == 0
@@ -110,16 +148,23 @@ def test_para_voz():
 
 def test_modo_serio():
     cfg = config.leer_config_modo_serio()
-    serias = ["lo dejamos con mi pareja", "me siento muy aislado", "perdí el trabajo",
-              "se nos murió mi tío", "estoy agobiado con todo", "ya no aguanto la u",
-              "mi novia me dejó", "me echaron hoy", "falleció mi abuela", "estoy deprimido"]
+    serias = {"lo dejamos con mi pareja": "ruptura", "me siento muy aislado": "soledad",
+              "perdí el trabajo": "trabajo", "se nos murió mi tío": "muerte",
+              "estoy agobiado con todo": "estres", "ya no aguanto la u": "estres",
+              "mi novia me dejó, estoy destrozado": "ruptura", "me echaron hoy": "trabajo",
+              "falleció mi abuela": "muerte", "estoy deprimido": "estres"}
     no_serias = ["se murió mi personaje en Elden Ring", "terminé el juego",
                  "me echaron de la partida", "hola", "solo quería saber la hora",
                  "el jefe final me mató otra vez", "¿qué anime me recomiendas?"]
-    for t in serias:
-        assert detectar_modo_serio(t, cfg), f"debería ser serio: {t!r}"
+    for t, cat in serias.items():
+        r = detectar_modo_serio(t, cfg)
+        assert r and r[0] == cat, f"{t!r}: esperaba {cat}, salió {r}"
     for t in no_serias:
         assert not detectar_modo_serio(t, cfg), f"no debería ser serio: {t!r}"
+    # Cada categoría de config.toml tiene su ejemplo; la glosa solo si aparece.
+    assert set(cfg["categorias"]) == set(EJEMPLOS_MODO_SERIO)
+    assert "«la u» es la universidad" in instruccion_modo_serio("estres", "ya no aguanto la u", cfg["glosario"])
+    assert "Aclaración" not in instruccion_modo_serio("estres", "estoy agobiado", cfg["glosario"])
 
 
 if __name__ == "__main__":

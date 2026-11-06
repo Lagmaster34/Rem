@@ -28,10 +28,13 @@ from tokens_contexto import PresupuestoContexto
 
 MODOS_VALIDOS = ("ia", "eco")
 
-# Turnos de ejemplo del tono de Rem (few-shot), convertidos una sola vez: van
-# entre el system prompt y todo lo demás, idénticos en cada turno, para que
-# system + ejemplos sea un prefijo cacheable. El último marca el fin de ese
-# prefijo (punto de caché explícito para Claude, ver llm/claude.py).
+# Turnos de ejemplo del tono (few-shot), convertidos una sola vez: van entre el
+# system prompt y todo lo demás, idénticos en cada turno, para que system +
+# ejemplos sea un prefijo cacheable. El último marca el fin de ese prefijo
+# (punto de caché explícito para Claude, ver llm/claude.py). Se probó meterlos
+# dentro del system (2026-11-05): dejaban de citarse como hechos del usuario,
+# pero los copiaba palabra por palabra ("hola" -> la misma respuesta 10 de 10
+# veces). Ver CLAUDE.md, "Ejemplos de tono".
 _EJEMPLOS = tuple(
     Message(role=e["role"], content=e["content"], fin_prefijo_cache=(i == len(EJEMPLOS_TONO) - 1))
     for i, e in enumerate(EJEMPLOS_TONO)
@@ -222,19 +225,49 @@ _RE_LLAMADA = re.compile(r"\b\w*_\w*\([^()\n]{0,200}\)"
 _RE_MARCA_PENDIENTE = re.compile(r"(\[[^\]\n]{0,200}|\b\w+(\([^)\n]{0,200})?)$")
 
 
+# Un bloque de código ``` completo: lo de dentro no lo toca ningún filtro del
+# chat (ni marcas ni párrafo); la voz sí lo aplana (_para_voz).
+_RE_BLOQUE_CODIGO = re.compile(r"(```.*?```)", re.DOTALL)
+
+
 def _limpiar_marcas(texto: str) -> tuple[str, list[str]]:
-    """Quita corchetes y llamadas tipo funcion('...'). Devuelve (texto, quitados)."""
+    """Quita corchetes y llamadas tipo funcion('...') fuera de los bloques ```
+    completos (dentro, `arr[0]` o `print('x')` son código). Devuelve
+    (texto, quitados)."""
     quitados = []
 
     def _quitar(m):
         quitados.append(m.group(0))
         return ""
-    texto = _RE_LLAMADA.sub(_quitar, _RE_CORCHETES.sub(_quitar, texto))
-    if quitados:
-        texto = re.sub(r"[ \t]{2,}", " ", texto)
-        texto = re.sub(r" +([.,;:…?])", r"\1", texto)
-        texto = re.sub(r"[,;:]+([.…?])", r"\1", texto)
+
+    def _fuera(parte):
+        n = len(quitados)
+        parte = _RE_LLAMADA.sub(_quitar, _RE_CORCHETES.sub(_quitar, parte))
+        if len(quitados) > n:
+            parte = re.sub(r"[ \t]{2,}", " ", parte)
+            parte = re.sub(r" +([.,;:…?])", r"\1", parte)
+            parte = re.sub(r"[,;:]+([.…?])", r"\1", parte)
+        return parte
+    partes = _RE_BLOQUE_CODIGO.split(texto)
+    texto = "".join(p if i % 2 else _fuera(p) for i, p in enumerate(partes))
     return texto, quitados
+
+
+def _inicio_sin_cerrar(texto: str) -> int | None:
+    """Dónde empieza, al final de `texto`, algo que todavía puede ser un bloque
+    ``` o una marca: un ``` sin cerrar, uno o dos ` sueltos al final, o un "["
+    sin cerrar. None si no hay nada pendiente."""
+    vallas = [m.start() for m in re.finditer("```", texto)]
+    if len(vallas) % 2:
+        return vallas[-1]
+    # Acentos graves sueltos al final: lo que sobra de un múltiplo de 3 puede ser
+    # el principio de una valla (un "```" completo al final ya es una valla).
+    sueltos = (len(texto) - len(texto.rstrip("`"))) % 3
+    if sueltos:
+        return len(texto) - sueltos
+    # \Z y no $: en Python $ también acepta "antes del \n final".
+    m = re.search(r"\[[^\]\n]{0,200}\Z", texto)
+    return m.start() if m else None
 
 
 @_cierra_entrada
@@ -248,12 +281,13 @@ async def _quitar_marcas(chunks, on_quitado):
 
     def _soltar(final):
         nonlocal pendiente, fin_con_espacio, tras_marca
-        # Con un "[" todavía abierto, lo que va desde ahí ni se mira: quitar
-        # ya una llamada de dentro y después "[ENJOYED ]" daría el mismo texto
-        # pero un log distinto según cómo llegue partido.
-        abierto = None if final else re.search(r"\[[^\]\n]{0,200}$", pendiente)
-        retenido = pendiente[abierto.start():] if abierto else ""
-        limpio, quitados = _limpiar_marcas(pendiente[:abierto.start()] if abierto else pendiente)
+        # Con un "[" o un bloque ``` todavía abiertos, lo que va desde ahí ni se
+        # mira: quitar ya una llamada de dentro y después "[ENJOYED ]" daría el
+        # mismo texto pero un log distinto según cómo llegue partido, y dentro
+        # de un bloque de código no hay que quitar nada.
+        abierto = None if final else _inicio_sin_cerrar(pendiente)
+        retenido = pendiente[abierto:] if abierto is not None else ""
+        limpio, quitados = _limpiar_marcas(pendiente[:abierto] if abierto is not None else pendiente)
         for q in quitados:
             on_quitado(q)
         tras_marca = tras_marca or bool(quitados)
@@ -289,6 +323,87 @@ async def _quitar_marcas(chunks, on_quitado):
             yield TextDelta(listo)
 
 
+# ── Un solo párrafo ───────────────────────────────────────────────────────
+# Yoru habla: la respuesta es un párrafo. Se añadió cuando los ejemplos de tono
+# fueron un rato dentro del system (una línea por turno) y el 4B partía en
+# líneas el 25-35 % de las respuestas (2026-11-05); se queda como garantía.
+# Fuera de los bloques ``` los saltos se juntan con un espacio. Dentro de un bloque de código no se toca nada, y el salto de
+# línea de justo antes y después de cada bloque se conserva. La voz aplana
+# todo, código incluido (_para_voz).
+_RE_SALTO = re.compile(r"[ \t]*\n\s*")
+# Un espacio delante de un signo (queda al quitar una marca: "Hecho [X]." ->
+# "Hecho ."). Los "…" no: " …no" es habla normal.
+_RE_ESPACIO_SIGNO = re.compile(r"[ \t]+([.,;:?!])")
+
+
+@_cierra_entrada
+async def _un_parrafo(chunks):
+    """Ver arriba. Retiene lo que todavía puede cambiar según lo que llegue
+    (el espacio del final, uno o dos ` que pueden ser el principio de una
+    valla ```): el resultado no depende de cómo llegue partido el texto."""
+    buf = ""
+    dentro = False        # dentro de un bloque ```
+    tras_cierre = False   # acaba de cerrarse un bloque: su salto se conserva
+    hay_texto = False     # ya salió algo (el salto antes de un bloque se conserva)
+
+    def _fuera(parte, ante_valla=False):
+        """Aplana un trozo de fuera de los bloques."""
+        nonlocal tras_cierre
+        if tras_cierre and parte:
+            cab = len(parte) - len(parte.lstrip(" \t\n"))
+            pre = "\n" if "\n" in parte[:cab] else parte[:cab]
+            parte = pre + _RE_SALTO.sub(" ", parte[cab:])
+            tras_cierre = False
+        else:
+            parte = _RE_SALTO.sub(" ", parte)
+        return _RE_ESPACIO_SIGNO.sub(r"\1", parte)
+
+    def _procesar(final):
+        nonlocal buf, dentro, tras_cierre, hay_texto
+        salida = []
+        while True:
+            i = buf.find("```")
+            if i < 0:
+                break
+            trozo, buf = buf[:i], buf[i + 3:]
+            if dentro:
+                salida.append(trozo + "```")
+                dentro, tras_cierre = False, True
+            else:
+                cola = trozo[len(trozo.rstrip(" \t\n")):]
+                cuerpo = _fuera(trozo[:len(trozo) - len(cola)])
+                sep = "\n" if "\n" in cola else cola
+                salida.append(cuerpo + (sep if cuerpo or tras_cierre or hay_texto else "") + "```")
+                dentro, tras_cierre = True, False
+        # Lo que queda sin valla completa: se suelta salvo lo que aún puede cambiar.
+        if final:
+            listo, buf = (buf, "") if dentro else (buf.rstrip(" \t\n"), "")
+        else:
+            corte = len(buf) - (len(buf) - len(buf.rstrip("`"))) % 3
+            if not dentro:
+                corte = len(buf[:corte].rstrip(" \t\n"))
+            listo, buf = buf[:corte], buf[corte:]
+        salida.append(listo if dentro else _fuera(listo))
+        texto = "".join(salida)
+        hay_texto = hay_texto or bool(texto)
+        return texto
+
+    async for chunk in chunks:
+        if isinstance(chunk, TextDelta):
+            buf += chunk.text
+            texto = _procesar(final=False)
+            if texto:
+                yield TextDelta(texto)
+            continue
+        texto = _procesar(final=True)
+        if texto:
+            yield TextDelta(texto)
+        yield chunk
+    texto = _procesar(final=True)
+    if texto:
+        yield TextDelta(texto)
+
+
 # ── Tope de oraciones ([respuesta].max_oraciones) ─────────────────────────
 # Mismo criterio de "oración" que llm/sentence_splitter (. ! ? seguidos de
 # espacio; "…" no corta; fragmentos de menos de 3 caracteres no cuentan).
@@ -312,6 +427,8 @@ async def _limitar_oraciones(chunks, max_oraciones, on_corte):
         acum += chunk.text
         cuenta, desde, corte = 0, 0, None
         for m in _FIN_ORACION.finditer(acum):
+            if acum.count("```", 0, m.start()) % 2:
+                continue    # dentro de un bloque de código no se corta
             if len(acum[desde:m.start()].strip()) >= 3:
                 cuenta += 1
                 if cuenta == max_oraciones:
@@ -352,6 +469,8 @@ def _para_voz(texto: str) -> str:
     texto, quitados = _limpiar_marcas(texto)
     if quitados:
         print(f"  [Marcas] quitado antes del TTS: {quitados}", flush=True)
+    # La voz va siempre en un párrafo, también lo que fuera un bloque de código.
+    texto = re.sub(r"\s*\n\s*", " ", texto.replace("```", " "))
     for patron, reemplazo in _SUSTITUCIONES_VOZ:
         texto = patron.sub(reemplazo, texto)
     # "¡Hola" quedaría ".Hola": sin punto suelto al inicio.
@@ -392,20 +511,47 @@ def pide_herramientas(texto_usuario: str, disparadores: list[str]) -> str | None
 # repitiera, _quitar_marcas la saca. Está escrita en positivo a propósito (qué
 # hacer, no qué evitar): la hipótesis medida es que las negaciones del tipo
 # "no le busques el lado bueno" sembraban justo eso.
-INSTRUCCION_MODO_SERIO = (
+#
+# Un ejemplo fijo por CATEGORÍA ([modo_serio.categorias]), escrito genérico para
+# que encaje aunque el modelo lo copie literal (lo hace casi siempre: con 4
+# ejemplos rotando al azar copió 10 de 12 veces, a veces uno que no venía al
+# caso; sin ejemplo no copió pero juzgó o reinterpretó 8 de 12, 2026-11-05).
+_INSTRUCCION_MODO_SERIO = (
     "[Modo serio: esto le duele de verdad. Contesta en una o dos frases sencillas, "
     "sin burla ni jerga y sin llamarlo sirviente. Nombra lo que pasó tal como él lo "
-    "cuenta, quédate a su lado y, como mucho, hazle una pregunta. "
-    "Ejemplo de tono: «…Lo siento mucho. Eso es muy duro. ¿Cómo estás tú?»]")
+    "cuenta, quédate a su lado y, como mucho, hazle una pregunta.{ejemplo}{glosa}]")
+EJEMPLOS_MODO_SERIO = {
+    "muerte":  "…Lo siento mucho. Perder a alguien duele de verdad. ¿Quieres contarme de esa persona?",
+    "ruptura": "…Lo siento. Que se termine algo así duele mucho. ¿Cómo lo estás llevando?",
+    "trabajo": "…Eso es un golpe duro. Quedarse sin trabajo descoloca a cualquiera. ¿Cómo estás?",
+    "soledad": "…Sentirse así pesa mucho. Aquí estoy; cuéntame lo que quieras, sin prisa.",
+    "estres":  "…Suena a que llevas demasiado encima. Cuéntame qué es lo que más te pesa ahora.",
+}
 
 
-def detectar_modo_serio(texto_usuario: str, cfg: dict) -> str | None:
-    """El disparador de [modo_serio] que aparece en el mensaje, o None si no
-    hay ninguno o si también aparece una excepción ("se murió mi personaje")."""
-    disparo = personalidad.palabra_clave(texto_usuario, cfg["disparadores"])
-    if disparo and personalidad.palabra_clave(texto_usuario, cfg["excepciones"]):
+def instruccion_modo_serio(categoria: str, texto_usuario: str = "", glosario: dict | None = None) -> str:
+    """La instrucción de modo serio con el ejemplo de `categoria` (sin ejemplo si
+    la categoría no tiene) y las aclaraciones del glosario que aparezcan en el
+    mensaje ("la u" = la universidad)."""
+    ejemplo = EJEMPLOS_MODO_SERIO.get(categoria)
+    glosas = [f"«{k}» es {v}" for k, v in (glosario or {}).items()
+              if personalidad.palabra_clave(texto_usuario, [k])]
+    return _INSTRUCCION_MODO_SERIO.format(
+        ejemplo=f" Ejemplo de tono: «{ejemplo}»" if ejemplo else "",
+        glosa=f" Aclaración: {'; '.join(glosas)}." if glosas else "")
+
+
+def detectar_modo_serio(texto_usuario: str, cfg: dict) -> tuple[str, str] | None:
+    """(categoría, disparador) de [modo_serio.categorias] para el mensaje, o None
+    si no hay ninguno o si también aparece una excepción ("se murió mi
+    personaje"). Las categorías se prueban en el orden de config.toml."""
+    if personalidad.palabra_clave(texto_usuario, cfg["excepciones"]):
         return None
-    return disparo
+    for categoria, disparadores in cfg["categorias"].items():
+        disparo = personalidad.palabra_clave(texto_usuario, disparadores)
+        if disparo:
+            return categoria, disparo
+    return None
 
 
 def _tool_pertinente(call, texto_usuario: str) -> bool:
@@ -508,14 +654,15 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
     # conversas", ver personalidad.construir_prompt_sistema()).
     system = personalidad.construir_prompt_sistema(con_herramientas=bool(tools))
 
-    # Modo serio (ver INSTRUCCION_MODO_SERIO): solo este turno, pegado al final
+    # Modo serio (ver instruccion_modo_serio()): solo este turno, pegado al final
     # del último mensaje, como el contexto dinámico.
     instruccion = ""
     if es_llm:
-        disparo_serio = detectar_modo_serio(texto, config.leer_config_modo_serio())
-        if disparo_serio:
-            instruccion = INSTRUCCION_MODO_SERIO
-            print(f"  [Serio] sí, por {disparo_serio!r}", flush=True)
+        cfg_serio = config.leer_config_modo_serio()
+        serio = detectar_modo_serio(texto, cfg_serio)
+        if serio:
+            instruccion = instruccion_modo_serio(serio[0], texto, cfg_serio["glosario"])
+            print(f"  [Serio] sí: {serio[0]}, por {serio[1]!r}", flush=True)
     extra_turno = "\n".join(x for x in (contexto, instruccion) if x)
 
     # Si no cabe en num_ctx, fuera los turnos más viejos del historial (nunca
@@ -580,6 +727,7 @@ async def procesar_turno(sesion, texto, memoria_larga, memoria_sistema, *,
             stream = _extraer_emocion(stream, _on_etiqueta)
             stream = _quitar_marcas(stream, lambda q: print(
                 f"  [Marcas] quitado de la respuesta (chat, voz e historial): {q!r}", flush=True))
+            stream = _un_parrafo(stream)
             max_oraciones = config.leer_max_oraciones()
             if max_oraciones:
                 stream = _limitar_oraciones(stream, max_oraciones, lambda n: print(

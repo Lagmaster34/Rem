@@ -224,9 +224,10 @@ romance). Sin signos de exclamación, "…" para las pausas, jerga otaku/interne
 muletilla まあ、どうでもいい. Reemplazó a la "amiga paisa" (voseo, jerga antioqueña). El prompt
 conserva las reglas duras (longitud, honestidad —corrige lo falso con burla en la primera frase—, no
 inventar, herramientas, cuándo hablar de tecnología, emoción: casi nunca etiqueta, [FELIZ] solo
-excepcional) y está en tú, no en voseo. El tono sale de los 11 ejemplos de `ejemplos_tono.py`. Desde 2026-11-05 el prompt incluye "Cómo se te
-nota el aprecio" (ideas de las personalidades tsundere/bro de Nerumi, reescritas) y el modo serio se
-detecta en código (ver "Modo serio y tope de oraciones"); 3 ejemplos serios (perro, ruptura, soledad).
+excepcional) y está en tú, no en voseo. El tono sale de los 8 ejemplos de `ejemplos_tono.py` (turnos falsos; ningún mensaje de usuario cuenta
+algo de la vida de Esteban, ver "Ejemplos de tono"). Desde 2026-11-05 el prompt incluye "Cómo se te nota
+el aprecio" (ideas de las personalidades tsundere/bro de Nerumi, reescritas) y el modo serio se detecta
+en código (ver "Modo serio y tope de oraciones"), con su propio ejemplo por categoría.
 Antes del TTS, `chat_sesion._para_voz()` cambia "!"/"¡" por puntos, la muletilla japonesa por
 "maa, dou demo íi" (Piper/espeak "es" no lee japonés; con "ii" leía el romano II, "dos", y una "í" sola
 como "í acentuada") y "skill issue"/"npc(s)" por "skil íshiu"/"enpisí(s)". Medido con
@@ -2251,17 +2252,29 @@ toca system, tools, ejemplos ni memoria larga, ni el último mensaje. Solo con p
 **Modo serio detectado en código**, como la fecha: `config.toml` → `[modo_serio]` tiene `disparadores`
 (muerte, ruptura, despido, soledad, estrés/ánimo; frases, no "solo" suelto) y `excepciones` ("personaje",
 "jefe", "partida", "juego"...: "se murió mi personaje" no dispara). Si dispara, `procesar_turno()` pega
-`INSTRUCCION_MODO_SERIO` (87 tok, entre corchetes, con un mini-ejemplo) al final del último mensaje,
-solo en ese turno: no toca el prefijo cacheado ni queda en el historial (el turno serio evaluó el
-prompt en ~140 ms, como cualquier otro). En el system queda una línea ("cuando algo le duele de verdad,
-cambias de tono"). Por qué: con la regla larga siempre en el system, 0 de 5 frases serias salían bien;
-con la detección, 6 de 6 (serio, sin juicio, sin jerga ni "sirviente") — **pero 4 de 6 copian literal el
-mini-ejemplo** ("…Lo siento mucho. Eso es muy duro. ¿Cómo estás tú?"). Pendiente: variar el ejemplo o
-quitarlo.
+`instruccion_modo_serio(categoria, texto, glosario)` (91-95 tok; 106 con glosa, entre corchetes) al
+final del último mensaje, solo en ese turno: no toca el prefijo cacheado ni queda en el historial (el
+turno serio evaluó el prompt en ~140 ms, como cualquier otro). En el system queda una línea ("cuando algo
+le duele de verdad, cambias de tono"). Con la regla larga siempre en el system, 0 de 5 frases serias
+salían bien.
 
-**"No le buscas el lado bueno" sembraba lo contrario**: con esa negación en el system, la conversación
-larga de 20 turnos tuvo 8 "…pero al menos…"; sin ella, 1 (y 0 en la ronda anterior a añadirla). Una
-muestra por variante, temperatura 0,7: indicio, no prueba. Las instrucciones nuevas van en positivo.
+**Un ejemplo fijo por categoría** (`[modo_serio.categorias]`: muerte, ruptura, trabajo, soledad, estres;
+gana la primera que coincide; `chat_sesion.EJEMPLOS_MODO_SERIO`), escrito genérico para que encaje aunque
+el modelo lo copie literal, que lo hace en ~60 % de los turnos serios. `[modo_serio].glosario` añade
+aclaraciones si el mensaje las contiene ("«la u» es la universidad": antes leyó "la uva"). Historia
+(2026-11-05, 6 frases serias que no están en los ejemplos × 2, fondo clasificado a mano):
+
+| Variante | Copias literales | Fallan en el fondo |
+|---|---|---|
+| Un ejemplo fijo para todo | 4/6 | 0/6 |
+| 4 ejemplos rotando al azar | 10/12 | 6/12 (copiaba uno que no venía al caso) |
+| Sin ejemplo | 0/12 | 8/12 (juzga, y cita situaciones de los ejemplos de tono) |
+| **Uno por categoría** (actual) | ~14/24 | ~1-2/24 |
+
+**"…pero al menos…" — corrección**: se atribuyó a la frase "no le buscas el lado bueno" (8 en 20 turnos
+con ella, 1 sin ella), pero dos corridas idénticas posteriores dieron 8 y 1. Es variación entre corridas
+(temperatura 0,7), no un efecto medido. La frase sigue fuera, sin evidencia de que importe. Lo mismo con
+la jerga: 6 de 20 turnos en una corrida, 1 de 20 en las dos siguientes, sin cambiar nada.
 
 **Tope de oraciones** (`[respuesta].max_oraciones`, 3): `_limitar_oraciones()` corta el stream al
 completar la N-ésima oración (mismo criterio que `llm/sentence_splitter`) y emite
@@ -2273,8 +2286,15 @@ conversación larga: 5 cortes en 20 turnos, media 2,8 oraciones y máximo 3 (ant
 respuestas de dos párrafos).
 
 **Tests**: `venv/bin/python tests/test_filtros_texto.py` — etiqueta de emoción (al inicio va a la cara;
-a mitad de texto la quita `_quitar_marcas`), marcas, tope de oraciones, `_para_voz()` y detección del
-modo serio con falsos positivos. Los casos de stream se prueban con 300 particiones aleatorias: el texto
+a mitad de texto la quita `_quitar_marcas`), marcas, un solo párrafo, bloques de código, tope de
+oraciones, `_para_voz()` y detección del modo serio (categorías, glosa, falsos positivos).
+
+**Bloques de código ```** : en el chat y el historial no se toca nada de lo que va dentro (ni saltos de
+línea, ni marcas como `arr[0]`/`print('x')`); `_quitar_marcas` retiene un bloque abierto hasta que se
+cierra, `_un_parrafo` aplana solo lo de fuera (una lista fuera de un bloque sí se aplana) y conserva el
+salto de antes y después de cada bloque, y `_limitar_oraciones` no cuenta los puntos de dentro. La voz
+lo aplana todo. Bugs encontrados al escribir el test: `$` en Python también casa antes de un `\n` final
+(se cortaba la valla de cierre "```\n"; ahora `\Z`), y los ``` del final se cuentan en múltiplos de 3. Los casos de stream se prueban con 300 particiones aleatorias: el texto
 y lo registrado en el log tienen que salir idénticos en todas.
 
 ## Ejemplos de tono (few-shot) — `ejemplos_tono.py`
@@ -2283,17 +2303,39 @@ y lo registrado en el log tienen que salir idénticos en todas.
 > reemplazada el 2026-11-04 por Kuroki Yoru (ver "Personalidad" más arriba). El mecanismo
 > (orden del prefijo, caché, sin ejemplos en eco) sigue igual.
 
-`EJEMPLOS_TONO` (turnos user/assistant falsos) define el tono de Rem en vez de describirlo en el
-prompt. `chat_sesion.procesar_turno()` arma cada turno así:
+`EJEMPLOS_TONO` (turnos user/assistant falsos, 8 pares) define el tono de Yoru en vez de describirlo
+en el prompt. `chat_sesion.procesar_turno()` arma cada turno así:
 
 ```
 system (fijo) → EJEMPLOS_TONO → memoria larga (si hay) → historial → [contexto dinámico + último mensaje]
 ```
 
+**Ningún mensaje de usuario de los ejemplos cuenta algo de la vida de Esteban** (2026-11-05): como turnos,
+el modelo los tomaba como cosas que le habían pasado ("tu perro murió y tu novia te dejó"). Los 3 pares
+serios (perro, ruptura, soledad) se quitaron: los cubre el modo serio con su ejemplo por categoría. "Este
+finde voy a una fiesta" y "mañana empiezo a estudiar" pasaron a preguntas ("¿qué opinas de las
+fiestas?", "¿está mal dejar las cosas para mañana?").
+
+Medido con el mismo banco, 2 corridas por variante (hola ×5, halago, gracias, teclado, JavaScript, 10
+turnos de conversación y 5 preguntas tipo "¿qué sabes de mí?"):
+
+| Variante | Prefijo + "hola" | "hola" distintos | Copias de un ejemplo | Citan hechos de los ejemplos | "procrastinas" |
+|---|---|---|---|---|---|
+| Turnos, ejemplos con hechos (antes) | 1408 tok | 10/10 | 1/48 | 3/10 | 7/10 |
+| Ejemplos dentro del system + regla "solo sabes lo que te dijo" | 1477 | **1/10** | 19/48 (5 primeras palabras) | 0-1/10 | 0/10 |
+| **Turnos sin hechos personales** (actual) | **1296** | 10/10 | 1/48 | 0/10 | 0/10 |
+
+Probado y descartado por el camino: un mensaje separador tras los ejemplos (3/10 citan hechos), la regla
+"solo sabes lo que te dijo" con los ejemplos como turnos (7-9/15: le hace listar los ejemplos como cosas
+que le contaste), y los ejemplos dentro del system (no los cita, pero los usa como tabla: "hola" → la misma
+respuesta 10 de 10 veces, y parte las respuestas en líneas el 25-35 %, de ahí `_un_parrafo`). "procrastinas"
+venía de la frase del system "si él procrastina…", reformulada a "si lo ves aplazando algo…". Lo que sigue
+saliendo en "¿qué sabes de mí?" son caracterizaciones sacadas del propio personaje ("eres un npc con skill
+issue"), no hechos de los ejemplos.
+
 - **system + ejemplos es idéntico byte a byte en cada turno** — es el prefijo que reusan las cachés.
-  Ollama cachea por prefijo solo; para Claude, el último ejemplo lleva
-  `Message.fin_prefijo_cache=True` y `ClaudeProvider` pone ahí un segundo `cache_control` (el del
-  system solo cubría tools + system).
+  Ollama cachea por prefijo solo; para Claude, el último ejemplo lleva `Message.fin_prefijo_cache=True`
+  y `ClaudeProvider` pone ahí un segundo `cache_control`.
 - **La memoria larga no va en el system prompt** (`construir_bloque_memoria()`, como mensaje aparte
   tras los ejemplos): así un cambio de memoria no invalida system + ejemplos.
 - **El contexto dinámico sigue pegado al ÚLTIMO mensaje, no antes del historial**: si fuera antes, cada
@@ -2539,6 +2581,7 @@ clips; pack de pago, no redistribuible), autores de bailes de la tabla de NOTAS 
 vyath pack...), tk256ailab (MIT) y VRoid Project (crédito obligatorio) para Rem anterior, y
 `desconocido` en 54 (bailes sin autor, idles no kawaii, sit no kawaii, lying, tutorial,
 `greet.vrma`).
+
 
 ## Fase 2: avatar de escritorio al estilo Nerumi (en curso, 2026-11-05)
 

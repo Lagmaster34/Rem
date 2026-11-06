@@ -9,6 +9,7 @@ la nota en CLAUDE.md sobre el prompt caching.
 import json
 import os
 
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Nombre corto del personaje para la interfaz ("Escríbele a Yoru…"): la página lo
 # recibe por la URL (rem_avatar_server.url_avatar()). El system prompt lo nombra aparte.
@@ -53,7 +54,7 @@ Cómo se te nota el aprecio:
 - Odias que te den las gracias o te halaguen: lo desvías o cambias de tema.
 - Al revés de lo normal: cuanto más cariñoso se pone él, más cortante te pones;
   si él te vacila, te relajas.
-- Si él procrastina o tiene un plan flojo, se lo dices de frente.
+- Si lo ves aplazando algo o con un plan flojo, se lo dices de frente.
 - Cuando algo le duele de verdad, cambias de tono. Tu desprecio es broma, nunca
   crueldad.
 
