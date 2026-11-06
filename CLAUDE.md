@@ -1,6 +1,8 @@
 # Rem — Asistente Virtual IA
 
 ## ⚠ Fase 2 en curso (2026-11-05): ver "Nota de traspaso — fase 2" al final y `notas_fase2/README.md`
+Etapa 2 hecha y cerrada (2026-11-06): `--modo escritorio`, ver "Modo escritorio" al final.
+Orden acordado después: etapa 4 (ajustes en `rem_panel`, temas propios) y luego la 5 (micrófono).
 
 ## ⚠ Cambio 2026-11-04: avatar multimodelo y director de animación (leer antes que lo de abajo)
 - **Rem (rem.vrm, rem_naenae.vrm) y los 17 clips de `VRMA_MotionPack/` ("Rem anterior") salieron del
@@ -48,7 +50,11 @@ no basta con copiar la carpeta.
 ## Archivos principales
 | Archivo | Qué hace |
 |---------|----------|
-| `rem_chat.py` | **La aplicación**: levanta el servidor HTTP/WS y abre UNA presentación, `--modo ventana` (default) o `--modo overlay`. Ver "Modo overlay" más abajo |
+| `rem_chat.py` | **La aplicación**: levanta el servidor HTTP/WS y abre UNA presentación, `--modo ventana` (default), `--modo overlay` o `--modo escritorio`. Ver "Modo overlay" y "Modo escritorio" más abajo |
+| `escritorio.py` | El modo escritorio en GTK: la layer surface del avatar (arrastre, región de clic, cambio de monitor, posición guardada) y la ventana de chat aparte. Ver "Modo escritorio" |
+| `rem_chat_ventana.html` | La ventana de chat del modo escritorio: el panel de chat de siempre con su propio WebSocket (`avatar/chat_remoto.js`) |
+| `rem_escritorio.py` | CLI: `mostrar\|ocultar\|alternar` el avatar del modo escritorio (atajo de Hyprland, lanzador) |
+| `frases_voz.py` / `frases_escritorio.json` | Frases fijas del avatar de escritorio y su caché con voz (`cache_frases/`) |
 | `rem_avatar_server.py` | Servidor HTTP `:18765` + WebSocket `:18766` para el avatar, más la orquestación de push-to-talk (`ptt_start`/`ptt_stop`). Ver "Modo overlay: push-to-talk" más abajo |
 | `rem_avatar.html` | HTML y CSS del avatar (ventana y overlay). El script vive en `avatar/` |
 | `avatar/` | Script del avatar partido en scripts clásicos que comparten ámbito global (núcleo 3D, clips, director, panel, overlay, WS). Ver `avatar/README.md` |
@@ -351,6 +357,7 @@ la clave `"programas"` del JSON, que no existe en el schema que lee `personalida
 ```bash
 venv/bin/python rem_chat.py                    # LA APLICACIÓN — modo ventana (default de config.toml)
 venv/bin/python rem_chat.py --modo overlay     # LA APLICACIÓN — modo overlay (ver "Modo overlay" más abajo)
+venv/bin/python rem_chat.py --modo escritorio  # LA APLICACIÓN — avatar arrastrable + chat aparte (ver "Modo escritorio")
 venv/bin/python bench_chat.py                  # REPL de depuración (ver abajo)
 venv/bin/python rem_panel.py                   # panel de control (con Rem ya abierto)
 ```
@@ -2611,10 +2618,12 @@ herramientas de prueba.
   `avatar/README.md`), sin cambiar comportamiento. Verificado con la app real en ventana y overlay.
   VRAM: 3146 MiB con Ollama cargado, igual con ventana u overlay (WebKit dibuja WebGL por software;
   en la NVIDIA solo está `llama-server`).
-- **Siguiente, en orden**: 2) superficie del avatar de escritorio detrás de `--modo escritorio`
-  (transparente, arrastrable, inclinación, reacciones al clic, botones al pasar el ratón, región de
-  clic dinámica; comprobar varios monitores); 3) chat en ventana aparte reutilizando el panel actual;
-  4) menú del clic derecho y ajustes en `rem_panel`; 5) voz de entrada (fin de frase automático y
+- **Etapas 2 y 3 — hechas** (2026-11-05/06): `--modo escritorio` con avatar arrastrable,
+  inclinación y pose de «colgada», región de clic que sigue al cuerpo, reacciones con voz, mirada al
+  cursor, botones, menú propio del clic derecho y chat en ventana aparte. Ver "Modo escritorio".
+- **Siguiente, en orden** (cambiado por Esteban: la 4 antes que la 5): 4) configuración por pestañas
+  en `rem_panel` abrible en una pestaña desde el menú, opciones del menú y temas propios (proponer
+  las opciones antes de implementarlas); 5) voz de entrada (fin de frase automático y
   filtro de alucinaciones en Python, modo conversación, palabra de activación opcional); 6) quitar el
   modo ventana; 7) animaciones en el overlay. **Medir VRAM con `nvidia-smi` en cada etapa** (con
   Ollama cargado; `num_gpu = 99`, ~520 MiB libres).
@@ -2656,3 +2665,110 @@ en dos corridas idénticas; la jerga, 6 y 1 de 20. Toda comparación va con 2-3 
   es genérico, pero repite); en "¿qué sabes de mí?" inventa caracterizaciones sacadas del personaje
   ("eres un npc con skill issue"); la jerga sigue alta (10 menciones en 38 respuestas frente a 5
   antes); el banco de cumplimiento de las etiquetas de emoción del chat sigue sin hacerse.
+
+
+## Modo escritorio (`--modo escritorio`, etapa 2 de la fase 2)
+
+Lanzador **Rem Escritorio** (`lanzadores/rem-escritorio.sh`; si ya está abierto en este modo le manda
+SIGUSR1 y reaparece si estaba oculto, en vez de reiniciar). Dos ventanas en el mismo proceso que el
+servidor (`escritorio.py`):
+
+- **Avatar**: layer surface `rem_escritorio` (capa/tamaño en `config.toml` → `[escritorio]`, 380×620
+  `top` por defecto), transparente, cuerpo entero, con clips y director como la ventana vieja
+  (sin suelo ni panel). Teclado siempre `NONE`. La posición (monitor + márgenes) se guarda en
+  `escritorio_estado.json` (ignorado por git) al soltar y se recupera al abrir.
+- **Chat**: ventana GTK normal con `rem_chat_ventana.html`, perezosa (se crea al abrirla por primera
+  vez) y que al cerrarse solo se oculta. Hyprland la mete en mosaico; para que respete
+  `chat_ancho`/`chat_alto` hace falta una `windowrule` de flotante para su título («Yoru — chat»).
+
+**Arrastre** (Python): el press de GTK guarda el cursor GLOBAL (`j/cursorpos` del socket de Hyprland)
+y el agarre; el arrastre arranca cuando se cumplen las dos condiciones, en cualquier orden: la página
+avisó `presion` (se pulsó el cuerpo, no un botón ni el menú) y el ratón pasó 6 px. Cada 16 ms:
+`cursorpos` → márgenes acotados al área útil del monitor (sin las zonas reservadas; puede salirse un
+30 % por los lados, el aire transparente de la superficie) → `posicion(gx, gy)` a la página. Visto en
+vivo: con el STT calentándose (CPU a tope) `presion` llegaba después de los movimientos y un arrastre
+entero se tomaba como clic; por eso el orden no importa. Un clic sin arrastre llega a la página como
+`clic(x, y)`. **Varios monitores**: durante el arrastre la capa no cambia de monitor (eso la recrea y se
+perdería el arrastre en curso); al soltar con el cursor en otro monitor pasa a ese (`set_monitor`, el
+`Gdk.Monitor` se busca por posición) con el mismo agarre. Probado con una salida headless en el
+Hyprland anidado; no con dos monitores físicos. Fuera de Hyprland no hay arrastre (aviso en el log).
+
+**Página** (`avatar/escritorio_ui.js` + `escritorio.css`):
+- *Inclinación*: muelle amortiguado (~0,45 del crítico, `CONFIG.escritorio.inclinacion`) hacia
+  `-vx·k` / `-vy·k`; rota la escena alrededor del punto agarrado (cuelga del cursor) y se aplica
+  antes de `vrm.update()`, así pelo y falda reaccionan. Cara de sorpresa mientras se arrastra. **La
+  velocidad la calcula `escritorio.py`** (filtro de 60 ms con sus marcas de tiempo) y la manda en
+  `posicion(gx, gy, vx, vy)`: calculada en la página, con las llamadas llegando a ráfagas, daba picos
+  y ceros, y en la sesión real de Esteban la inclinación no se notaba (además la ganancia era la
+  mitad: 300 px/s daban ~7°; ahora ~18°). Al soltar se loguea la inclinación máxima.
+- *Colgada* (`_actualizarColgada`, `CONFIG.escritorio.colgada`): mientras se arrastra, piernas
+  colgando con un péndulo propio que se queda atrás del movimiento (signo medido en vivo), pataleo,
+  pies en punta y brazos abiertos agitándose; se mezcla encima del clip/procedural con fundido de
+  0,25 s y vuelve en 0,6 s. Procedural porque ningún clip sirvió: `@KA_Sit_SwingingLegs` y
+  `@KA_Sit_WithBothLegsUp` de frente se leen como sentada (la falda atraviesa los muslos) y
+  `@KA_Swimming_Idle` casi no se distingue de estar de pie (vistos en capturas).
+- *Mirada al cursor* (`CONFIG.escritorio.mirarCursor`): `escritorio.py` manda `cursor(x, y)` (px de
+  superficie, de `cursorpos` a 10 Hz, solo si cambia); se suma a la base de la mirada en
+  `_miradaBase()` (ojos con `peso` 0,6, cabeza con `CONFIG.mirada.cabezaFraccion`, ~5-9°) y vuelve al
+  frente tras `volverTrasS` (4 s) sin mover el ratón. Los signos de yaw/pitch se le preguntan a
+  `vrm.lookAt` una vez por modelo (con Neru: yaw +1, pitch −1; el pitch supuesto estaba al revés).
+- *Región de clic*: cajas alrededor de los huesos proyectados (torso, brazos, piernas, cabeza) +
+  botones y menú si se ven, cada 90 ms y solo si cambió (cuantizado a 3 px). Sigue al cuerpo en los
+  clips y al inclinarse. El pelo largo y las puntas de la falda quedan fuera (atraviesan).
+- *Clics*: cara breve + vaivén; 3+ en 4 s, molesta; 5+, enojada (`recibirEmocion('angry')`, su clip
+  con enfriamiento) y 7 s sin reaccionar. Sin doble clic (retrasaría todas las reacciones).
+- *Frases con voz*: los textos fijos están en `frases_escritorio.json` (versionado). `frases_voz.py`
+  los sintetiza con Piper al arrancar (19 frases en ~5 s) en `cache_frases/` (ignorado por git: WAV +
+  timeline; la clave es el texto tal como lo lee la voz, tras `_para_voz`, y la identidad del modelo
+  Piper, así que cambiar una frase o la voz la regenera; las que sobran se borran). La página manda
+  `decir_frase` y el servidor la dice con `enviar_audio` solo si la voz está activa, no hay turno ni
+  voz en cola ni audio sonando, y el micrófono está cerrado (`_motivo_no_decir_frase`); si no, queda
+  en la burbuja. Una reacción nunca corta una respuesta. Las frases sin letras («…») no se dicen.
+- *Botones* al pasar el ratón (chat, menú, ocultar) a la derecha de la cabeza; *menú* del clic
+  derecho: chat, bailar, voz, modelo (lista), panel de control, ocultar, salir. *Burbuja* sobre la
+  cabeza: reacciones, «Te escucho…» con el push-to-talk, «…» pensando, lo transcrito.
+
+**Mensajes página → Python por el WebSocket, no por `messageHandlers`**: `{tipo:'escritorio',
+datos:{...}}` → `rem_avatar_server.establecer_oyente_escritorio()` → `GLib.idle_add`. Con el script
+message handler (como el overlay) la app se colgaba al rato: Hyprland mostraba «no responde» y SIGTERM
+no la cerraba. Con gdb (la app lanzada como hijo; `ptrace` a un proceso ajeno no está permitido): el
+hilo principal esperando para siempre en `JSC::Heap::acquireAccessSlow`, con todos los hilos de
+Python ociosos. Cada mensaje crea `JSCValue` en Python y la región se manda cada ~90 ms. Con el
+WebSocket, 12 arrastres + 16 clics + 7 turnos con voz sin cuelgue y SIGTERM cierra en 0,3 s. El
+overlay sigue usando el handler (pocos mensajes); si algún día se cuelga, es lo mismo.
+`kill -USR2 <pid>` vuelca las pilas de Python al log (`faulthandler`).
+
+**Chat aparte** (`avatar/chat_remoto.js`): rol WS `chat` (cuenta en `DESTINO_CHAT`). Al conectar el
+servidor le manda `modo_actual`, `voz_actual` y la confirmación en curso si la hay
+(`_saludar_chat`). Lo que vive en la página del avatar se pide por el servidor:
+`al_avatar {cmd:{que: estado_get|baile|clip}}` → `cmd_avatar` a los avatares, y
+`del_avatar {info:{que: estado|sistema|modelo_cargado|baile|clip_lanzado}}` → `info_avatar` a los
+chats. `panel_chat.js` ya no toca globales del avatar: recibe un anfitrión (`anfitrionChat()`,
+`chat_local.js` en la página del avatar, `chat_remoto.js` en la de chat); el CSS del panel pasó a
+`avatar/panel_chat.css`. `voz_actual` se difunde al cambiar (el menú del avatar y el chat la pintan).
+`apagar_pc` sí se ofrece: al pedir confirmación el avatar abre el chat, que la recibe al conectar.
+
+**Ocultar sin desmapear**: «Ocultar» deja la capa mapeada, vacía la región de clic y pausa el dibujo
+(`_renderPausado`). Antes la desmapeaba y el lanzador mandaba SIGUSR1 para volver a mostrarla: en la
+sesión real de Esteban no reaparecía. Mostrar/ocultar/alternar: `rem_escritorio.py
+mostrar|ocultar|alternar` (por WebSocket); el lanzador lo usa si ya hay una instancia en modo
+escritorio (SIGUSR1 queda de respaldo).
+
+**Hyprland (líneas para `hyprland.conf`, no se editan desde aquí)**: el chat flotante, sin borde y
+centrado en el monitor del avatar (`escritorio.py` enfoca ese monitor antes de mapear la ventana;
+verificado con dos salidas en el anidado, 0.56.2), y un atajo para mostrar/ocultar:
+
+```
+windowrule = float true, match:class rem_chat\.py, match:title .+ — chat
+windowrule = size 440 640, match:class rem_chat\.py, match:title .+ — chat
+windowrule = center true, match:class rem_chat\.py, match:title .+ — chat
+windowrule = border_size 0, match:class rem_chat\.py, match:title .+ — chat
+bind = SUPER, Y, exec, /mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_escritorio.py alternar
+```
+
+**Verificado** (Hyprland anidado, 2026-11-05): transparencia y click-through fuera del cuerpo;
+arrastre con posición final exacta (+520/−120 px); inclinación en ráfaga de capturas; botones,
+menú, reacciones y enfado; chat en Eco e IA con streaming, `/animaciones` y `/bailar` reenviados,
+confirmación de `apagar_pc` (contestada «No» por WS, los botones Sí/No están a 27 px); ocultar +
+SIGUSR1; cambio a un segundo monitor; ventana y overlay sin regresiones. **VRAM con Ollama
+cargado: 3572 MiB de 4096** (3562 `llama-server`; el avatar y el chat, 0 en la NVIDIA).

@@ -387,6 +387,12 @@ function _miradaBase(dt) {
     yaw   = vrm.lookAt.yaw   * M.intensidadSeguimiento;
     pitch = vrm.lookAt.pitch * M.intensidadSeguimiento;
   }
+  // Modo escritorio: además hacia el cursor (avatar/escritorio_ui.js).
+  if (ES_ESCRITORIO) {
+    const c = miradaCursorEscritorio(dt);
+    yaw += c.yaw;
+    pitch += c.pitch;
+  }
 
   _miradaTimer -= dt;
   if (_miradaFase === 'siguiendo' && _miradaTimer <= 0) {

@@ -18,8 +18,14 @@
 //     movimiento de cabeza/cuello y respiración, con los brazos en una pose de
 //     reposo fija (CONFIG.brazos). Una caja de texto abajo es lo único que
 //     recibe el ratón. Ver CONFIG.overlay y crearOverlayUI().
-const MODO = new URLSearchParams(location.search).get('modo') === 'overlay' ? 'overlay' : 'ventana';
+//   escritorio: layer surface transparente con el avatar de cuerpo entero, que
+//     se arrastra por el escritorio (rem_chat.py --modo escritorio). Mismo
+//     núcleo que la ventana (clips, director) sin suelo ni panel: el chat va en
+//     una ventana aparte. Ver CONFIG.escritorio y avatar/escritorio_ui.js.
+const MODO = (m => ['overlay', 'escritorio'].includes(m) ? m : 'ventana')(new URLSearchParams(location.search).get('modo'));
 const ES_OVERLAY = MODO === 'overlay';
+const ES_ESCRITORIO = MODO === 'escritorio';
+const ES_TRANSPARENTE = ES_OVERLAY || ES_ESCRITORIO;   // canvas con alfa, sin suelo
 // Nombre del personaje para los textos de la interfaz: lo manda el backend en la
 // URL (personalidad.NOMBRE_PERSONAJE, vía rem_avatar_server.url_avatar()).
 const NOMBRE_PERSONAJE = new URLSearchParams(location.search).get('personaje') || 'Yoru';
@@ -223,6 +229,70 @@ const CONFIG = {
       baseSobreBordeFrac: 0.0, // fracción del alto visible entre el corte y el borde inferior
       anchorX: 0.5,           // centrada horizontalmente
     },
+  },
+  // Solo modo escritorio. La geometría de la superficie va en config.toml
+  // [escritorio]; acá el encuadre y la interacción.
+  escritorio: {
+    encuadre: {
+      alturaPantalla: 0.80,   // cuerpo entero (huesos, +18 % de pelo) en esta fracción del alto
+      anchorY: 0.535,         // centro del cuerpo: aire abajo para los pies y arriba para la burbuja
+      anchorX: 0.46,          // un poco a la izquierda: los botones van a la derecha de la cabeza
+    },
+    // Inclinación al arrastrar: muelle amortiguado hacia un objetivo
+    // proporcional a la velocidad del arrastre (px/s). El pivote es el punto
+    // por donde se agarró, así cuelga del cursor en vez de girar por los pies.
+    inclinacion: {
+      porVelX: 0.0009,        // rad por px/s horizontal (300 px/s ≈ 15°)
+      porVelY: 0.0005,        // rad por px/s vertical (cabeceo)
+      maxZ: 0.32,
+      maxX: 0.18,
+      rigidez: 70,            // 1/s² — más alto, sigue antes al objetivo
+      amortiguacion: 7.5,     // 1/s — ~0,45 del crítico: un vaivén claro al soltar
+      suavizadoVel: 0.05,     // s — suavizado extra (escritorio.py ya filtra la velocidad)
+    },
+    // Pose mientras la llevas agarrada (ver _actualizarColgada). Radianes.
+    colgada: {
+      entradaS: 0.25, salidaS: 0.6,   // fundido de entrada / vuelta al soltar
+      caderas: 0.12,          // las piernas un poco hacia delante
+      abrirPiernas: 0.07,
+      signoLado: 1,
+      rodillas: 0.35,         // flexión de rodilla en reposo colgando
+      pies: 0.45,             // en punta
+      pataleo: 0.16, pataleoHz: 1.6,
+      inercia: 0.0011,        // rad por px/s: las piernas van detrás del movimiento
+      maxBalanceo: 0.5,
+      rigidez: 32, amortiguacion: 3.2,   // péndulo más lento y suelto que la inclinación
+      brazos: 0.75,           // |upperArm.z| (en reposo 1,20 = pegados; 0 = en cruz)
+      brazosAdelante: 0.25,
+      codos: 0.35,
+      agitar: 0.18, agitarHz: 2.2,
+    },
+    // La cabeza (y los ojos) siguen al cursor en el escritorio.
+    mirarCursor: {
+      peso: 0.6,              // fracción del ángulo real hacia el cursor que miran los ojos
+      maxYaw: 30, maxPitch: 18,   // grados (la cabeza gira CONFIG.mirada.cabezaFraccion de esto)
+      distanciaPx: 700,       // "a qué distancia está la cara de la pantalla", en px
+      volverTrasS: 4,         // sin mover el ratón tanto tiempo, vuelve al frente
+      suavizado: 3,           // 1/s
+    },
+    // Región de clic: el cuerpo dibujado, aproximado por cajas alrededor de los
+    // huesos proyectados (en unidades de mundo = metros del modelo).
+    region: {
+      radioCabeza: 0.15,      // alrededor del centro de la cabeza (hueso head + 0,08)
+      radioTorso: 0.15,
+      radioBrazo: 0.06,
+      radioPierna: 0.08,
+      margenPx: 6,
+      cadaMs: 90,             // cada cuánto se recalcula
+    },
+    clics: {
+      ventanaS: 4,            // los clics de los últimos N s cuentan para enojarse
+      molestaDesde: 3,
+      enojadaDesde: 5,
+      enojoS: 7,              // cuánto dura el enfado (los clics no reaccionan)
+    },
+    botonesOcultarMs: 1400,   // tras salir el puntero del cuerpo
+    burbujaMs: 2800,
   },
   // Presupuesto de render — la ventana comparte los 4 GB de VRAM con Ollama
   // (ver config.toml [llm.ollama].num_gpu). Bajar estos valores libera

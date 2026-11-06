@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Chat</title>
+<!-- Ventana de chat aparte del modo escritorio (rem_chat.py --modo escritorio,
+     ver escritorio.py). Es el mismo panel de chat que la ventana vieja
+     (avatar/panel_chat.js + panel_chat.css), a pantalla completa, con su propio
+     WebSocket (avatar/chat_remoto.js): lo que vive en la página del avatar
+     —clips, baile, modelo cargado— se le pide por el servidor. -->
+<link rel="stylesheet" href="/avatar/panel_chat.css">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; background:#04000c; overflow:hidden; }
+  #chat-panel { width:100%; min-width:0; border-left:none; box-shadow:none; }
+  #chat-conexion {
+    position:fixed; left:50%; top:10px; transform:translateX(-50%); z-index:20;
+    padding:4px 12px; border-radius:999px; font:12px -apple-system, "Segoe UI", Roboto, sans-serif;
+    color:#ffd6dc; background:rgba(40,6,18,.9); border:1px solid rgba(255,90,110,.5);
+  }
+  #chat-conexion[hidden] { display:none; }
+</style>
+</head>
+<body>
+<div id="chat-conexion" hidden>Sin conexión — reintentando…</div>
+<script src="/avatar/chat_remoto.js"></script>
+<script src="/avatar/panel_chat.js"></script>
+<script>
+  crearPanelChat();
+  _conectarChat();
+</script>
+</body>
+</html>

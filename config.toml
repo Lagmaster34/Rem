@@ -86,6 +86,8 @@ modelo = "models/vrm/neru.vrm"
 # Cómo se presenta Rem. Override: rem_chat.py --modo ventana|overlay.
 #   "ventana" → ventana GTK normal con avatar + panel de chat (el de siempre).
 #   "overlay" → layer surface transparente en una esquina (ver [overlay]).
+#   "escritorio" → avatar de cuerpo entero que se arrastra por el escritorio,
+#                  con el chat en una ventana aparte (ver [escritorio]).
 # Nunca los dos a la vez: es un solo proceso con un solo modo, y un segundo
 # rem_chat.py aborta con un error claro si ya hay uno corriendo.
 modo = "ventana"
@@ -106,6 +108,25 @@ capa = "top"
 # 0 = respeta la zona exclusiva de otros paneles (Rem se apoya sobre la barra);
 # -1 = ignora los paneles y se solapa con ellos.
 zona_exclusiva = 0
+
+
+[escritorio]
+# Avatar de escritorio (rem_chat.py --modo escritorio): layer surface
+# transparente, click-through salvo el cuerpo del modelo, que se arrastra con
+# el ratón (solo en Hyprland: la posición sale de `hyprctl cursorpos`). La
+# última posición se guarda en escritorio_estado.json y se recupera al abrir;
+# estos márgenes son solo los de la primera vez.
+ancho = 380
+alto  = 620
+margen_izquierdo = 40
+margen_inferior  = 0
+# "top": sobre las ventanas normales; "overlay": sobre todo (fullscreen
+# incluidas); "bottom": bajo las ventanas, sobre el fondo de pantalla.
+capa = "top"
+zona_exclusiva = 0
+# Ventana de chat aparte (botón 💬, menú del clic derecho).
+chat_ancho = 440
+chat_alto  = 640
 
 
 [stt]

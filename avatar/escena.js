@@ -14,9 +14,9 @@
 // overlay eliminado). El color de fondo real lo fija crearSueloSynthwave().
 // En overlay el canvas es transparente (alpha) para que se vea el escritorio
 // detrás; sin suelo ni fondo de escena (ver crearSueloSynthwave, no se llama).
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: ES_OVERLAY });
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: ES_TRANSPARENTE });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-if (ES_OVERLAY) renderer.setClearColor(0x000000, 0);
+if (ES_TRANSPARENTE) renderer.setClearColor(0x000000, 0);
 document.body.appendChild(renderer.domElement);
 
 // Renderer WebGL real (Fase 0 del comparativo de modelos) — WEBGL_debug_renderer_info
@@ -84,6 +84,7 @@ const rimLight  = new THREE.DirectionalLight(CONFIG.lighting.rim.color,  CONFIG.
 let estado = 'idle';
 let prevEstado = '';
 let vrm = null;
+let _renderPausado = false;   // modo escritorio con el avatar oculto: no se dibuja
 const clock = new THREE.Clock();
 const lerp  = (a, b, t) => a + (b - a) * t;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -113,13 +114,14 @@ const worldX = n => (n - 0.5) * _anchoVisible;
 // donde empieza el panel) a la fracción real del canvas completo que
 // worldX() espera.
 function fraccionAreaVisible3D() {
-  if (ES_OVERLAY) return 1;  // sin panel: toda la superficie es área 3D
+  if (ES_TRANSPARENTE) return 1;  // sin panel: toda la superficie es área 3D
   return 1 - CONFIG.chat.anchoFrac;
 }
 
 // Anclas de encuadre del modo activo: en ventana CONFIG.pet; en overlay las de
 // CONFIG.overlay.encuadre (mismos nombres, así recalcularEncuadre() no ramifica).
 function _anclasEncuadre() {
+  if (ES_ESCRITORIO) return CONFIG.escritorio.encuadre;
   if (!ES_OVERLAY) return CONFIG.pet;
   const E = CONFIG.overlay.encuadre;
   return { alturaPantalla: E.ocupaAltoFrac, anchorX: E.anchorX, anchorY: 0.5 };
@@ -338,5 +340,5 @@ function posicionarSuelo(posX = 0) {
   if (_horizonte) _horizonte.position.set(posX, pieY, 0);
 }
 
-// El overlay es transparente y sin suelo: nada de cuadrícula, niebla ni fondo.
-if (!ES_OVERLAY) crearSueloSynthwave();
+// Overlay y escritorio son transparentes y sin suelo: nada de cuadrícula, niebla ni fondo.
+if (!ES_TRANSPARENTE) crearSueloSynthwave();

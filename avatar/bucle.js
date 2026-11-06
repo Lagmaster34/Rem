@@ -54,6 +54,10 @@ function animate() {
   // corre aplicarCuerpoProcedural() tal cual antes.
   actualizarAnimacionClips(dt, t);
 
+  // Escritorio: inclinación al arrastrar (antes de vrm.update, así el pelo y
+  // la falda reaccionan al vaivén), región de clic y botones/burbuja.
+  if (ES_ESCRITORIO) actualizarEscritorio(dt);
+
   vrm.update(dt); // spring bones + morphs internos del VRM — después de posar los huesos
 
   // Remedir con huesos ahora que el modelo ya se posó al menos un frame
@@ -81,7 +85,7 @@ function animate() {
   // puesto ahí (por eso la vía de fallback se aplica ANTES, ver aplicarVisemesPreUpdate).
   aplicarVisemesPostUpdate(dt);
 
-  renderer.render(scene, camera);
+  if (!_renderPausado) renderer.render(scene, camera);
 }
 animate();
 

@@ -1,4 +1,8 @@
-// avatar/panel_chat.js — panel de chat del modo ventana.
+// avatar/panel_chat.js — panel de chat: el de la ventana vieja y el de la ventana
+// de chat aparte del modo escritorio (rem_chat_ventana.html). Lo que depende de
+// dónde vive el avatar (WebSocket, modelos, clips, baile) lo da un ANFITRIÓN
+// (anfitrionChat(), definido por la página: avatar/chat_local.js en la página
+// del avatar, avatar/chat_remoto.js en la ventana de chat).
 // Parte del script del avatar que antes vivía entero dentro de rem_avatar.html
 // (un solo <script type="module">). Es un script CLÁSICO, no un módulo: todas
 // las partes comparten el ámbito global (los let/const/function de nivel
@@ -10,14 +14,13 @@
 // ═══════════════════════════════════════════════════
 // PANEL DE CHAT (ver también el CSS en <head>)
 // ═══════════════════════════════════════════════════
-// HTML/CSS/JS vanilla, sin frameworks ni dependencias externas. El envío usa
-// _ws directo (declarado más abajo, en WEBSOCKET) — los handlers de click
-// solo lo LEEN al momento del click, mucho después de que el módulo entero
-// ya terminó de evaluarse, así que el orden de declaración no importa acá.
-// La recepción es al revés: window.__remChat se define ACÁ (antes de la
-// sección WEBSOCKET) para que _ws.onmessage, más abajo, ya lo encuentre
-// armado desde el primer mensaje que llegue.
-function crearPanelChat() {
+// HTML/CSS/JS vanilla, sin frameworks ni dependencias externas. El envío va
+// por anf.enviar() (el WebSocket del anfitrión). La recepción es al revés:
+// window.__remChat se define ACÁ y el WebSocket de la página lo llama.
+//
+// Anfitrión: { enviar(obj) -> bool, modelos(), modeloActivo(), pedirModelos(),
+//              baile(), setBaile(on), clips(), dispararClip(id) }
+function crearPanelChat(anf = anfitrionChat()) {
 
   // Única fuente de verdad para el ancho del panel: CONFIG.chat.anchoFrac.
   // fraccionAreaVisible3D() (encuadre 3D) lee ese mismo número directo de
@@ -25,7 +28,10 @@ function crearPanelChat() {
   // abajo), así que un custom property es el único puente entre los dos —
   // fijado acá, antes de crear el panel, para que ambos queden atados al
   // mismo valor sin poder desincronizarse.
-  document.documentElement.style.setProperty('--chat-panel-width', `${CONFIG.chat.anchoFrac * 100}%`);
+  // (La ventana de chat aparte no carga config.js: ahí el panel ocupa todo.)
+  if (typeof CONFIG !== 'undefined') {
+    document.documentElement.style.setProperty('--chat-panel-width', `${CONFIG.chat.anchoFrac * 100}%`);
+  }
 
   const panel = document.createElement('div');
   panel.id = 'chat-panel';
@@ -67,18 +73,18 @@ function crearPanelChat() {
 
   // ── Selector de modelo y modo baile ──
   function pedirModelo(ruta) {
-    if (!_ws || _ws.readyState !== WebSocket.OPEN) { agregarSistema('Sin conexión con el servidor.'); return; }
-    _ws.send(JSON.stringify({ tipo: 'prefs_set', seccion: 'modelo', cambios: { vrm: ruta } }));
+    if (!anf.enviar({ tipo: 'prefs_set', seccion: 'modelo', cambios: { vrm: ruta } })) { agregarSistema('Sin conexión con el servidor.'); return; }
     $modelos.hidden = true;
     $btnModelo.classList.remove('activo');
   }
   function pintarModelos() {
     $modelos.innerHTML = '';
-    if (!_modelosLista.length) { $modelos.textContent = 'No hay modelos en models/vrm/.'; return; }
-    for (const m of _modelosLista) {
+    const lista = anf.modelos();
+    if (!lista.length) { $modelos.textContent = 'No hay modelos en models/vrm/.'; return; }
+    for (const m of lista) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'modelo-item' + (m.ruta === MODELO_ACTIVO ? ' activo' : '');
+      b.className = 'modelo-item' + (m.ruta === anf.modeloActivo() ? ' activo' : '');
       b.textContent = `${m.titulo} — ${m.autor}${m.credito ? ' (crédito)' : ''} · VRM ${m.version ?? '?'}`;
       b.title = m.ruta;
       b.onclick = () => pedirModelo(m.ruta);
@@ -88,10 +94,10 @@ function crearPanelChat() {
   $btnModelo.addEventListener('click', () => {
     $modelos.hidden = !$modelos.hidden;
     $btnModelo.classList.toggle('activo', !$modelos.hidden);
-    if (!$modelos.hidden) { pintarModelos(); _ws?.send(JSON.stringify({ tipo: 'modelos_get' })); }
+    if (!$modelos.hidden) { pintarModelos(); anf.pedirModelos(); }
   });
-  $btnBaile.addEventListener('click', () => setModoBaile(!_modoBaile));
-  $btnBaile.classList.toggle('activo', _modoBaile);
+  $btnBaile.addEventListener('click', () => anf.setBaile(!anf.baile()));
+  $btnBaile.classList.toggle('activo', anf.baile());
 
   let modoActivo = 'ia';
   let esperandoRespuesta = false;
@@ -138,7 +144,7 @@ function crearPanelChat() {
     const responder = (ok) => {
       btnSi.disabled = true;
       btnNo.disabled = true;
-      _ws.send(JSON.stringify({ tipo: 'accion_confirmar_resp', ok }));
+      anf.enviar({ tipo: 'accion_confirmar_resp', ok });
     };
     const btnSi = document.createElement('button');
     btnSi.textContent = 'Sí';
@@ -175,45 +181,28 @@ function crearPanelChat() {
   // [{valor, titulo, desc}]. Un solo argumento posicional a propósito: no hace
   // falta un parser genérico de flags para lo que se necesita acá.
 
-  // Dispara un clip a mano. Regla: los que giran el cuerpo (giraCuerpo, ver
-  // catalogo.json, medido) sacan a Rem de cámara, así que mientras haya
-  // voz sonando NO se disparan — quedan en espera y salen al vaciarse la cola
-  // de audio. Los demás salen al momento, aunque esté hablando.
-  function dispararClipManual(archivo) {
-    const etiqueta = etiquetaClip(archivo);
-    if (clipGiraCuerpo(archivo) && hayVozSonando()) {
-      ponerClipEnEspera(archivo);   // reemplaza al anterior; solo se guarda uno
-      agregarSistema(`⏳ ${etiqueta} — en espera: gira el cuerpo y ${NOMBRE_PERSONAJE} está hablando`);
-      return;
-    }
-    // El disparo manual corre el temporizador de gestos espontáneos, para que
-    // no se encadene uno automático encima del que se acaba de pedir.
-    _gestoTimer = _sortearIntervaloGesto();
-    window.dispararClipDebug(archivo);   // MISMA función que el handler WS debug_clip
-    agregarSistema(`▶ ${etiqueta}`);
-  }
-
   const COMANDOS = {
     modelo: {
       descripcion: 'Cambiar de modelo VRM',
       listar() {
-        return _modelosLista.map(m => ({ valor: m.ruta, titulo: m.titulo, desc: m.autor + (m.ruta === MODELO_ACTIVO ? ' · actual' : '') }));
+        return anf.modelos().map(m => ({ valor: m.ruta, titulo: m.titulo, desc: m.autor + (m.ruta === anf.modeloActivo() ? ' · actual' : '') }));
       },
       ejecutar(arg) {
         const f = (arg || '').trim().toLowerCase();
-        const hit = _modelosLista.find(m => m.ruta.toLowerCase() === f || m.titulo.toLowerCase() === f || m.archivo.toLowerCase().startsWith(f));
-        if (!f || !hit) { agregarSistema(`Modelos: ${_modelosLista.map(m => m.archivo).join(', ') || 'ninguno'}`); return; }
+        const lista = anf.modelos();
+        const hit = lista.find(m => m.ruta.toLowerCase() === f || m.titulo.toLowerCase() === f || m.archivo.toLowerCase().startsWith(f));
+        if (!f || !hit) { agregarSistema(`Modelos: ${lista.map(m => m.archivo).join(', ') || 'ninguno'}`); return; }
         pedirModelo(hit.ruta);
       },
     },
     bailar: {
       descripcion: 'Activar/desactivar el modo baile',
-      ejecutar() { setModoBaile(!_modoBaile); },
+      ejecutar() { anf.setBaile(!anf.baile()); },
     },
     animaciones: {
       descripcion: 'Disparar un clip de animación',
       listar() {
-        return clipsDisponibles().map(c => ({
+        return anf.clips().map(c => ({
           valor: c.nombre,
           titulo: c.etiqueta,
           grupo: c.grupo,
@@ -221,7 +210,7 @@ function crearPanelChat() {
         }));
       },
       ejecutar(arg) {
-        const disponibles = clipsDisponibles();
+        const disponibles = anf.clips();
         if (disponibles.length === 0) {
           agregarSistema('No hay clips de animación cargados.');
           return;
@@ -232,7 +221,7 @@ function crearPanelChat() {
                  ?? disponibles.find(c => c.etiqueta.toLowerCase() === f)
                  ?? disponibles.find(c => c.etiqueta.toLowerCase().includes(f));
         if (!hit) { agregarSistema(`No hay ninguna animación que coincida con "${arg}".`); return; }
-        dispararClipManual(hit.nombre);
+        anf.dispararClip(hit.nombre);
       },
     },
   };
@@ -359,12 +348,11 @@ function crearPanelChat() {
       cerrarPaleta();
       return;
     }
-    if (!_ws || _ws.readyState !== WebSocket.OPEN) {
-      agregarSistema('Sin conexión con Rem — reintentando...');
+    if (!anf.enviar({ tipo: 'chat_message', texto })) {
+      agregarSistema(`Sin conexión con ${NOMBRE_PERSONAJE} — reintentando...`);
       return;
     }
     agregarBurbuja(texto, 'user');
-    _ws.send(JSON.stringify({ tipo: 'chat_message', texto }));
     $input.value = '';
     esperandoRespuesta = true;
     burbujaRemActual = null;
@@ -404,8 +392,8 @@ function crearPanelChat() {
   $modoBtns.forEach(btn => {
     btn.addEventListener('click', () => {
       const modo = btn.dataset.modo;
-      if (modo === modoActivo || !_ws || _ws.readyState !== WebSocket.OPEN) return;
-      _ws.send(JSON.stringify({ tipo: 'cambiar_modo', modo }));
+      if (modo === modoActivo) return;
+      anf.enviar({ tipo: 'cambiar_modo', modo });
     });
   });
 
@@ -414,19 +402,18 @@ function crearPanelChat() {
   // confirmación del backend, a diferencia del modo): un simple on/off no
   // puede fallar, y esto es puramente local al panel — no hay "voz_actual"
   // que sincronizar con nadie más.
-  $voz.addEventListener('click', () => {
-    vozActiva = !vozActiva;
+  function pintarVoz() {
     $voz.textContent = vozActiva ? '🔊' : '🔇';
     $voz.title = vozActiva ? 'Silenciar voz' : 'Activar voz';
-    if (_ws && _ws.readyState === WebSocket.OPEN) {
-      _ws.send(JSON.stringify({ tipo: 'voz', activa: vozActiva }));
-    }
+  }
+  $voz.addEventListener('click', () => {
+    vozActiva = !vozActiva;
+    pintarVoz();
+    anf.enviar({ tipo: 'voz', activa: vozActiva });
   });
 
   $reset.addEventListener('click', () => {
-    if (_ws && _ws.readyState === WebSocket.OPEN) {
-      _ws.send(JSON.stringify({ tipo: 'reset' }));
-    }
+    anf.enviar({ tipo: 'reset' });
     $mensajes.innerHTML = '';
     burbujaRemActual = null;
     esperandoRespuesta = false;
@@ -434,7 +421,7 @@ function crearPanelChat() {
     setEstadoUI('', '');
   });
 
-  // Llamado desde _ws.onmessage (ver WEBSOCKET más abajo) — traduce los
+  // Llamado desde el WebSocket de la página (avatar/ws.js o chat_remoto.js) — traduce los
   // tipos del protocolo de chat a cambios concretos del panel.
   window.__remChat = {
     onDelta(fragmento) {
@@ -476,8 +463,10 @@ function crearPanelChat() {
     },
     onModelos() { if (!$modelos.hidden) pintarModelos(); },
     onModoBaile(on) { $btnBaile.classList.toggle('activo', on); },
-    onClipLanzado(archivo) {
-      agregarSistema(`▶ ${etiquetaClip(archivo)}`);
+    // El servidor difunde la voz al cambiar (también desde el menú del avatar).
+    onVozActual(activa) { vozActiva = !!activa; pintarVoz(); },
+    onClipLanzado(archivo, etiqueta) {
+      agregarSistema(`▶ ${etiqueta ?? (typeof etiquetaClip === 'function' ? etiquetaClip(archivo) : archivo)}`);
     },
     // Push-to-talk (ver rem_avatar_server, "Push-to-talk"). La transcripción
     // entra como un mensaje del usuario y el turno arranca solo ~1s después.

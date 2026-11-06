@@ -68,6 +68,13 @@ let _modelosLista = [];   // modelos_lista del servidor (models/vrm/)
         window.__remChat?.onTranscripcion?.(String(d.texto ?? ''), d.ms ?? 1000);
       } else if (d.tipo === 'accion_confirmar') {
         window.__remChat?.onAccionConfirmar?.(String(d.nombre ?? ''), String(d.descripcion ?? ''));
+      } else if (d.tipo === 'voz_actual') {
+        window.__remChat?.onVozActual?.(d.activa);
+      } else if (d.tipo === 'cmd_avatar') {
+        // De la ventana de chat aparte (modo escritorio), vía el servidor.
+        window.__remCmdAvatar?.(d);
+      } else if (d.tipo === 'info_avatar') {
+        // Para la ventana de chat; la página del avatar no lo usa.
       } else if (d.estado) {
         estado = d.estado;
       }
@@ -83,3 +90,8 @@ let _modelosLista = [];   // modelos_lista del servidor (models/vrm/)
 })();
 
 window.setEstado = s => { estado = s; };
+
+// La página del avatar le cuenta algo a la(s) ventana(s) de chat aparte.
+function enviarAlChat(info) {
+  if (_ws && _ws.readyState === WebSocket.OPEN) _ws.send(JSON.stringify({ tipo: 'del_avatar', info }));
+}

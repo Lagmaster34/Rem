@@ -3,6 +3,10 @@
 
 # Memoria del chat (datos personales)
 memoria_*.json
+# Última posición del avatar del modo escritorio
+escritorio_estado.json
+# Frases fijas del avatar ya sintetizadas (frases_voz.py)
+cache_frases/
 
 # Python
 __pycache__/

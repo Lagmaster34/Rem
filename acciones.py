@@ -311,8 +311,10 @@ class ConfirmacionExpirada(Exception):
 
 
 def tools_disponibles(modo: str) -> list[ToolSpec]:
-    """`modo`: 'ventana' u 'overlay' — apagar_pc no se ofrece en overlay
-    (no hay forma de confirmar una acción destructiva ahí, ver CLAUDE.md)."""
+    """`modo`: 'ventana', 'overlay' o 'escritorio' — apagar_pc no se ofrece en
+    overlay (no hay forma de confirmar una acción destructiva ahí, ver
+    CLAUDE.md). En escritorio sí: la confirmación sale en la ventana de chat,
+    que se abre sola si estaba cerrada (ver rem_chat.py)."""
     specs = [_SPEC_ABRIR_PROGRAMA, _SPEC_APAGAR_PC, _SPEC_BUSCAR_EN_NAVEGADOR, _SPEC_BUSCAR_ARCHIVOS]
     if modo == "overlay":
         specs = [s for s in specs if s.name not in TOOLS_EXCLUIDAS_OVERLAY]

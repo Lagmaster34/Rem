@@ -42,10 +42,12 @@ Diferencias con el módulo único que hay que tener presentes al editar:
 | `clips.js` | Clips VRMA: carga, catálogo, mixer, mezcla y puente de pose |
 | `director.js` | Director de animación: ruleta de reposo, bailes, saludo, emoción |
 | `bucle.js` | `animate()` y resize |
-| `panel_chat.js` | Panel de chat del modo ventana |
+| `chat_local.js` | Anfitrión del panel de chat en la página del avatar + disparo manual de clips |
+| `panel_chat.js` / `panel_chat.css` | Panel de chat (ventana vieja y `rem_chat_ventana.html`); lo que depende del avatar lo da `anfitrionChat()` |
+| `chat_remoto.js` | Solo `rem_chat_ventana.html`: su WebSocket (rol `chat`) y su anfitrión |
 | `overlay_ui.js` | Caja de texto e indicador del modo overlay |
+| `escritorio_ui.js` / `escritorio.css` | Modo escritorio: inclinación al arrastrar, región de clic, reacciones, botones, menú y burbuja |
 | `ws.js` | WebSocket con `rem_avatar_server.py` |
 
-Es la base para el modo escritorio (etapa 2 de la fase 2, ver CLAUDE.md): la
-página nueva cargará los mismos archivos del núcleo y su propia interfaz en vez
-de `panel_chat.js`/`overlay_ui.js`.
+El modo escritorio (`?modo=escritorio`) usa esta misma página con
+`escritorio_ui.js` en vez del panel; ver "Modo escritorio" en CLAUDE.md.

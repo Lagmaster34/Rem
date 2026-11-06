@@ -2,7 +2,7 @@
 """
 Rem de escritorio — GTK3 + WebKit2. ES LA APLICACIÓN: levanta el servidor
 HTTP/WS del avatar (mismo servidor, mismo pipeline de voz y LLM, un solo
-proceso) y abre UNA de estas dos presentaciones, nunca las dos a la vez:
+proceso) y abre UNA de estas presentaciones, nunca dos a la vez:
 
   --modo ventana   Ventana normal decorada, opaca, con foco de teclado:
                    avatar de cuerpo entero + panel de chat.
@@ -10,6 +10,10 @@ proceso) y abre UNA de estas dos presentaciones, nunca las dos a la vez:
                    IZQUIERDA+ABAJO: avatar de medio cuerpo sobre el escritorio,
                    click-through en todo salvo una caja de texto. Ver
                    "Modo overlay" en CLAUDE.md.
+  --modo escritorio  Avatar de cuerpo entero sobre el escritorio que se
+                   arrastra con el ratón (Hyprland), reacciona a los clics y
+                   tiene menú propio; el chat va en una ventana aparte. Ver
+                   escritorio.py.
 
 Sin --modo se usa config.toml -> [app].modo (default "ventana"). Si ya hay una
 instancia corriendo (puertos :18765/:18766 ocupados) sale con un error claro
@@ -23,7 +27,7 @@ instalaron ahí sin problema, construidos contra las libs GTK3/WebKit2GTK ya
 instaladas en el sistema (ver requirements.txt y CLAUDE.md). El modo overlay
 además necesita el paquete de sistema gtk-layer-shell.
 
-    venv/bin/python rem_chat.py [--modo ventana|overlay]
+    venv/bin/python rem_chat.py [--modo ventana|overlay|escritorio]
 """
 import argparse
 import json
@@ -44,8 +48,8 @@ import config
 
 def _parsear_args():
     ap = argparse.ArgumentParser(
-        description="Rem: asistente virtual de escritorio (ventana u overlay).")
-    ap.add_argument("--modo", choices=("ventana", "overlay"), default=None,
+        description="Rem: asistente virtual de escritorio (ventana, overlay o escritorio).")
+    ap.add_argument("--modo", choices=("ventana", "overlay", "escritorio"), default=None,
                     help="presentación (default: config.toml [app].modo)")
     return ap.parse_args()
 
@@ -58,7 +62,8 @@ MODO = _parsear_args().modo or config.leer_modo_app()
 os.environ.setdefault('WEBKIT_INSPECTOR_SERVER', '127.0.0.1:9222')
 # gtk-layer-shell solo funciona con GDK sobre Wayland nativo (con XWayland
 # init_for_window falla) — se fuerza ANTES de que GDK se inicialice.
-if MODO == "overlay":
+CAPA = MODO in ("overlay", "escritorio")   # layer surface (gtk-layer-shell)
+if CAPA:
     os.environ['GDK_BACKEND'] = 'wayland'
 
 import gi
@@ -67,14 +72,14 @@ gi.require_version('WebKit2', '4.1')
 gi.require_version('Gdk', '3.0')
 
 GtkLayerShell = None
-if MODO == "overlay":
+if CAPA:
     try:
         gi.require_version('GtkLayerShell', '0.1')
         # Importado ANTES que Gtk/WebKit2/Gdk (gtk-layer-shell exige enlazarse
         # antes que libwayland-client).
         from gi.repository import GtkLayerShell
     except (ValueError, ImportError):
-        sys.exit("[Chat] ERROR: el modo overlay necesita gtk-layer-shell "
+        sys.exit(f"[Chat] ERROR: el modo {MODO} necesita gtk-layer-shell "
                  "(sudo pacman -S gtk-layer-shell).")
 
 from gi.repository import Gtk, Gdk, GLib
@@ -310,6 +315,11 @@ def main():
 
     config.cargar_dotenv()
     print(f"[Chat] Modo: {MODO}")
+    # Diagnóstico: `kill -USR2 <pid>` vuelca al log la pila de todos los hilos
+    # de Python (p. ej. si algo no deja cerrar la app con SIGTERM).
+    import faulthandler
+    import signal
+    faulthandler.register(signal.SIGUSR2, all_threads=True)
 
     # Precargas en hilos de fondo, antes de levantar el servidor — se solapan
     # con ese arranque en vez de sumarse después. Voz: la PiperVoice se carga
@@ -337,12 +347,25 @@ def main():
         # instancias lanzadas casi a la vez.
         _fatal(f"{e}. Solo puede haber una instancia de Rem.")
 
-    if MODO == "overlay":
-        win, webview = _crear_overlay()
+    if MODO == "escritorio":
+        import escritorio
+        try:
+            avatar, _chat = escritorio.crear_escritorio(rem_avatar_server.url_avatar(MODO),
+                                                        rem_avatar_server.url_chat_ventana())
+        except RuntimeError as e:
+            _fatal(str(e))
+        win = avatar.win
+        import frases_voz
+        threading.Thread(target=frases_voz.precargar, daemon=True).start()
+        # El lanzador «Rem Escritorio» con una instancia ya abierta manda
+        # SIGUSR1: vuelve a mostrar el avatar si se ocultó desde su menú.
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, 10, avatar.mostrar)
     else:
-        win, webview = _crear_ventana()
-
-    cargar_con_retry(webview, rem_avatar_server.url_avatar(MODO))
+        if MODO == "overlay":
+            win, webview = _crear_overlay()
+        else:
+            win, webview = _crear_ventana()
+        cargar_con_retry(webview, rem_avatar_server.url_avatar(MODO))
 
     win.connect('destroy', Gtk.main_quit)
     # Cierre limpio con SIGTERM/SIGINT (pkill, Ctrl+C): la overlay no tiene

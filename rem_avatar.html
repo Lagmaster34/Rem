@@ -5,7 +5,8 @@
 <!-- Marca <html> como overlay ANTES de que pinte nada: el fondo transparente y
      el ocultar el panel de chat no pueden esperar al script principal
      (un frame de fondo oscuro sobre el escritorio sería un parpadeo visible). -->
-<script>if (new URLSearchParams(location.search).get('modo') === 'overlay') document.documentElement.classList.add('overlay');</script>
+<script>{ const m = new URLSearchParams(location.search).get('modo');
+  if (m === 'overlay' || m === 'escritorio') document.documentElement.classList.add(m); }</script>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:#05000f; overflow:hidden; width:100vw; height:100vh; }
@@ -59,269 +60,9 @@
   #ov-input.transcrito { color: #7ff0ff; font-style: italic; }
   #ov-box:focus-within { border-color: rgba(43,232,255,0.6); background: rgba(6,12,18,0.72); }
 
-  /* ── Panel de chat (ver crearPanelChat() en el script) ── mitad derecha
-     de la ventana, opaca, con foco de teclado. Paleta a tono con el suelo
-     synthwave (CONFIG.suelo): mismo cian, mismo fondo casi negro. */
-  #chat-panel {
-    position: fixed;
-    top: 0; right: 0;
-    /* --chat-panel-width la fija crearPanelChat() a partir de
-       CONFIG.chat.anchoFrac — única fuente de verdad, compartida con el
-       cálculo del encuadre 3D (fraccionAreaVisible3D()) para que no puedan
-       desincronizarse. 50% es solo el valor de respaldo antes de que el
-       script corra (nunca debería notarse, se fija sincrónicamente muy
-       temprano). */
-    width: var(--chat-panel-width, 50%);
-    height: 100%;
-    min-width: 300px;
-    display: flex;
-    flex-direction: column;
-    background: linear-gradient(165deg, #070212 0%, #04000c 60%);
-    border-left: 1px solid rgba(43,232,255,0.22);
-    box-shadow: -28px 0 56px -28px rgba(0,0,0,0.65);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    color: #eaf6ff;
-    pointer-events: auto;
-    z-index: 10;
-  }
-
-  #chat-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 14px 16px 12px;
-    border-bottom: 1px solid rgba(43,232,255,0.16);
-    flex: 0 0 auto;
-  }
-
-  #chat-modeselect {
-    display: flex;
-    gap: 4px;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(43,232,255,0.22);
-    border-radius: 999px;
-    padding: 3px;
-  }
-  #chat-modeselect button {
-    appearance: none; border: none; background: transparent;
-    color: #7d94a3; font: inherit; font-size: 12px; font-weight: 600;
-    letter-spacing: 0.03em;
-    padding: 5px 14px;
-    border-radius: 999px;
-    cursor: pointer;
-    transition: background .15s ease, color .15s ease;
-  }
-  #chat-modeselect button:hover { color: #eaf6ff; }
-  #chat-modeselect button.activo {
-    background: #2be8ff;
-    color: #04141a;
-    box-shadow: 0 0 12px rgba(43,232,255,0.35);
-  }
-
-  #chat-header-actions {
-    display: flex;
-    gap: 6px;
-    flex: 0 0 auto;
-  }
-  #chat-voz, #chat-reset {
-    appearance: none;
-    border: 1px solid rgba(43,232,255,0.22);
-    background: transparent;
-    color: #7d94a3;
-    width: 30px; height: 30px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 14px;
-    display: flex; align-items: center; justify-content: center;
-    transition: border-color .15s ease, color .15s ease;
-    flex: 0 0 auto;
-  }
-  #chat-voz:hover, #chat-reset:hover { color: #2be8ff; border-color: #2be8ff; }
-
-  #chat-messages {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 16px;
-  }
-  #chat-messages::-webkit-scrollbar { width: 8px; }
-  #chat-messages::-webkit-scrollbar-thumb { background: #244047; border-radius: 4px; }
-  #chat-messages::-webkit-scrollbar-track { background: transparent; }
-
-  .msg {
-    max-width: 82%;
-    padding: 9px 13px;
-    border-radius: 14px;
-    font-size: 14px;
-    line-height: 1.45;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .msg.user {
-    align-self: flex-end;
-    background: #182430;
-    border-bottom-right-radius: 3px;
-  }
-  .msg.rem {
-    align-self: flex-start;
-    background: #0c1c22;
-    border: 1px solid rgba(43,232,255,0.28);
-    border-bottom-left-radius: 3px;
-    box-shadow: 0 0 14px rgba(43,232,255,0.07);
-  }
-  .msg.sistema {
-    align-self: center;
-    background: transparent;
-    color: #7d94a3;
-    font-size: 12px;
-    font-style: italic;
-    max-width: 100%;
-    text-align: center;
-  }
-
-  #chat-status {
-    flex: 0 0 auto;
-    min-height: 26px;
-    padding: 0 16px;
-    font-size: 12px;
-    color: #7d94a3;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  #chat-status::before {
-    content: '';
-    width: 6px; height: 6px;
-    flex: 0 0 auto;
-    border-radius: 50%;
-    background: #2be8ff;
-    opacity: 0;
-    transition: opacity .15s ease;
-  }
-  #chat-status.pensando::before,
-  #chat-status.hablando::before {
-    opacity: 1;
-    animation: chat-pulse 1s ease-in-out infinite;
-  }
-  @keyframes chat-pulse {
-    0%, 100% { transform: scale(0.7); opacity: 0.4; }
-    50%      { transform: scale(1.25); opacity: 1; }
-  }
-
-  #chat-inputbar {
-    flex: 0 0 auto;
-    display: flex;
-    gap: 8px;
-    padding: 10px 16px 16px;
-    /* Contexto de posicionamiento para #chat-paleta, que se ancla encima
-       con bottom:100% — así la paleta queda SIEMPRE dentro del panel de
-       chat, sin desbordarlo ni taparse con el borde de la ventana. */
-    position: relative;
-  }
-
-  /* Paleta de comandos "/" — ver crearPanelChat()/COMANDOS en el script.
-     Flotante encima de la barra de input, dentro del panel. */
-  #chat-paleta {
-    position: absolute;
-    left: 16px; right: 16px;
-    bottom: 100%;
-    margin-bottom: 6px;
-    z-index: 5;
-    max-height: 240px;
-    overflow-y: auto;
-    background: #081a20;
-    border: 1px solid rgba(43,232,255,0.30);
-    border-radius: 10px;
-    box-shadow: 0 10px 30px -8px rgba(0,0,0,0.75);
-    padding: 4px;
-  }
-  #chat-paleta::-webkit-scrollbar { width: 8px; }
-  #chat-paleta::-webkit-scrollbar-thumb { background: #244047; border-radius: 4px; }
-  #chat-paleta::-webkit-scrollbar-track { background: transparent; }
-  #chat-paleta .pal-vacio {
-    padding: 9px 11px;
-    font-size: 13px;
-    color: #7d94a3;
-    font-style: italic;
-  }
-  #chat-paleta .pal-item {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 8px 11px;
-    border-radius: 7px;
-    cursor: pointer;
-    font-size: 13px;
-    color: #eaf6ff;
-  }
-  #chat-paleta .pal-item.sel { background: rgba(43,232,255,0.14); }
-  #chat-paleta .pal-grupo {
-    padding: 8px 12px 3px; font-size: 11px; font-weight: 700; letter-spacing: .06em;
-    text-transform: uppercase; color: #5f7d89;
-  }
-  #chat-paleta .pal-item .pal-nombre { font-weight: 600; white-space: nowrap; }
-  #chat-paleta .pal-item .pal-desc {
-    color: #7d94a3;
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  #chat-input {
-    flex: 1 1 auto;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(43,232,255,0.22);
-    border-radius: 10px;
-    color: #eaf6ff;
-    font: inherit;
-    font-size: 14px;
-    padding: 10px 12px;
-    outline: none;
-    transition: border-color .15s ease, box-shadow .15s ease;
-  }
-  #chat-input:focus {
-    border-color: #2be8ff;
-    box-shadow: 0 0 0 3px rgba(43,232,255,0.18);
-  }
-  #chat-input::placeholder { color: #56707d; }
-  #chat-input:disabled { opacity: 0.5; }
-
-  #chat-send {
-    appearance: none;
-    border: none;
-    background: #2be8ff;
-    color: #04141a;
-    width: 40px;
-    border-radius: 10px;
-    cursor: pointer;
-    font-size: 16px;
-    display: flex; align-items: center; justify-content: center;
-    transition: filter .15s ease, transform .1s ease, opacity .15s ease;
-  }
-  #chat-send:hover { filter: brightness(1.1); }
-  #chat-send:active { transform: scale(0.94); }
-  #chat-send:disabled { opacity: 0.4; cursor: default; }
-  .chat-btn-texto {
-    appearance: none; cursor: pointer;
-    background: rgba(255,255,255,0.03); color: #b9cbd6;
-    border: 1px solid rgba(43,232,255,0.22); border-radius: 999px;
-    font: inherit; font-size: 12px; font-weight: 600; letter-spacing: 0.03em;
-    padding: 5px 12px; transition: background .15s ease, color .15s ease, border-color .15s ease;
-  }
-  .chat-btn-texto:hover { color: #eaf6ff; border-color: #2be8ff; }
-  .chat-btn-texto.activo { background: #2be8ff; color: #04141a; border-color: #2be8ff;
-    box-shadow: 0 0 12px rgba(43,232,255,0.35); }
-  #chat-modelos { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px;
-    border-bottom: 1px solid rgba(43,232,255,0.25); background: rgba(10,4,26,0.96); }
-  #chat-modelos[hidden] { display: none; }
-  .modelo-item { text-align: left; padding: 6px 8px; border-radius: 6px; cursor: pointer;
-    background: transparent; color: #dfe9ff; border: 1px solid rgba(43,232,255,0.2); font: inherit; font-size: 13px; }
-  .modelo-item:hover { background: rgba(43,232,255,0.12); }
-  .modelo-item.activo { border-color: rgba(43,232,255,0.8); }
 </style>
+<link rel="stylesheet" href="/avatar/panel_chat.css">
+<link rel="stylesheet" href="/avatar/escritorio.css">
 </head>
 <body>
 <!-- El script del avatar vive en avatar/ (ver avatar/README.md): primero el módulo con
@@ -335,8 +76,10 @@
 <script defer src="/avatar/clips.js"></script>
 <script defer src="/avatar/director.js"></script>
 <script defer src="/avatar/bucle.js"></script>
+<script defer src="/avatar/chat_local.js"></script>
 <script defer src="/avatar/panel_chat.js"></script>
 <script defer src="/avatar/overlay_ui.js"></script>
+<script defer src="/avatar/escritorio_ui.js"></script>
 <script defer src="/avatar/ws.js"></script>
 </body>
 </html>

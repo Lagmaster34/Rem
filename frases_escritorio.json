@@ -1,0 +1,39 @@
+{
+  "_nota": "Frases fijas del avatar de escritorio (sin LLM). Las lee avatar/escritorio_ui.js y las pregenera con voz frases_voz.py (cache_frases/). Las que no tienen letras no se dicen en voz alta.",
+  "leve": [
+    "¿Qué quieres, sirviente?",
+    "No soy un botón.",
+    "¿Necesitas algo o solo te aburres?",
+    "Estoy ocupada. Más o menos.",
+    "…¿Sí?"
+  ],
+  "molesta": [
+    "Para.",
+    "Eso ya es spam, sirviente.",
+    "…En serio.",
+    "Mi paciencia tiene tiempo de recarga."
+  ],
+  "enojada": [
+    "Ya basta. Me estás bajando los FPS.",
+    "Una más y te bloqueo, sirviente.",
+    "Skill issue de modales."
+  ],
+  "enojo": [
+    "…",
+    "No te hablo."
+  ],
+  "agarre": [
+    "¿Adónde me llevas?",
+    "Bájame.",
+    "Más despacio. Me mareo."
+  ],
+  "vozOn": [
+    "…Vale. Vuelvo a hablar."
+  ],
+  "vozOff": [
+    "Me callo. Por ahora."
+  ],
+  "confirmar": [
+    "Confírmalo en el chat, sirviente."
+  ]
+}

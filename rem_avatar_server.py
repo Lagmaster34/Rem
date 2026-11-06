@@ -56,10 +56,16 @@ _ws_clients = set()
 # a nadie": un panel de control abierto no reproduce audio ni mueve el avatar,
 # así que con el avatar cerrado el aviso tiene que saltar igual. Un cliente sin
 # identificar (rem_ptt.py, que solo manda un ptt_* y se va) no cuenta.
-ROLES_WS = {"avatar", "panel", "debug"}
+# "chat" = la ventana de chat aparte del modo escritorio (rem_chat_ventana.html).
+ROLES_WS = {"avatar", "panel", "debug", "chat"}
 _ws_roles = {}   # websocket -> rol (bajo _ws_lock, igual que _ws_clients)
 DESTINO_AVATAR = ("avatar",)            # estado, audio, debug_clip
-DESTINO_CHAT   = ("avatar", "debug")    # chat_delta/chat_done/modo_actual/error
+DESTINO_CHAT   = ("avatar", "debug", "chat")  # chat_delta/chat_done/modo_actual/error
+# Tipos de mensaje que la ventana de chat le reenvía al avatar (al_avatar) y
+# que el avatar le devuelve (del_avatar). El estado de los clips, el baile y el
+# modelo cargado vive en la página del avatar; la de chat solo lo pide/muestra.
+CMDS_AL_AVATAR = {"estado_get", "baile", "clip"}
+INFOS_DEL_AVATAR = {"estado", "sistema", "modelo_cargado", "baile", "clip_lanzado"}
 _ws_lock    = threading.Lock()
 _ws_loop    = None
 _ws_ready   = threading.Event()   # se activa cuando el loop WS está listo
@@ -80,6 +86,22 @@ def establecer_modo(modo: str) -> None:
     global _modo_actual
     _modo_actual = modo
 
+
+# Modo escritorio: la página del avatar le habla a escritorio.py (región de
+# clic, pulsación sobre el cuerpo, acciones del menú) por ESTE WebSocket, no
+# por un script message handler de WebKit: cada mensaje de esos crea objetos
+# JSCValue en Python, y con la región mandándose cada ~90 ms el bucle de GTK
+# acababa colgado para siempre en JSC::Heap::acquireAccessSlow (visto con gdb;
+# probablemente el recolector de Python liberando alguno desde otro hilo).
+# El oyente se llama en el hilo del WS: tiene que pasarle el trabajo a GTK él
+# mismo (GLib.idle_add).
+_oyente_escritorio = None
+
+
+def establecer_oyente_escritorio(fn) -> None:
+    global _oyente_escritorio
+    _oyente_escritorio = fn
+
 def _avisar_sin_destinatarios(que: str):
     global _ultimo_aviso_sin_clientes
     ahora = time.monotonic()
@@ -97,17 +119,18 @@ def _clientes_ws(destino):
     return clientes, utiles
 
 
-def _emitir_ws(payload: dict, que: str, destino=DESTINO_AVATAR) -> int:
+def _emitir_ws(payload: dict, que: str, destino=DESTINO_AVATAR, avisar=True) -> int:
     """Serializa y manda `payload` a todos los clientes WS. Devuelve cuántos de
     ellos tienen un rol de `destino` (0 si el servidor no está listo o no hay
     ninguno — en ese caso avisa por log, con antirrebote; se manda igual al
     resto). Único punto por el que salen mensajes Python -> browser: estado,
     audio y todos los del panel de chat (chat_delta/chat_done/modo_actual/error)."""
     if not _ws_ready.is_set() or _ws_loop is None:
-        _avisar_sin_destinatarios(que)
+        if avisar:
+            _avisar_sin_destinatarios(que)
         return 0
     clientes, utiles = _clientes_ws(destino)
-    if not utiles:
+    if not utiles and avisar:
         _avisar_sin_destinatarios(que)
     if not clientes:
         return 0
@@ -150,10 +173,12 @@ def enviar_emocion(emocion: str) -> int:
     return _emitir_ws({"tipo": "emocion", "emocion": emocion}, f"emoción {emocion!r}")
 
 
-def _broadcast_ws(payload: dict, destino=DESTINO_CHAT) -> int:
+def _broadcast_ws(payload: dict, destino=DESTINO_CHAT, avisar=True) -> int:
     """Manda `payload` a todos los clientes WS conectados. Genérico — lo usan
-    los mensajes del panel de chat (chat_delta/chat_done/modo_actual/error)."""
-    return _emitir_ws(payload, f"mensaje {payload.get('tipo', '?')!r}", destino)
+    los mensajes del panel de chat (chat_delta/chat_done/modo_actual/error).
+    avisar=False: sin el aviso de "no llega a nadie" (lo que va a una ventana
+    de chat que puede estar cerrada a propósito)."""
+    return _emitir_ws(payload, f"mensaje {payload.get('tipo', '?')!r}", destino, avisar)
 
 
 def _limpiar_audio_viejo():
@@ -217,6 +242,14 @@ def enviar_audio(ruta_wav: str, timeline: list) -> bool:
 
 # Estados válidos para el avatar
 ESTADOS_VALIDOS = {'idle', 'talking', 'thinking', 'happy', 'sad', 'angry', 'surprised'}
+
+
+def url_chat_ventana() -> str:
+    """URL de la ventana de chat aparte del modo escritorio."""
+    import urllib.parse
+    import personalidad as _personalidad
+    qs = urllib.parse.urlencode({"personaje": _personalidad.NOMBRE_PERSONAJE})
+    return f"http://localhost:{HTTP_PORT}/rem_chat_ventana.html?{qs}"
 
 
 def url_avatar(modo: str = "ventana") -> str:
@@ -324,8 +357,12 @@ _chat_worker_habla_task = None
 
 
 def set_voz_chat_activa(activa: bool) -> None:
+    """Además de guardarla, la difunde (voz_actual): en modo escritorio la
+    cambian dos sitios (ventana de chat y menú del avatar) y los dos la pintan."""
     global _chat_voz_activa
     _chat_voz_activa = bool(activa)
+    _broadcast_ws({"tipo": "voz_actual", "activa": _chat_voz_activa},
+                  destino=("avatar", "chat"), avisar=False)
 
 
 def _obtener_cola_habla():
@@ -478,6 +515,7 @@ _ultimo_fin_habla = 0.0       # time.monotonic() del último fin de voz/turno
 # así que no puede haber dos confirmaciones pedidas a la vez en este proceso.
 _CONFIRMACION_TIMEOUT_S = 30.0
 _confirmacion_pendiente = None  # asyncio.Future | None
+_confirmacion_payload = None    # el accion_confirmar en curso, para quien conecte tarde
 
 
 async def _pedir_confirmacion_accion(nombre: str, argumentos: dict, descripcion: str):
@@ -485,16 +523,33 @@ async def _pedir_confirmacion_accion(nombre: str, argumentos: dict, descripcion:
     accion_confirmar por WS y espera accion_confirmar_resp del mismo panel
     (ver _ws_handler). None = expiró sin respuesta — el llamador
     (acciones.ejecutar_tool_async) lo traduce a ConfirmacionExpirada."""
-    global _confirmacion_pendiente
+    global _confirmacion_pendiente, _confirmacion_payload
     loop = asyncio.get_running_loop()
     _confirmacion_pendiente = loop.create_future()
-    _broadcast_ws({"tipo": "accion_confirmar", "nombre": nombre, "descripcion": descripcion})
+    # En modo escritorio la ventana de chat puede estar cerrada: el avatar le
+    # pide a rem_chat.py que la abra, y al conectarse (hola rol chat) recibe
+    # este mismo pedido (ver _saludar_chat).
+    _confirmacion_payload = {"tipo": "accion_confirmar", "nombre": nombre, "descripcion": descripcion}
+    _broadcast_ws(_confirmacion_payload)
     try:
         return await asyncio.wait_for(_confirmacion_pendiente, timeout=_CONFIRMACION_TIMEOUT_S)
     except asyncio.TimeoutError:
         return None
     finally:
         _confirmacion_pendiente = None
+        _confirmacion_payload = None
+
+
+async def _saludar_chat(websocket):
+    """Estado inicial para una ventana de chat (o un avatar) que acaba de conectar: el modo
+    (ia/eco) y la voz no se mandan solos salvo al cambiar, y una ventana que se
+    abre a mitad de sesión los necesita. Más una confirmación en curso, si la
+    hay (se abrió justo para eso)."""
+    sesion = _chat_sesion
+    await websocket.send(json.dumps({"tipo": "modo_actual", "modo": sesion.modo if sesion else "ia"}))
+    await websocket.send(json.dumps({"tipo": "voz_actual", "activa": _chat_voz_activa}))
+    if _confirmacion_payload is not None:
+        await websocket.send(json.dumps(_confirmacion_payload))
 
 
 def _marcar_fin_habla():
@@ -539,6 +594,43 @@ def _ptt_motivo_ocupada():
     if time.monotonic() - _ultimo_fin_habla < stt.leer_config_stt()["espera_tras_habla_s"]:
         return "Rem acaba de terminar de hablar"
     return None
+
+
+def _motivo_no_decir_frase():
+    """Por qué una frase fija del avatar (frases_voz.py) NO se dice ahora, o
+    None. Nunca encima de otra voz ni cortando una respuesta del chat, ni con el
+    micrófono abierto (se grabaría a sí misma), ni con la voz apagada."""
+    if not _chat_voz_activa:
+        return "voz apagada"
+    if _ptt_estado != "idle":
+        return "micrófono abierto"
+    if _chat_turno_activo:
+        return "respondiendo"
+    cola = _chat_cola_habla
+    if cola is not None and getattr(cola, "_unfinished_tasks", 0) > 0:
+        return "voz en cola"
+    if _ws_reproduciendo:
+        return "ya está hablando"
+    return None
+
+
+async def _decir_frase(texto: str):
+    """Mensaje decir_frase de la página del avatar: una frase fija con voz,
+    desde la caché de frases_voz (sintetizada al arrancar)."""
+    import frases_voz
+    if texto not in frases_voz.textos():
+        logger.warning("[Frases] decir_frase con un texto que no está en frases_escritorio.json: %r", texto)
+        return
+    motivo = _motivo_no_decir_frase()
+    if motivo:
+        print(f"  [Frases] \"{texto}\" solo en texto ({motivo})", flush=True)
+        return
+    r = await asyncio.to_thread(frases_voz.obtener, texto)
+    # Se vuelve a mirar: la síntesis (si no estaba en caché) da tiempo a que
+    # haya empezado una respuesta.
+    if r and _motivo_no_decir_frase() is None:
+        enviar_audio(*r)
+        print(f"  [Frases] \"{texto}\" con voz", flush=True)
 
 
 def _ptt_estado_ws(estado: str, **extra):
@@ -677,7 +769,7 @@ async def _aplicar_prefs(websocket, seccion, cambios, peticion_id=None):
         return
     _broadcast_ws({"tipo": "prefs_actualizadas", "seccion": seccion, "prefs": efectivos,
                    "propias": preferencias.propias().get(seccion, []), "id": peticion_id},
-                  destino=("avatar", "panel"))
+                  destino=("avatar", "panel", "chat"))
 
 
 # ── Servidor WebSocket ────────────────────────────────────────────────
@@ -700,6 +792,8 @@ async def _ws_handler(websocket):
                     with _ws_lock:
                         _ws_roles[websocket] = rol
                     logger.info("[Avatar] cliente WS identificado: %s", rol)
+                    if rol in ("chat", "avatar"):
+                        await _saludar_chat(websocket)
                 else:
                     logger.warning("[Avatar] 'hola' con rol desconocido: %r (no cuenta como destinatario)", rol)
 
@@ -785,6 +879,31 @@ async def _ws_handler(websocket):
                     enviar_emocion(emo)
                 else:
                     _broadcast_ws({"tipo": "error", "mensaje": f"emoción inválida: {emo!r}"})
+
+            elif tipo == "decir_frase":
+                texto = str(data.get("texto") or "")
+                if texto:
+                    asyncio.create_task(_decir_frase(texto))
+
+            elif tipo == "escritorio":
+                datos = data.get("datos")
+                if _oyente_escritorio is not None and isinstance(datos, dict):
+                    _oyente_escritorio(datos)
+
+            elif tipo == "al_avatar":
+                # Ventana de chat (modo escritorio) -> página del avatar: pedir
+                # la lista de clips, disparar uno, modo baile. Lo resuelve la
+                # página del avatar, que es la que tiene el catálogo y el mixer.
+                cmd = data.get("cmd")
+                if isinstance(cmd, dict) and cmd.get("que") in CMDS_AL_AVATAR:
+                    _broadcast_ws({**cmd, "tipo": "cmd_avatar"}, destino=DESTINO_AVATAR)
+
+            elif tipo == "del_avatar":
+                # Página del avatar -> ventana(s) de chat: lo que pidió, o avisos
+                # (clip lanzado, modelo cargado). Sin aviso si no hay chat abierto.
+                info = data.get("info")
+                if isinstance(info, dict) and info.get("que") in INFOS_DEL_AVATAR:
+                    _broadcast_ws({**info, "tipo": "info_avatar"}, destino=("chat",), avisar=False)
 
             elif tipo == "prefs_set":
                 await _aplicar_prefs(websocket, data.get("seccion"), data.get("cambios"),

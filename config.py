@@ -57,10 +57,10 @@ def leer_modelo_tts() -> str:
 
 def leer_modo_app() -> str:
     """Modo de presentación de rem_chat.py, desde config.toml [app].modo:
-    "ventana" (default) u "overlay". Cualquier otro valor cae a "ventana".
-    rem_chat.py --modo lo pisa."""
+    "ventana" (default), "overlay" o "escritorio". Cualquier otro valor cae a
+    "ventana". rem_chat.py --modo lo pisa."""
     valor = str(leer_config_toml().get("app", {}).get("modo", "ventana")).strip().lower()
-    return valor if valor in ("ventana", "overlay") else "ventana"
+    return valor if valor in ("ventana", "overlay", "escritorio") else "ventana"
 
 
 def leer_config_overlay() -> dict:
@@ -80,6 +80,30 @@ def leer_config_overlay() -> dict:
         "margen_inferior": _int("margen_inferior", 0),
         "capa": capa if capa in ("top", "overlay") else "top",
         "zona_exclusiva": _int("zona_exclusiva", 0),
+    }
+
+
+def leer_config_escritorio() -> dict:
+    """[escritorio] de config.toml con defaults: tamaño y capa de la superficie
+    del avatar de escritorio (rem_chat.py --modo escritorio), margen inicial y
+    tamaño de la ventana de chat aparte."""
+    cfg = leer_config_toml().get("escritorio", {})
+    def _int(clave, default, minimo=None):
+        try:
+            v = int(cfg.get(clave, default))
+        except (TypeError, ValueError):
+            v = default
+        return v if minimo is None else max(minimo, v)
+    capa = str(cfg.get("capa", "top")).strip().lower()
+    return {
+        "ancho": _int("ancho", 380, 160),
+        "alto": _int("alto", 620, 200),
+        "margen_izquierdo": _int("margen_izquierdo", 40),
+        "margen_inferior": _int("margen_inferior", 0),
+        "capa": capa if capa in ("top", "overlay", "bottom") else "top",
+        "zona_exclusiva": _int("zona_exclusiva", 0),
+        "chat_ancho": _int("chat_ancho", 440, 300),
+        "chat_alto": _int("chat_alto", 640, 300),
     }
 
 

@@ -139,4 +139,5 @@ function crearOverlayUI() {
   };
   console.log('[Overlay] UI lista');
 }
-if (ES_OVERLAY) crearOverlayUI(); else crearPanelChat();
+// Escritorio: su interfaz la monta avatar/escritorio_ui.js (el chat va aparte).
+if (ES_OVERLAY) crearOverlayUI(); else if (!ES_ESCRITORIO) crearPanelChat();
