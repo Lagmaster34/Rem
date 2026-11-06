@@ -48,7 +48,8 @@ no basta con copiar la carpeta.
 |---------|----------|
 | `rem_chat.py` | **La aplicación**: levanta el servidor HTTP/WS y abre UNA presentación, `--modo ventana` (default) o `--modo overlay`. Ver "Modo overlay" más abajo |
 | `rem_avatar_server.py` | Servidor HTTP `:18765` + WebSocket `:18766` para el avatar, más la orquestación de push-to-talk (`ptt_start`/`ptt_stop`). Ver "Modo overlay: push-to-talk" más abajo |
-| `rem_avatar.html` | Frontend Three.js/VRM del avatar — animación (clips VRMA para el cuerpo + procedural para respiración/mirada/gestos) + panel de chat HTML/CSS/JS en modo ventana, caja de texto mínima en modo overlay |
+| `rem_avatar.html` | HTML y CSS del avatar (ventana y overlay). El script vive en `avatar/` |
+| `avatar/` | Script del avatar partido en scripts clásicos que comparten ámbito global (núcleo 3D, clips, director, panel, overlay, WS). Ver `avatar/README.md` |
 | `bench_chat.py` | REPL de depuración: si hay servidor lo usa como cliente WS, si no lo levanta él (standalone). Ver "Puntos de entrada" más abajo |
 | `acciones.py` | Herramientas del modelo (tool calling nativo) + validación de rutas portada del viejo `Rem.py`. Ver "Acciones del sistema en rem_chat" más abajo |
 | `personalidad.py` / `ejemplos_tono.py` | System prompt + contexto dinámico / turnos few-shot del tono. Ver "Ejemplos de tono (few-shot)" |
@@ -2539,3 +2540,23 @@ vyath pack...), tk256ailab (MIT) y VRoid Project (crédito obligatorio) para Rem
 `desconocido` en 54 (bailes sin autor, idles no kawaii, sit no kawaii, lying, tutorial,
 `greet.vrma`).
 
+## Fase 2: avatar de escritorio al estilo Nerumi (en curso, 2026-11-05)
+
+Meta: **reemplazar el modo ventana** por un avatar al estilo Nerumi —se arrastra por la pantalla, reacciona
+a los clics, abre el chat en una ventana aparte, menú propio con clic derecho— con código propio (Nerumi
+no tiene licencia; ver la memoria del proyecto). El **modo overlay se queda como está**, quieto.
+Referencia: `~/Descargas/Riclado de nerumoi/` (solo lectura; `mic-check.js` y `themes.css` de ahí son
+copia casi literal de Nerumi y no van al repo).
+
+- **Etapa 0 (prueba en Hyprland anidado)**: una layer surface se arrastra cambiando sus márgenes; la
+  posición sale de la del cursor del sistema (`j/cursorpos` del socket de Hyprland, 0,1-0,5 ms): con
+  deltas locales de la superficie el arrastre se pasaba de largo (7 % lento, ~80 % rápido) porque un
+  evento llega antes de que Hyprland mueva la capa. Click-through fuera del cuerpo con
+  `input_shape_combine_region`, también con WebView encima. Hyprland no anima los cambios de margen.
+- **Etapa 1**: el script de `rem_avatar.html` pasó a `avatar/` sin cambiar código. Verificado con la app
+  real (dentro de un Hyprland anidado, audio a un sumidero nulo): mismos mensajes WS, mismas líneas de
+  log salvo lo aleatorio (saludo sorteado, nombres de WAV), 0 errores, mismas capturas, en ventana y
+  overlay. VRAM: 3146 MiB con Ollama cargado antes y durante (ventana y overlay suman 0 en la NVIDIA).
+- **Visto en la línea base, ya existía antes de la etapa 1**: en el overlay dentro del Hyprland anidado
+  el avatar se ve al cargar pero no en las capturas tomadas mientras habla ni tras cambiar de modelo. Sin
+  confirmar si pasa también en la sesión real.
