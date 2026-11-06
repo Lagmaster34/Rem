@@ -12,8 +12,15 @@ Instancia única vía Gtk.Application: lanzarlo otra vez trae al frente la
 ventana ya abierta. Log propio en rem_panel.log; inspector remoto en :9223
 (el :9222 es de rem_chat.py).
 
-    venv/bin/python rem_panel.py
+    venv/bin/python rem_panel.py [--pestana ID]
+
+--pestana abre en esa pestaña (apariencia, avatar, escritorio, animaciones,
+voz, chat, personalidad). Si el panel ya está abierto, el cambio de pestaña le
+llega por el WebSocket (panel_pestana, lo manda el menú del avatar); esto solo
+cubre el panel recién abierto.
 """
+import argparse
+import urllib.parse
 import os
 import sys
 
@@ -48,9 +55,10 @@ def _rem_corriendo():
 
 
 class PanelApp(Gtk.Application):
-    def __init__(self):
+    def __init__(self, pestana=None):
         super().__init__(application_id=APP_ID)
         self.win = None
+        self.pestana = pestana
 
     def do_activate(self):
         if self.win is not None:   # segunda invocación: Gtk la reenvía acá
@@ -60,7 +68,8 @@ class PanelApp(Gtk.Application):
         self.win.set_default_size(ANCHO, ALTO)
         webview = crear_webview(transparente=False, prefijo="[Panel]")
         self.win.add(webview)
-        cargar_con_retry(webview, URL_PANEL, prefijo="[Panel]")
+        url = URL_PANEL + (f"?{urllib.parse.urlencode({'pestana': self.pestana})}" if self.pestana else "")
+        cargar_con_retry(webview, url, prefijo="[Panel]")
         self.win.show_all()
 
 
@@ -79,10 +88,14 @@ def _avisar_sin_rem():
 
 
 def main():
+    ap = argparse.ArgumentParser(description="Panel de control de Rem.")
+    ap.add_argument("--pestana", default=None, help="pestaña con la que abrir")
+    pestana = ap.parse_args().pestana
+
     if not _rem_corriendo():
         _avisar_sin_rem()
 
-    app = PanelApp()
+    app = PanelApp(pestana)
     # register() ANTES de abrir el log: si ya hay un panel abierto, esta
     # invocación solo le pide que se muestre y sale — abrir el log con 'w'
     # truncaría el del panel que sigue vivo (mismo cuidado que rem_chat.py).

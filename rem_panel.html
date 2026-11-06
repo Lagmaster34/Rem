@@ -4,22 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Panel de Rem</title>
+<link rel="stylesheet" href="/avatar/temas.css">
 <style>
   /* Misma paleta que el panel de chat de rem_avatar.html (fondo violeta muy
      oscuro, acento cian del suelo synthwave), sin fuentes externas. */
   :root {
     color-scheme: dark;   /* controles nativos (spin de number, listas de select) en oscuro */
-    --fondo: #05000f;
-    --fondo-panel: #070212;
-    --fondo-elev: #0c0820;
-    --borde: rgba(43,232,255,0.16);
-    --borde-fuerte: rgba(43,232,255,0.32);
-    --texto: #eaf6ff;
-    --texto-suave: #7d94a3;
-    --acento: #2be8ff;
-    --acento-texto: #04141a;
+    --fondo: var(--t-fondo-2);
+    --fondo-panel: var(--t-fondo);
+    --fondo-elev: var(--t-fondo);
+    --borde: color-mix(in srgb, var(--t-acento) 16%, transparent);
+    --borde-fuerte: color-mix(in srgb, var(--t-acento) 32%, transparent);
+    --texto: var(--t-texto);
+    --texto-suave: var(--t-tenue);
+    --acento: var(--t-acento);
+    --acento-texto: var(--t-acento-texto);
     --ok: #5df2a6;
-    --error: #ff6b8a;
+    --error: var(--t-peligro);
     --aviso: #ffc65c;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -36,7 +37,7 @@
   #lateral {
     flex: 0 0 210px;
     display: flex; flex-direction: column;
-    background: linear-gradient(165deg, #070212 0%, #04000c 70%);
+    background: linear-gradient(165deg, var(--t-fondo) 0%, var(--t-fondo-2) 70%);
     border-right: 1px solid var(--borde);
     padding: 18px 12px 14px;
   }
@@ -53,7 +54,7 @@
   .pestana:hover { color: var(--texto); background: rgba(255,255,255,0.03); }
   .pestana:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
   .pestana[aria-selected="true"] {
-    color: var(--texto); background: rgba(43,232,255,0.08); border-color: var(--borde-fuerte);
+    color: var(--texto); background: color-mix(in srgb, var(--t-acento) 8%, transparent); border-color: var(--borde-fuerte);
   }
   #conexion {
     margin-top: auto; display: flex; align-items: center; gap: 8px;
@@ -94,7 +95,7 @@
     background: transparent; color: var(--texto); border: 1px solid var(--borde-fuerte);
     transition: background .15s ease, opacity .15s ease;
   }
-  .boton:hover:not(:disabled) { background: rgba(43,232,255,0.10); }
+  .boton:hover:not(:disabled) { background: color-mix(in srgb, var(--t-acento) 10%, transparent); }
   .boton:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
   .boton:disabled { opacity: .4; cursor: default; }
   .campo .mensaje { grid-column: 1 / -1; font-size: 12px; min-height: 0; }
@@ -102,13 +103,41 @@
   .mensaje.ok { color: var(--ok); }
   .mensaje.error { color: var(--error); }
 
+  .texto-campo { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .ayuda-campo { color: var(--texto-suave); font-size: 12px; line-height: 1.4; }
+  .boton.chico { padding: 3px 8px; font-size: 12px; }
+  .rango { display: flex; align-items: center; gap: 10px; }
+  .deslizador { width: 170px; accent-color: var(--acento); }
+  .valor-rango { min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; color: var(--texto-suave); font-size: 13px; }
+  .segmentado { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 3px; border: 1px solid var(--borde); border-radius: 10px; }
+  .segmento { appearance: none; border: none; background: transparent; color: var(--texto-suave); font: inherit; font-size: 12.5px;
+    padding: 5px 11px; border-radius: 7px; cursor: pointer; transition: background .12s ease-out, color .12s ease-out; }
+  .segmento:hover:not(:disabled) { color: var(--texto); }
+  .segmento.activo { background: var(--acento); color: var(--acento-texto); font-weight: 600; }
+  .segmento:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+  .segmento:disabled { opacity: .4; cursor: default; }
+  .temas { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; max-width: 760px; margin-bottom: 12px; }
+  .tema { appearance: none; text-align: left; font: inherit; color: var(--texto); cursor: pointer;
+    display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 12px;
+    background: color-mix(in srgb, var(--t-acento) 4%, transparent); border: 1px solid var(--borde);
+    transition: border-color .12s ease-out, transform .1s ease-out; }
+  .tema:hover:not(:disabled) { border-color: var(--borde-fuerte); }
+  .tema:active:not(:disabled) { transform: scale(0.98); }
+  .tema.activo { border-color: var(--acento); box-shadow: 0 0 0 1px var(--acento) inset; }
+  .tema:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+  .muestra { display: flex; height: 34px; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); }
+  .muestra span { flex: 1; }
+  .tema-nombre { font-weight: 700; }
+  .tema-desc { color: var(--texto-suave); font-size: 12px; line-height: 1.4; }
+  .nota-pie { color: var(--texto-suave); font-size: 12px; max-width: 640px; line-height: 1.45; }
+  @media (prefers-reduced-motion: reduce) { .tema, .segmento { transition: none; } }
   .vacio {
     max-width: 640px; padding: 22px; border-radius: 10px;
     border: 1px dashed var(--borde-fuerte); color: var(--texto-suave); line-height: 1.5;
   }
   #sin-conexion {
     max-width: 640px; margin-bottom: 16px; padding: 10px 14px; border-radius: 8px;
-    background: rgba(255,107,138,0.08); border: 1px solid rgba(255,107,138,0.35); color: var(--error);
+    background: color-mix(in srgb, var(--t-peligro) 8%, transparent); border: 1px solid color-mix(in srgb, var(--t-peligro) 35%, transparent); color: var(--error);
   }
   #sin-conexion[hidden] { display: none; }
 
@@ -151,7 +180,7 @@
     content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
     background: var(--texto-suave); transition: transform .15s ease, background .15s ease;
   }
-  .interruptor[aria-checked="true"] { background: rgba(43,232,255,0.25); border-color: var(--acento); }
+  .interruptor[aria-checked="true"] { background: color-mix(in srgb, var(--t-acento) 25%, transparent); border-color: var(--acento); }
   .interruptor[aria-checked="true"]::after { transform: translateX(14px); background: var(--acento); }
   .interruptor:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
   .interruptor:disabled { opacity: .4; cursor: default; }
@@ -162,7 +191,7 @@
   .estado-clips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .chip {
     display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border-radius: 999px;
-    background: rgba(43,232,255,0.08); border: 1px solid var(--borde-fuerte); font-size: 12.5px;
+    background: color-mix(in srgb, var(--t-acento) 8%, transparent); border: 1px solid var(--borde-fuerte); font-size: 12.5px;
   }
   .chip button {
     appearance: none; border: none; background: transparent; color: var(--texto-suave); cursor: pointer;
@@ -236,22 +265,29 @@
 
 const WS_URL = `ws://${location.hostname}:18766`;
 
-// Una entrada por pestaña. `seccion` = sección de preferencias.ESQUEMA que la
-// alimenta (null mientras la pestaña no tenga opciones todavía).
+// Una entrada por pestaña. `secciones` = secciones de preferencias.ESQUEMA que
+// la alimentan (la pestaña espera a tenerlas). `pintar(cuerpo)` la dibuja; sin
+// `pintar`, la pestaña todavía no tiene opciones. La de Micrófono llega con la
+// etapa 5 de la fase 2 (voz de entrada).
 const PESTANAS = [
-  { id: 'personalidad', titulo: 'Personalidad', seccion: null,
-    desc: 'Cómo habla Rem: tu nombre y el bloque del personaje. Las reglas de longitud, honestidad y herramientas no se editan.' },
-  { id: 'animaciones', titulo: 'Animaciones', seccion: 'animaciones', pintar: pintarAnimaciones,
+  { id: 'apariencia', titulo: 'Apariencia', secciones: ['apariencia'], pintar: pintarApariencia,
+    desc: 'Tema de la ventana de chat, del menú y los botones del avatar y de este panel.' },
+  { id: 'avatar', titulo: 'Avatar', secciones: ['modelo', 'avatar'], pintar: pintarAvatar,
+    desc: 'El modelo VRM y cómo se comporta el avatar de escritorio: mirada, inclinación, reacciones y frases.' },
+  { id: 'escritorio', titulo: 'Escritorio', secciones: ['escritorio'], pintar: pintarEscritorio,
+    desc: 'Dónde vive el avatar en el escritorio: capa, barras, tamaño y posición. Se aplica al momento.' },
+  { id: 'animaciones', titulo: 'Animaciones', secciones: ['animaciones'],
+    pintar: cuerpo => { pintarBaile(cuerpo); pintarAnimaciones(cuerpo, estado.prefs.animaciones); },
     desc: 'Clips del avatar: qué gestos hace en reposo y con qué frecuencia, y el clip de cada emoción. Los cambios se aplican al siguiente gesto.' },
-  { id: 'voz', titulo: 'Voz', seccion: null,
-    desc: 'Voz de Yoru (Piper, local). Usa los parámetros del modelo tal cual: no hay opciones que tocar.' },
-  { id: 'modelo', titulo: 'Modelo', seccion: 'modelo',
-    desc: 'Modelo VRM del avatar.' },
+  { id: 'voz', titulo: 'Voz', secciones: ['voz'], pintar: pintarVoz,
+    desc: 'Voz de Yoru (Piper, local). La síntesis usa los parámetros del modelo tal cual; aquí, si habla y a qué volumen.' },
+  { id: 'chat', titulo: 'Chat', secciones: [], pintar: pintarChat,
+    desc: 'La conversación: modo IA o Eco y borrar el historial. El proveedor del LLM se elige en config.toml.' },
+  { id: 'personalidad', titulo: 'Personalidad', secciones: [],
+    desc: 'Cómo habla Rem: tu nombre y el bloque del personaje. Las reglas de longitud, honestidad y herramientas no se editan.' },
 ];
-
-const ETIQUETAS = {
-  modelo: { vrm: 'Modelo VRM' },
-};
+// Ids viejos que se guardaron en localStorage o llegan por el menú.
+const ALIAS_PESTANA = { modelo: 'avatar' };
 
 const estado = {
   prefs: {},       // {seccion: {clave: valor efectivo}}
@@ -260,6 +296,10 @@ const estado = {
   mensajes: {},    // `${seccion}.${clave}` -> {texto, tipo}
   modo: null,      // 'ventana' | 'overlay' (de prefs_estado)
   catalogo: null,  // Animaciones/catalogo.json, o {error} si no se pudo leer
+  llm: null,       // {provider, modelo} (de prefs_estado)
+  modoChat: null,  // 'ia' | 'eco' (modo_actual)
+  modelos: [],     // modelos_lista
+  baile: null,     // modo baile del avatar (info_avatar), null = desconocido
 };
 
 // ── Pestañas ─────────────────────────────────────────────────────────
@@ -340,60 +380,15 @@ function pintarCuerpo(id) {
   const p = PESTANAS.find(x => x.id === id);
   const cuerpo = vistas[id].querySelector('.cuerpo');
   cuerpo.replaceChildren();
-  if (!p.seccion) {
-    const vacio = document.createElement('div');
-    vacio.className = 'vacio';
-    vacio.textContent = 'Esta pestaña todavía no tiene opciones.';
-    cuerpo.appendChild(vacio);
+  if (!p.pintar) {
+    cuerpo.appendChild(el('div', 'vacio', 'Esta pestaña todavía no tiene opciones.'));
     return;
   }
-  const valores = estado.prefs[p.seccion];
-  if (!valores) {
-    const vacio = document.createElement('div');
-    vacio.className = 'vacio';
-    vacio.textContent = estado.conectado ? 'Cargando…' : 'Esperando la conexión con Rem…';
-    cuerpo.appendChild(vacio);
+  if (p.secciones.some(sec => !estado.prefs[sec]) || (!p.secciones.length && !estado.conectado)) {
+    cuerpo.appendChild(el('div', 'vacio', estado.conectado ? 'Cargando…' : 'Esperando la conexión con Rem…'));
     return;
   }
-  if (p.pintar) { p.pintar(cuerpo, valores); return; }
-  const lista = document.createElement('div');
-  lista.className = 'campos';
-  const propias = new Set(estado.propias[p.seccion] || []);
-  for (const [clave, valor] of Object.entries(valores)) {
-    lista.appendChild(campo(p.seccion, clave, valor, propias.has(clave)));
-  }
-  cuerpo.appendChild(lista);
-}
-
-function campo(seccion, clave, valor, delPanel) {
-  const el = document.createElement('div');
-  el.className = 'campo';
-  el.innerHTML = `<span class="nombre"></span><span class="valor"></span>
-    <span class="acciones"><span class="origen"></span></span><span class="mensaje" aria-live="polite"></span>`;
-  el.querySelector('.nombre').textContent = ETIQUETAS[seccion]?.[clave] ?? clave;
-  el.querySelector('.valor').textContent = String(valor);
-  const origen = el.querySelector('.origen');
-  origen.textContent = delPanel ? 'panel' : 'config.toml';
-  origen.classList.toggle('panel', delPanel);
-  origen.title = delPanel ? 'Cambiado desde el panel (preferencias.json)'
-                          : 'Valor de config.toml (o el default del código)';
-  if (delPanel) {
-    const reset = document.createElement('button');
-    reset.className = 'boton';
-    reset.textContent = 'Restablecer';
-    reset.title = 'Volver al valor de config.toml';
-    reset.disabled = !estado.conectado;
-    // El error ya queda mostrado en el campo (aplicarCambio).
-    reset.addEventListener('click', () => aplicarCambio(seccion, { [clave]: null }, clave).catch(() => {}));
-    el.querySelector('.acciones').appendChild(reset);
-  }
-  const m = estado.mensajes[`${seccion}.${clave}`];
-  if (m) {
-    const $m = el.querySelector('.mensaje');
-    $m.textContent = m.texto;
-    $m.classList.add(m.tipo);
-  }
-  return el;
+  p.pintar(cuerpo);
 }
 
 function pestanaActiva() {
@@ -401,7 +396,15 @@ function pestanaActiva() {
 }
 function repintarSeccion(seccion) {
   const id = pestanaActiva();
-  if (PESTANAS.find(p => p.id === id)?.seccion === seccion) pintar(id);
+  if (PESTANAS.find(p => p.id === id)?.secciones.includes(seccion)) pintar(id);
+}
+function repintarSi(...ids) {
+  const id = pestanaActiva();
+  if (ids.includes(id)) pintar(id);
+}
+function aplicarTema() {
+  const t = estado.prefs.apariencia?.tema;
+  if (t) document.documentElement.dataset.tema = t;
 }
 
 function ponerMensaje(seccion, clave, texto, tipo) {
@@ -437,6 +440,8 @@ function conectar() {
     ponerConexion('conectado', 'Conectado a Rem');
     ws.send(JSON.stringify({ tipo: 'hola', rol: 'panel' }));
     ws.send(JSON.stringify({ tipo: 'prefs_get' }));
+    ws.send(JSON.stringify({ tipo: 'modelos_get' }));
+    ws.send(JSON.stringify({ tipo: 'al_avatar', cmd: { que: 'estado_get' } }));
     cargarCatalogo();   // de nuevo en cada reconexión: puede haberse regenerado
   });
   ws.addEventListener('message', (ev) => {
@@ -462,16 +467,34 @@ function recibir(d) {
     estado.prefs = d.prefs || {};
     estado.propias = d.propias || {};
     estado.modo = d.modo ?? null;
+    estado.llm = d.llm ?? null;
+    aplicarTema();
     pintar(pestanaActiva());
   } else if (d.tipo === 'prefs_actualizadas') {
     estado.prefs[d.seccion] = d.prefs;
     estado.propias[d.seccion] = d.propias || [];
+    if (d.seccion === 'apariencia') aplicarTema();
     const p = pendientes.get(d.id);
     if (p) { clearTimeout(p.timer); pendientes.delete(d.id); p.resolve(d.prefs); }
     else repintarSeccion(d.seccion);   // lo cambió otro cliente
   } else if (d.tipo === 'prefs_error') {
     const p = pendientes.get(d.id);
     if (p) { clearTimeout(p.timer); pendientes.delete(d.id); p.reject(new Error(d.mensaje)); }
+  } else if (d.tipo === 'modo_actual') {
+    estado.modoChat = d.modo; repintarSi('chat');
+  } else if (d.tipo === 'voz_actual') {
+    if (estado.prefs.voz) estado.prefs.voz.activa = !!d.activa;
+    repintarSi('voz');
+  } else if (d.tipo === 'modelos_lista') {
+    estado.modelos = Array.isArray(d.modelos) ? d.modelos.filter(m => !m.error) : [];
+    repintarSi('avatar');
+  } else if (d.tipo === 'info_avatar' && (d.que === 'estado' || d.que === 'baile')) {
+    estado.baile = d.que === 'estado' ? !!d.baile : !!d.activo;
+    repintarSi('animaciones');
+  } else if (d.tipo === 'panel_pestana') {
+    // El menú del avatar pidió abrir esta pestaña (el panel ya estaba abierto).
+    const id = ALIAS_PESTANA[d.id] ?? d.id;
+    if (PESTANAS.some(p => p.id === id)) activarPestana(id);
   }
   // El resto (audio, estado, chat_delta...) es para el avatar: se ignora.
 }
@@ -788,7 +811,216 @@ function filaClip(id, c, activo, alCambiar) {
   return fila;
 }
 
-const inicial = PESTANAS.some(p => p.id === pestanaGuardada()) ? pestanaGuardada() : PESTANAS[0].id;
+// ═══ Controles comunes de las pestañas nuevas ════════════════════════
+// Una fila: etiqueta + ayuda a la izquierda, el control a la derecha, y debajo
+// el resultado del último cambio (ponerMensaje(seccion, clave)). "Restablecer"
+// aparece si el valor viene del panel (preferencias.json).
+function fila(seccion, clave, etiqueta, ayuda, control) {
+  const f = el('div', 'campo');
+  const izq = el('div', 'texto-campo');
+  izq.appendChild(el('span', 'nombre', etiqueta));
+  if (ayuda) izq.appendChild(el('span', 'ayuda-campo', ayuda));
+  f.appendChild(izq);
+  const acc = el('span', 'acciones');
+  acc.appendChild(control);
+  if (seccion && (estado.propias[seccion] || []).includes(clave)) {
+    const reset = el('button', 'boton chico', 'Restablecer');
+    reset.title = 'Volver al valor de config.toml / por defecto';
+    reset.disabled = !estado.conectado;
+    reset.addEventListener('click', () => aplicarCambio(seccion, { [clave]: null }, clave).catch(() => {}));
+    acc.appendChild(reset);
+  }
+  f.appendChild(acc);
+  const m = estado.mensajes[`${seccion}.${clave}`];
+  const $m = el('span', 'mensaje' + (m ? ` ${m.tipo}` : ''), m?.texto ?? '');
+  $m.setAttribute('aria-live', 'polite');
+  f.appendChild($m);
+  return f;
+}
+
+function ctlBool(seccion, clave, etiqueta) {
+  const v = !!estado.prefs[seccion][clave];
+  return interruptor(v, `${seccion}.${clave}`, etiqueta,
+                     nuevo => aplicarCambio(seccion, { [clave]: nuevo }, clave).catch(() => {}));
+}
+
+// Deslizador que guarda al soltar (no en cada paso).
+function ctlRango(seccion, clave, min, max, paso, formato) {
+  const caja = el('span', 'rango');
+  const r = el('input', 'deslizador');
+  Object.assign(r, { type: 'range', min, max, step: paso, value: estado.prefs[seccion][clave] });
+  r.dataset.foco = `${seccion}.${clave}`;
+  r.disabled = !estado.conectado;
+  const valor = el('span', 'valor-rango', formato(Number(r.value)));
+  r.addEventListener('input', () => { valor.textContent = formato(Number(r.value)); });
+  r.addEventListener('change', () => aplicarCambio(seccion, { [clave]: Number(r.value) }, clave).catch(() => {}));
+  caja.append(r, valor);
+  return caja;
+}
+
+// Botones segmentados: [[valor, texto], ...].
+function ctlOpciones(actual, opciones, foco, alElegir) {
+  const g = el('span', 'segmentado');
+  g.setAttribute('role', 'radiogroup');
+  for (const [valor, texto] of opciones) {
+    const b = el('button', 'segmento' + (valor === actual ? ' activo' : ''), texto);
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(valor === actual));
+    b.dataset.foco = `${foco}:${valor}`;
+    b.disabled = !estado.conectado;
+    b.addEventListener('click', () => { if (valor !== actual) alElegir(valor); });
+    g.appendChild(b);
+  }
+  return g;
+}
+
+function tarjeta(cuerpo, titulo, ayuda) {
+  const t = el('section', 'tarjeta');
+  t.appendChild(el('h3', null, titulo));
+  if (ayuda) t.appendChild(el('p', 'ayuda', ayuda));
+  const campos = el('div', 'campos');
+  t.appendChild(campos);
+  cuerpo.appendChild(t);
+  return campos;
+}
+
+function avisoSoloEscritorio(cuerpo) {
+  if (estado.modo !== 'escritorio') {
+    cuerpo.appendChild(el('div', 'aviso-modo',
+      `Rem está abierto en modo ${estado.modo ?? '?'}: esto solo se nota en el modo escritorio (lanzador «Rem Escritorio»). Se guarda igual.`));
+  }
+}
+
+// ═══ Apariencia ══════════════════════════════════════════════════════
+// Muestras fijas para las tarjetas (las mismas de avatar/temas.css): se ven
+// los tres temas a la vez, no solo el activo.
+const TEMAS = [
+  ['synthwave', 'Synthwave', 'Cian y violeta, como el suelo de la ventana.', ['#070212', '#0c1c22', '#2be8ff', '#eaf6ff']],
+  ['cristal', 'Cristal', 'Gris carbón translúcido con acento azul hielo.', ['#17191e', '#22252c', '#a9cdff', '#eef1f6']],
+  ['yoru', 'Yoru', 'Los colores de Yoru: negro y morados.', ['#232027', '#2d2735', '#9458c3', '#7044a3']],
+];
+
+function pintarApariencia(cuerpo) {
+  const actual = estado.prefs.apariencia.tema;
+  const lista = el('div', 'temas');
+  lista.setAttribute('role', 'radiogroup');
+  for (const [id, nombre, desc, colores] of TEMAS) {
+    const b = el('button', 'tema' + (id === actual ? ' activo' : ''));
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(id === actual));
+    b.dataset.foco = `tema:${id}`;
+    b.disabled = !estado.conectado;
+    const muestra = el('span', 'muestra');
+    for (const c of colores) { const sw = el('span'); sw.style.background = c; muestra.appendChild(sw); }
+    b.append(muestra, el('span', 'tema-nombre', nombre), el('span', 'tema-desc', desc));
+    b.addEventListener('click', () => { if (id !== actual) aplicarCambio('apariencia', { tema: id }, 'tema').catch(() => {}); });
+    lista.appendChild(b);
+  }
+  cuerpo.appendChild(lista);
+  const m = estado.mensajes['apariencia.tema'];
+  if (m) cuerpo.appendChild(el('div', `linea-estado ${m.tipo}`, m.texto));
+  cuerpo.appendChild(el('p', 'nota-pie',
+    'Opcional: para que el tema Cristal desenfoque lo que hay detrás del menú y los botones del avatar, '
+    + 'añade a hyprland.conf la línea de blur de CLAUDE.md («Modo escritorio»).'));
+}
+
+// ═══ Avatar ══════════════════════════════════════════════════════════
+function pintarAvatar(cuerpo) {
+  const mod = tarjeta(cuerpo, 'Modelo', 'El VRM del avatar (models/vrm/). Cambia en caliente.');
+  const sel = el('select', 'entrada');
+  sel.dataset.foco = 'modelo.vrm';
+  sel.disabled = !estado.conectado;
+  const actual = estado.prefs.modelo.vrm;
+  const lista = estado.modelos.length ? estado.modelos : [{ ruta: actual, titulo: actual }];
+  for (const m of lista) {
+    const o = el('option', null, m.autor ? `${m.titulo} — ${m.autor}` : m.titulo);
+    o.value = m.ruta;
+    o.selected = m.ruta === actual;
+    sel.appendChild(o);
+  }
+  sel.addEventListener('change', () => aplicarCambio('modelo', { vrm: sel.value }, 'vrm').catch(() => {}));
+  mod.appendChild(fila('modelo', 'vrm', 'Modelo VRM', null, sel));
+
+  const t = tarjeta(cuerpo, 'Comportamiento en el escritorio', null);
+  avisoSoloEscritorio(t);
+  const pct = v => `${Math.round(v * 100)} %`;
+  t.appendChild(fila('avatar', 'mirarCursor', 'Mirar al cursor', 'Los ojos y un poco la cabeza siguen al ratón; vuelve al frente si no lo mueves.',
+                     ctlBool('avatar', 'mirarCursor', 'Mirar al cursor')));
+  t.appendChild(fila('avatar', 'mirarPeso', 'Cuánto lo mira', null, ctlRango('avatar', 'mirarPeso', 0, 1, 0.05, pct)));
+  t.appendChild(fila('avatar', 'inclinacion', 'Inclinación al arrastrar', '0 = no se inclina; 100 % = lo normal.',
+                     ctlRango('avatar', 'inclinacion', 0, 2, 0.1, pct)));
+  t.appendChild(fila('avatar', 'reacciones', 'Reacciones a los clics', 'Cara, vaivén y alguna frase al pulsarla.',
+                     ctlBool('avatar', 'reacciones', 'Reacciones a los clics')));
+  t.appendChild(fila('avatar', 'clicsEnojo', 'Clics para enfadarse', 'En 4 segundos.',
+                     ctlRango('avatar', 'clicsEnojo', 3, 15, 1, v => String(v))));
+  t.appendChild(fila('avatar', 'frasesVoz', 'Frases con voz', 'Si no, las reacciones solo salen en la burbuja.',
+                     ctlBool('avatar', 'frasesVoz', 'Frases con voz')));
+}
+
+// ═══ Escritorio ══════════════════════════════════════════════════════
+function pintarEscritorio(cuerpo) {
+  avisoSoloEscritorio(cuerpo);
+  const p = estado.prefs.escritorio;
+  const t = tarjeta(cuerpo, 'Superficie', null);
+  t.appendChild(fila('escritorio', 'capa', 'Capa', 'Encima de pantalla completa tapa también juegos y vídeos.',
+    ctlOpciones(p.capa, [['bottom', 'Bajo las ventanas'], ['top', 'Sobre las ventanas'], ['overlay', 'Encima de pantalla completa']],
+                'escritorio.capa', v => aplicarCambio('escritorio', { capa: v }, 'capa').catch(() => {}))));
+  t.appendChild(fila('escritorio', 'respetarBarras', 'Respetar las barras', 'Si no, puede ponerse encima de la barra del escritorio.',
+                     ctlBool('escritorio', 'respetarBarras', 'Respetar las barras')));
+  t.appendChild(fila('escritorio', 'tamano', 'Tamaño', null, ctlRango('escritorio', 'tamano', 60, 160, 5, v => `${v} %`)));
+  const pos = tarjeta(cuerpo, 'Posición', 'Se guarda sola al soltar el avatar.');
+  const b = el('button', 'boton', 'Volver a la esquina inicial');
+  b.disabled = !estado.conectado || estado.modo !== 'escritorio';
+  b.addEventListener('click', () => {
+    ws.send(JSON.stringify({ tipo: 'escritorio', datos: { tipo: 'accion', accion: 'posicion_inicial' } }));
+    ponerMensaje('escritorio', 'posicion', 'Enviado al avatar', 'ok');
+  });
+  pos.appendChild(fila('escritorio', 'posicion', 'Esquina inicial', 'La de config.toml [escritorio].', b));
+}
+
+// ═══ Animaciones: modo baile (encima de lo de siempre) ═══════════════
+function pintarBaile(cuerpo) {
+  const t = tarjeta(cuerpo, 'Modo baile', 'Encadena bailes sin repetir hasta que lo apagues. También en el menú del avatar.');
+  const sw = interruptor(!!estado.baile, 'baile', 'Modo baile', on => {
+    ws.send(JSON.stringify({ tipo: 'al_avatar', cmd: { que: 'baile', activo: on } }));
+  });
+  sw.disabled = !estado.conectado || estado.baile === null || estado.modo === 'overlay';
+  t.appendChild(fila(null, 'baile', 'Bailar', estado.baile === null ? 'Esperando al avatar…' : null, sw));
+}
+
+// ═══ Voz ═════════════════════════════════════════════════════════════
+function pintarVoz(cuerpo) {
+  const t = tarjeta(cuerpo, 'Salida de voz', null);
+  t.appendChild(fila('voz', 'activa', 'Voz activa', 'Lo mismo que el botón 🔊 del chat. Se guarda entre sesiones.',
+                     ctlBool('voz', 'activa', 'Voz activa')));
+  t.appendChild(fila('voz', 'volumen', 'Volumen', 'De la voz en el avatar (no el del sistema).',
+                     ctlRango('voz', 'volumen', 0, 1, 0.05, v => `${Math.round(v * 100)} %`)));
+}
+
+// ═══ Chat ════════════════════════════════════════════════════════════
+function pintarChat(cuerpo) {
+  const t = tarjeta(cuerpo, 'Conversación', null);
+  t.appendChild(fila(null, 'modoChat', 'Modo', 'IA responde con el modelo; Eco repite lo que escribas (para probar la voz).',
+    ctlOpciones(estado.modoChat, [['ia', 'IA'], ['eco', 'Eco']], 'chat.modo',
+                v => ws.send(JSON.stringify({ tipo: 'cambiar_modo', modo: v })))));
+  const borrar = el('button', 'boton', 'Borrar la conversación');
+  borrar.disabled = !estado.conectado;
+  borrar.addEventListener('click', () => {
+    ws.send(JSON.stringify({ tipo: 'reset' }));
+    ponerMensaje('chat', 'reset', 'Historial borrado', 'ok');
+  });
+  t.appendChild(fila('chat', 'reset', 'Historial', 'Lo que Yoru recuerda de esta conversación (no la memoria larga).', borrar));
+  const info = tarjeta(cuerpo, 'Modelo de lenguaje', 'Solo lectura: se cambia en config.toml [llm].');
+  const l = estado.llm;
+  // El nombre del modelo puede ser muy largo (hf.co/...): va en la línea de
+  // ayuda, que parte, no en la columna del control.
+  info.appendChild(fila(null, 'llm', l ? l.provider : '—', l?.modelo || null, el('span')));
+}
+
+const _url = new URLSearchParams(location.search).get('pestana');
+const _pedida = ALIAS_PESTANA[_url] ?? _url;
+const _guardada = ALIAS_PESTANA[pestanaGuardada()] ?? pestanaGuardada();
+const inicial = [_pedida, _guardada].find(id => PESTANAS.some(p => p.id === id)) ?? PESTANAS[0].id;
 activarPestana(inicial);
 conectar();
 </script>

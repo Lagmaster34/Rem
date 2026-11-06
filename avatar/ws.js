@@ -45,9 +45,11 @@ let _modelosLista = [];   // modelos_lista del servidor (models/vrm/)
       } else if (d.tipo === 'error') {
         window.__remChat?.onError(d.mensaje ?? 'error desconocido');
       } else if (d.tipo === 'prefs_estado') {
+        for (const [sec, v] of Object.entries(d.prefs ?? {})) aplicarPrefsGenerales(sec, v);
         aplicarPrefsAnim(d.prefs?.animaciones);
         if (d.prefs?.modelo?.vrm) cambiarModelo(d.prefs.modelo.vrm);
       } else if (d.tipo === 'prefs_actualizadas') {
+        aplicarPrefsGenerales(d.seccion, d.prefs);
         if (d.seccion === 'animaciones') aplicarPrefsAnim(d.prefs);
         if (d.seccion === 'modelo' && d.prefs?.vrm) cambiarModelo(d.prefs.vrm);
       } else if (d.tipo === 'prefs_error') {
@@ -90,6 +92,15 @@ let _modelosLista = [];   // modelos_lista del servidor (models/vrm/)
 })();
 
 window.setEstado = s => { estado = s; };
+
+// Preferencias que valen en cualquier modo (tema, volumen); las del avatar de
+// escritorio las recoge escritorio_ui.js por window.__remPrefs.
+function aplicarPrefsGenerales(seccion, valores) {
+  if (!valores) return;
+  if (seccion === 'apariencia' && valores.tema) document.documentElement.dataset.tema = valores.tema;
+  if (seccion === 'voz' && typeof valores.volumen === 'number') _audioEl.volume = clamp(valores.volumen, 0, 1);
+  window.__remPrefs?.(seccion, valores);
+}
 
 // La página del avatar le cuenta algo a la(s) ventana(s) de chat aparte.
 function enviarAlChat(info) {

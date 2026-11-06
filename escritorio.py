@@ -101,6 +101,10 @@ class Hyprland:
         return res
 
 
+_CAPAS = {"overlay": GtkLayerShell.Layer.OVERLAY, "bottom": GtkLayerShell.Layer.BOTTOM,
+          "top": GtkLayerShell.Layer.TOP}
+
+
 def _monitor_de_punto(monitores, x, y):
     for m in monitores:
         if m["x"] <= x < m["x"] + m["w"] and m["y"] <= y < m["y"] + m["h"]:
@@ -169,7 +173,11 @@ class AvatarEscritorio:
         self.cfg = cfg
         self.chat = chat
         self.hypr = Hyprland()
-        self.ancho, self.alto = cfg["ancho"], cfg["alto"]
+        # Capa, barras y tamaño: preferencias del panel (pestaña Escritorio)
+        # sobre config.toml [escritorio]; se aplican también en vivo.
+        import preferencias
+        self.prefs = preferencias.obtener("escritorio")
+        self.ancho, self.alto = self._tamano(self.prefs["tamano"])
         self.rects = []                 # región del cuerpo + interfaz, px de superficie
         self.region_recibida = False
         self.izq, self.inf = cfg["margen_izquierdo"], cfg["margen_inferior"]
@@ -188,13 +196,12 @@ class AvatarEscritorio:
             raise RuntimeError("el compositor no anuncia zwlr_layer_shell_v1 (¿no es Wayland/Hyprland?)")
         GtkLayerShell.init_for_window(win)
         GtkLayerShell.set_namespace(win, "rem_escritorio")   # para layerrule de Hyprland
-        capa = {"overlay": GtkLayerShell.Layer.OVERLAY, "bottom": GtkLayerShell.Layer.BOTTOM}
-        GtkLayerShell.set_layer(win, capa.get(cfg["capa"], GtkLayerShell.Layer.TOP))
+        GtkLayerShell.set_layer(win, _CAPAS.get(self.prefs["capa"], GtkLayerShell.Layer.TOP))
         # Nunca toma el teclado: aquí no se escribe (eso es la ventana de chat).
         GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.NONE)
         GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.LEFT, True)
         GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.BOTTOM, True)
-        GtkLayerShell.set_exclusive_zone(win, cfg["zona_exclusiva"])
+        GtkLayerShell.set_exclusive_zone(win, 0 if self.prefs["respetarBarras"] else -1)
         win.set_size_request(self.ancho, self.alto)
 
         screen = win.get_screen()
@@ -233,12 +240,34 @@ class AvatarEscritorio:
 
         self.win, self.webview = win, webview
         self._posicion_inicial()
+        preferencias.al_cambiar("escritorio", lambda v: GLib.idle_add(self._aplicar_prefs, v))
         cargar_con_retry(webview, url_avatar)
         GLib.timeout_add_seconds(20, self._avisar_si_no_hay_region)
         if not self.hypr.disponible:
             _log("AVISO: no es Hyprland (sin HYPRLAND_INSTANCE_SIGNATURE): el avatar no se podrá arrastrar.")
         else:
             GLib.timeout_add(TICK_CURSOR_MS, self._tick_cursor)
+
+    def _tamano(self, pct):
+        return int(round(self.cfg["ancho"] * pct / 100)), int(round(self.cfg["alto"] * pct / 100))
+
+    def _aplicar_prefs(self, v):
+        """Oyente de la sección "escritorio" (en el hilo de GTK): capa, respetar
+        barras y tamaño, en vivo. La esquina inferior izquierda queda donde
+        estaba; crecer o encoger va hacia arriba y a la derecha."""
+        anterior, self.prefs = self.prefs, v
+        GtkLayerShell.set_layer(self.win, _CAPAS.get(v["capa"], GtkLayerShell.Layer.TOP))
+        GtkLayerShell.set_exclusive_zone(self.win, 0 if v["respetarBarras"] else -1)
+        if v["tamano"] != anterior["tamano"]:
+            self.ancho, self.alto = self._tamano(v["tamano"])
+            self.win.set_size_request(self.ancho, self.alto)
+            self.win.resize(self.ancho, self.alto)
+            if self.monitor:
+                self.izq, self.inf = self._acotar(self.monitor, self.izq, self.inf)
+                self._fijar_margenes()
+        _log(f"preferencias: capa {v['capa']}, barras {'respetadas' if v['respetarBarras'] else 'ignoradas'}, "
+             f"tamaño {v['tamano']}% ({self.ancho}x{self.alto})")
+        return False
 
     # ── posición ────────────────────────────────────────────────────────
     def _posicion_inicial(self):
@@ -265,7 +294,7 @@ class AvatarEscritorio:
                 GtkLayerShell.set_monitor(self.win, gm)
         self._fijar_margenes()
         _log(f"{self.ancho}x{self.alto} en {self.monitor['nombre'] if self.monitor else '?'} "
-             f"(izq={self.izq}, inf={self.inf}), capa {self.cfg['capa']}")
+             f"(izq={self.izq}, inf={self.inf}), capa {self.prefs['capa']}")
 
     def _area(self, m):
         """Rectángulo utilizable del monitor (sin las zonas reservadas por
@@ -356,20 +385,33 @@ class AvatarEscritorio:
                 if not p["movido"]:
                     self._js(f"clic({p['x']:.0f},{p['y']:.0f})")
         elif tipo == "accion":
-            self._accion(str(d.get("accion")))
+            self._accion(str(d.get("accion")), d)
 
-    def _accion(self, accion):
+    def _accion(self, accion, d=None):
+        d = d or {}
         _log(f"acción: {accion}")
         mon = self.monitor["nombre"] if self.monitor else None
         if accion == "chat":
             self.chat.alternar(mon, self.hypr)
         elif accion == "chat_abrir":
             self.chat.mostrar(mon, self.hypr)
-        elif accion == "panel":
-            # Proceso aparte (rem_panel.py ya es instancia única).
-            subprocess.Popen([sys.executable, os.path.join(BASE_DIR, "rem_panel.py")],
-                             cwd=BASE_DIR, start_new_session=True,
+        elif accion in ("panel", "ajustes"):
+            # Proceso aparte (rem_panel.py ya es instancia única: si está abierto
+            # solo se trae al frente, y la pestaña le llega por el WebSocket).
+            pestana = str(d.get("pestana") or "") if accion == "ajustes" else ""
+            orden = [sys.executable, os.path.join(BASE_DIR, "rem_panel.py")]
+            if pestana:
+                orden += ["--pestana", pestana]
+                import rem_avatar_server
+                rem_avatar_server._broadcast_ws({"tipo": "panel_pestana", "id": pestana},
+                                                destino=("panel",), avisar=False)
+            subprocess.Popen(orden, cwd=BASE_DIR, start_new_session=True,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif accion == "posicion_inicial":
+            izq, inf = self.cfg["margen_izquierdo"], self.cfg["margen_inferior"]
+            self.izq, self.inf = self._acotar(self.monitor, izq, inf) if self.monitor else (izq, inf)
+            self._fijar_margenes()
+            self._guardar()
         elif accion == "ocultar":
             self.ocultar(True)
         elif accion == "mostrar":

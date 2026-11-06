@@ -2,7 +2,8 @@
 
 ## ⚠ Fase 2 en curso (2026-11-05): ver "Nota de traspaso — fase 2" al final y `notas_fase2/README.md`
 Etapa 2 hecha y cerrada (2026-11-06): `--modo escritorio`, ver "Modo escritorio" al final.
-Orden acordado después: etapa 4 (ajustes en `rem_panel`, temas propios) y luego la 5 (micrófono).
+Etapa 4 hecha (2026-11-06): pestañas nuevas del panel, menú completo y temas, ver "Panel de control:
+pestañas nuevas y temas" al final. Siguiente: etapa 5 (micrófono).
 
 ## ⚠ Cambio 2026-11-04: avatar multimodelo y director de animación (leer antes que lo de abajo)
 - **Rem (rem.vrm, rem_naenae.vrm) y los 17 clips de `VRMA_MotionPack/` ("Rem anterior") salieron del
@@ -2621,9 +2622,8 @@ herramientas de prueba.
 - **Etapas 2 y 3 — hechas** (2026-11-05/06): `--modo escritorio` con avatar arrastrable,
   inclinación y pose de «colgada», región de clic que sigue al cuerpo, reacciones con voz, mirada al
   cursor, botones, menú propio del clic derecho y chat en ventana aparte. Ver "Modo escritorio".
-- **Siguiente, en orden** (cambiado por Esteban: la 4 antes que la 5): 4) configuración por pestañas
-  en `rem_panel` abrible en una pestaña desde el menú, opciones del menú y temas propios (proponer
-  las opciones antes de implementarlas); 5) voz de entrada (fin de frase automático y
+- **Etapa 4 — hecha** (2026-11-06): ver "Panel de control: pestañas nuevas y temas".
+- **Siguiente, en orden**: 5) voz de entrada (fin de frase automático y
   filtro de alucinaciones en Python, modo conversación, palabra de activación opcional); 6) quitar el
   modo ventana; 7) animaciones en el overlay. **Medir VRAM con `nvidia-smi` en cada etapa** (con
   Ollama cargado; `num_gpu = 99`, ~520 MiB libres).
@@ -2766,9 +2766,61 @@ windowrule = border_size 0, match:class rem_chat\.py, match:title .+ — chat
 bind = SUPER, Y, exec, /mnt/extra/rem/Rem/venv/bin/python /mnt/extra/rem/Rem/rem_escritorio.py alternar
 ```
 
+**Blur opcional para el tema Cristal** (líneas para `hyprland.conf`; sintaxis validada con
+`hyprctl keyword` en 0.56.2, efecto no visto: el anidado tiene fondo liso). `ignore_alpha` hace que
+solo se desenfoque detrás de lo opaco (menú, botones, burbuja, el cuerpo), no toda la superficie:
+
+```
+layerrule = blur true, match:namespace rem_escritorio
+layerrule = ignore_alpha 0.3, match:namespace rem_escritorio
+```
+
 **Verificado** (Hyprland anidado, 2026-11-05): transparencia y click-through fuera del cuerpo;
 arrastre con posición final exacta (+520/−120 px); inclinación en ráfaga de capturas; botones,
 menú, reacciones y enfado; chat en Eco e IA con streaming, `/animaciones` y `/bailar` reenviados,
 confirmación de `apagar_pc` (contestada «No» por WS, los botones Sí/No están a 27 px); ocultar +
 SIGUSR1; cambio a un segundo monitor; ventana y overlay sin regresiones. **VRAM con Ollama
 cargado: 3572 MiB de 4096** (3562 `llama-server`; el avatar y el chat, 0 en la NVIDIA).
+
+
+## Panel de control: pestañas nuevas y temas (etapa 4 de la fase 2)
+
+**Pestañas** (`PESTANAS` en `rem_panel.html`; cada una declara las `secciones` de preferencias que
+espera). Antes había cuatro —Personalidad, Animaciones, Voz y Modelo— (nunca hubo una de Memoria,
+comprobado en todo el historial de git). Ahora: **Apariencia** (tema), **Avatar** (absorbe Modelo:
+el VRM, ahora con un desplegable de `models/vrm/`, + el comportamiento del avatar de escritorio),
+**Escritorio** (capa, respetar barras, tamaño, volver a la esquina inicial), **Animaciones** (la de
+siempre + una tarjeta de modo baile), **Voz** (deja de estar vacía: voz activa y volumen), **Chat**
+(IA/Eco, borrar la conversación, proveedor del LLM en solo lectura) y **Personalidad** (igual que
+antes, sin opciones). **Micrófono** no se muestra hasta la etapa 5. `rem_panel.py --pestana ID` abre
+en una pestaña (`?pestana=`); con el panel ya abierto le llega `panel_pestana` por el WS. El id viejo
+`modelo` se traduce a `avatar` (`ALIAS_PESTANA`).
+
+**Secciones de preferencias nuevas** (`preferencias.ESQUEMA`): `apariencia.tema` (base
+`config.toml [apariencia]`), `avatar.{mirarCursor, mirarPeso, inclinacion, reacciones, clicsEnojo,
+frasesVoz}` (defaults en el código), `escritorio.{capa, respetarBarras, tamano}` (base `[escritorio]`)
+y `voz.{activa, volumen}`. **La voz activa pasa a ser una preferencia**: el mensaje WS `voz` va por
+`preferencias.aplicar("voz")`, su oyente llama a `set_voz_chat_activa()` (que difunde `voz_actual` a
+avatar, chat y panel) y al levantar el servidor se lee de ahí (`_iniciar_voz_desde_prefs`). Así sobrevive
+a un reinicio (verificado). `escritorio.py` aplica `escritorio` en vivo (`set_layer`,
+`set_exclusive_zone` 0/−1, `set_size_request` con la esquina inferior izquierda fija; verificado: nivel
+2→3, 380×620→456×744 y vuelta). La página del avatar recibe `avatar`/`escritorio`/`voz` por
+`window.__remPrefs` (ws.js → `aplicarPrefsGenerales`) y el volumen va al `<audio>`.
+
+**Menú del clic derecho**: Chat · Modo IA/Eco · Voz · Bailar · Modelo ▸ · Gesto ▸ (saludar, uno al
+azar) · Posición ▸ (esquina inicial) · Encima de pantalla completa (casilla = capa `overlay`) ·
+Ajustes ▸ (las 7 pestañas) · Ocultar · Salir. Submenús desplegados en el sitio (`_menuSub`).
+
+**Temas** (`avatar/temas.css`, `<html data-tema>`): Synthwave (los colores de siempre), Cristal (gris
+carbón translúcido, acento azul hielo) y Yoru (#232027 con #9458C3/#7044A3). Tokens `--t-*`; los tintes
+del acento son `color-mix(... var(--t-acento) N%, transparent)`, así que bordes y brillos cambian con el
+tema. `panel_chat.css`, `escritorio.css` y el CSS de `rem_panel.html` se convirtieron de colores fijos a
+tokens (el verde/ámbar de estado del panel siguen fijos: son semánticos). Lo aplican la página del
+avatar (también el panel de la ventana vieja), la ventana de chat y el panel. Con Synthwave la ventana
+vieja se ve igual que antes (comparada en captura). Ninguno usa la paleta ni el `themes.css` de Nerumi.
+
+**Verificado** (anidado, 2026-11-06): menú con todos los ítems y Ajustes ▸ Apariencia abriendo el panel
+en esa pestaña; tema Yoru aplicado a la vez en panel, chat y menú; las 7 pestañas pintadas; voz apagada
+desde el interruptor del panel (guardada, sin síntesis, persiste al reiniciar); capa y tamaño en vivo;
+reacciones apagadas; baile desde el panel; ventana y overlay sin errores. VRAM con Ollama cargado:
+3572 MiB de 4096 (igual que en la etapa 2).

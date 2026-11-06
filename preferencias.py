@@ -148,6 +148,42 @@ def _toml(seccion, clave, default):
     return str(valor).strip() or default
 
 
+def _bool_campo(nombre):
+    def validar(v):
+        if not isinstance(v, bool):
+            raise PreferenciaInvalida(f"{nombre}: tiene que ser true/false")
+        return v
+    return validar
+
+
+def _opcion(nombre, opciones):
+    def validar(v):
+        if v not in opciones:
+            raise PreferenciaInvalida(f"{nombre}: {v!r} no es una opción ({', '.join(opciones)})")
+        return v
+    return validar
+
+
+def _rango(nombre, minimo, maximo):
+    return lambda v: _numero(v, nombre, minimo, maximo)
+
+
+TEMAS = ("synthwave", "cristal", "yoru")
+CAPAS = ("top", "overlay", "bottom")
+
+
+def _toml_opcion(seccion, clave, opciones, default):
+    v = _toml(seccion, clave, default).lower()
+    return v if v in opciones else default
+
+
+def _toml_zona_exclusiva():
+    try:
+        return int(config.leer_config_toml().get("escritorio", {}).get("zona_exclusiva", 0)) == 0
+    except (TypeError, ValueError):
+        return True
+
+
 # Cada pestaña del panel añade aquí su sección cuando se implemente. Las bases
 # leen config.toml directo, no los config.leer_*() — esos ya devuelven el valor
 # EFECTIVO (con estas preferencias encima) y sería circular.
@@ -167,6 +203,33 @@ ESQUEMA: dict[str, dict[str, Campo]] = {
                                  lambda: _ajuste_anim("enfriamientoMin", 5)),
         "intervaloReposo": Campo(_validar_intervalo,
                                  lambda: _ajuste_anim("intervaloReposo", {"minS": 4, "maxS": 9})),
+    },
+    # Pestaña Apariencia: el tema de la ventana de chat, el menú, los botones
+    # flotantes, la burbuja y el propio panel (avatar/temas.css).
+    "apariencia": {
+        "tema": Campo(_opcion("Tema", TEMAS), lambda: _toml_opcion("apariencia", "tema", TEMAS, "synthwave")),
+    },
+    # Pestaña Avatar (además del modelo): comportamiento del avatar de escritorio.
+    "avatar": {
+        "mirarCursor": Campo(_bool_campo("Mirar al cursor"), lambda: True),
+        "mirarPeso": Campo(_rango("Cuánto mira al cursor", 0, 1), lambda: 0.6),
+        "inclinacion": Campo(_rango("Inclinación al arrastrar", 0, 2), lambda: 1.0),
+        "reacciones": Campo(_bool_campo("Reacciones a los clics"), lambda: True),
+        "clicsEnojo": Campo(_rango("Clics para enfadarse", 3, 15), lambda: 5),
+        "frasesVoz": Campo(_bool_campo("Frases con voz"), lambda: True),
+    },
+    # Pestaña Escritorio: la superficie del avatar (se aplica en vivo, ver
+    # escritorio.py). Base: config.toml [escritorio].
+    "escritorio": {
+        "capa": Campo(_opcion("Capa", CAPAS), lambda: _toml_opcion("escritorio", "capa", CAPAS, "top")),
+        "respetarBarras": Campo(_bool_campo("Respetar las barras"), _toml_zona_exclusiva),
+        "tamano": Campo(_rango("Tamaño (%)", 60, 160), lambda: 100),
+    },
+    # Pestaña Voz. `activa` es el interruptor de voz de siempre (chat, menú):
+    # ahora se guarda, así que sobrevive a un reinicio.
+    "voz": {
+        "activa": Campo(_bool_campo("Voz activa"), lambda: True),
+        "volumen": Campo(_rango("Volumen", 0, 1), lambda: 1.0),
     },
 }
 

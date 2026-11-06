@@ -8,10 +8,11 @@
      (avatar/panel_chat.js + panel_chat.css), a pantalla completa, con su propio
      WebSocket (avatar/chat_remoto.js): lo que vive en la página del avatar
      —clips, baile, modelo cargado— se le pide por el servidor. -->
+<link rel="stylesheet" href="/avatar/temas.css">
 <link rel="stylesheet" href="/avatar/panel_chat.css">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  html, body { height:100%; background:#04000c; overflow:hidden; }
+  html, body { height:100%; background:var(--t-fondo-2); overflow:hidden; }
   #chat-panel { width:100%; min-width:0; border-left:none; box-shadow:none; }
   #chat-conexion {
     position:fixed; left:50%; top:10px; transform:translateX(-50%); z-index:20;

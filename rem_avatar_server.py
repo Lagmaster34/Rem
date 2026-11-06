@@ -358,11 +358,35 @@ _chat_worker_habla_task = None
 
 def set_voz_chat_activa(activa: bool) -> None:
     """Además de guardarla, la difunde (voz_actual): en modo escritorio la
-    cambian dos sitios (ventana de chat y menú del avatar) y los dos la pintan."""
+    cambian varios sitios (ventana de chat, menú del avatar, panel) y todos la
+    pintan. La llama el oyente de preferencias "voz" (el mensaje WS `voz` pasa
+    por preferencias, así se guarda y sobrevive a un reinicio)."""
     global _chat_voz_activa
     _chat_voz_activa = bool(activa)
     _broadcast_ws({"tipo": "voz_actual", "activa": _chat_voz_activa},
-                  destino=("avatar", "chat"), avisar=False)
+                  destino=("avatar", "chat", "panel"), avisar=False)
+
+
+def _iniciar_voz_desde_prefs():
+    """Al levantar el servidor: la voz arranca como quedó guardada, y cada cambio
+    de la sección "voz" (WS `voz`, panel) la aplica."""
+    global _chat_voz_activa
+    import preferencias
+    try:
+        _chat_voz_activa = bool(preferencias.obtener("voz")["activa"])
+    except Exception as e:
+        logger.warning("[Prefs] no se pudo leer la voz guardada (%s)", e)
+    preferencias.al_cambiar("voz", lambda v: set_voz_chat_activa(v["activa"]))
+
+
+def _info_llm() -> dict:
+    """Proveedor y modelo del LLM activo, para mostrarlo en el panel (solo
+    lectura). Sin construir el provider: no hace falta API key para esto."""
+    import config as _config
+    cfg = _config.leer_config_toml().get("llm", {})
+    prov = (os.environ.get("REM_LLM_PROVIDER") or str(cfg.get("provider", "ollama"))).strip().lower()
+    sub = cfg.get(prov, {}) if isinstance(cfg.get(prov), dict) else {}
+    return {"provider": prov, "modelo": str(sub.get("model", ""))}
 
 
 def _obtener_cola_habla():
@@ -748,7 +772,8 @@ async def _enviar_prefs_estado(websocket):
     import preferencias
     # modo (ventana|overlay): el panel avisa que en overlay no hay clips VRMA.
     await websocket.send(json.dumps({"tipo": "prefs_estado", "prefs": preferencias.todas(),
-                                     "propias": preferencias.propias(), "modo": _modo_actual}))
+                                     "propias": preferencias.propias(), "modo": _modo_actual,
+                                     "llm": _info_llm()}))
 
 
 async def _aplicar_prefs(websocket, seccion, cambios, peticion_id=None):
@@ -769,7 +794,7 @@ async def _aplicar_prefs(websocket, seccion, cambios, peticion_id=None):
         return
     _broadcast_ws({"tipo": "prefs_actualizadas", "seccion": seccion, "prefs": efectivos,
                    "propias": preferencias.propias().get(seccion, []), "id": peticion_id},
-                  destino=("avatar", "panel", "chat"))
+                  destino=("avatar", "panel", "chat"), avisar=False)
 
 
 # ── Servidor WebSocket ────────────────────────────────────────────────
@@ -792,7 +817,7 @@ async def _ws_handler(websocket):
                     with _ws_lock:
                         _ws_roles[websocket] = rol
                     logger.info("[Avatar] cliente WS identificado: %s", rol)
-                    if rol in ("chat", "avatar"):
+                    if rol in ("chat", "avatar", "panel"):
                         await _saludar_chat(websocket)
                 else:
                     logger.warning("[Avatar] 'hola' con rol desconocido: %r (no cuenta como destinatario)", rol)
@@ -815,7 +840,7 @@ async def _ws_handler(websocket):
                 sesion.historial.clear()
 
             elif tipo == "voz":
-                set_voz_chat_activa(data.get("activa"))
+                await _aplicar_prefs(websocket, "voz", {"activa": bool(data.get("activa"))})
 
             elif tipo == "voz_estado":
                 # El frontend avisa cuándo su cola de audio empieza a sonar / se
@@ -889,6 +914,14 @@ async def _ws_handler(websocket):
                 datos = data.get("datos")
                 if _oyente_escritorio is not None and isinstance(datos, dict):
                     _oyente_escritorio(datos)
+
+            elif tipo == "panel_pestana":
+                # Abrir el panel de control en una pestaña (menú del avatar): se
+                # le reenvía al panel si ya está abierto; si no, escritorio.py lo
+                # lanza con --pestana.
+                pid = str(data.get("id") or "")
+                if pid:
+                    _broadcast_ws({"tipo": "panel_pestana", "id": pid}, destino=("panel",), avisar=False)
 
             elif tipo == "al_avatar":
                 # Ventana de chat (modo escritorio) -> página del avatar: pedir
@@ -991,6 +1024,7 @@ def iniciar_servidor_avatar(permitir_reuso: bool = True) -> bool:
         print(f"[Avatar] Servidor ya corriendo en :{HTTP_PORT} — reusando, no se levanta uno nuevo.")
         return True
 
+    _iniciar_voz_desde_prefs()
     th_http = threading.Thread(target=_iniciar_http, daemon=True, name="AvatarHTTP")
     th_http.start()
     # Sin esperar el bind, un fallo (otra instancia ganó la carrera por el

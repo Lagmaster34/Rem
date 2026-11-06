@@ -72,9 +72,11 @@ function _conectarChat() {
         break;
       case 'prefs_estado':
         if (d.prefs?.modelo?.vrm) _remoto.modeloActivo = d.prefs.modelo.vrm;
+        if (d.prefs?.apariencia?.tema) document.documentElement.dataset.tema = d.prefs.apariencia.tema;
         break;
       case 'prefs_actualizadas':
         if (d.seccion === 'modelo' && d.prefs?.vrm) _remoto.modeloActivo = d.prefs.vrm;
+        if (d.seccion === 'apariencia' && d.prefs?.tema) document.documentElement.dataset.tema = d.prefs.tema;
         break;
       case 'prefs_error':
         if (d.seccion === 'modelo') chat.onSistema?.(`⚠ ${d.mensaje}`);

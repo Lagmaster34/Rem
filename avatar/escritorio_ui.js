@@ -39,6 +39,7 @@ const _esc = {
   regionClave: '', regionT: 0,
   cabezaPx: null,          // {x, y, r} de la última región, para colocar botones y burbuja
   oculto: false,
+  modo: 'ia',              // ia | eco (modo_actual del servidor)
   maxTz: 0, maxVx: 0,      // diagnóstico por arrastre (se loguea al soltar)
   // mirada al cursor: posición en px de superficie, cuándo cambió y el ángulo suavizado
   cursor: null, cursorT: 0, miraYaw: 0, miraPitch: 0,
@@ -54,6 +55,11 @@ function _aPython(obj) {
 }
 
 const _azar = lista => lista[Math.floor(Math.random() * lista.length)];
+
+// Preferencias de las pestañas Avatar y Escritorio del panel (ws.js las pasa por
+// window.__remPrefs; los valores por defecto son los de preferencias.py).
+let _prefsAvatar = { mirarCursor: true, mirarPeso: 0.6, inclinacion: 1, reacciones: true, clicsEnojo: 5, frasesVoz: true };
+let _prefsEscritorio = { capa: 'top', respetarBarras: true, tamano: 100 };
 
 // Frases de reacción: texto de interfaz, sin LLM (nada de llamadas al modelo
 // sin que el usuario escriba o hable; ver CLAUDE.md). Viven en
@@ -189,8 +195,9 @@ function _actualizarInclinacion(dt) {
   const a = 1 - Math.exp(-dt / I.suavizadoVel);
   _esc.vx += (_esc.vxObj - _esc.vx) * a;
   _esc.vy += (_esc.vyObj - _esc.vy) * a;
-  const objZ = clamp(-_esc.vx * I.porVelX, -I.maxZ, I.maxZ);
-  const objX = clamp(-_esc.vy * I.porVelY, -I.maxX, I.maxX);
+  const k = _prefsAvatar.inclinacion;   // multiplicador del panel (0 = sin inclinación)
+  const objZ = clamp(-_esc.vx * I.porVelX * k, -I.maxZ * k, I.maxZ * k);
+  const objX = clamp(-_esc.vy * I.porVelY * k, -I.maxX * k, I.maxX * k);
   // Muelle semi-implícito en dos subpasos (estable con dt de hasta 50 ms).
   for (let i = 0; i < 2; i++) {
     const h = dt / 2;
@@ -290,12 +297,13 @@ function miradaCursorEscritorio(dt) {
   const M = CONFIG.escritorio.mirarCursor;
   let yaw = 0, pitch = 0;
   const c = _esc.cabezaPx, p = _esc.cursor;
-  if (c && p && !_esc.arrastrando && !_esc.oculto
+  if (c && p && _prefsAvatar.mirarCursor && !_esc.arrastrando && !_esc.oculto
       && performance.now() - _esc.cursorT < M.volverTrasS * 1000) {
     const g = 180 / Math.PI, s = _signosLookAt();
     // Pantalla: x a la derecha = +X del mundo; y hacia abajo = -Y.
-    yaw = clamp(Math.atan2(p.x - c.x, M.distanciaPx) * g * M.peso * s.x, -M.maxYaw, M.maxYaw);
-    pitch = clamp(Math.atan2(c.y - p.y, M.distanciaPx) * g * M.peso * s.y, -M.maxPitch, M.maxPitch);
+    const peso = _prefsAvatar.mirarPeso;
+    yaw = clamp(Math.atan2(p.x - c.x, M.distanciaPx) * g * peso * s.x, -M.maxYaw, M.maxYaw);
+    pitch = clamp(Math.atan2(c.y - p.y, M.distanciaPx) * g * peso * s.y, -M.maxPitch, M.maxPitch);
   }
   const a = 1 - Math.exp(-dt * M.suavizado);
   _esc.miraYaw += (yaw - _esc.miraYaw) * a;
@@ -343,13 +351,16 @@ function _caraUnRato(nombre, ms) { _emocion = { nombre, hasta: performance.now()
 function _decir(texto, ms = CONFIG.escritorio.burbujaMs, voz = false) {
   if (!texto) return;
   _esc.burbuja = { texto, hasta: performance.now() + ms };
-  if (voz && _esc.vozActiva && !hayVozSonando() && /\p{L}/u.test(texto) && _ws?.readyState === WebSocket.OPEN) {
+  if (voz && _prefsAvatar.frasesVoz && _esc.vozActiva && !hayVozSonando() && /\p{L}/u.test(texto) && _ws?.readyState === WebSocket.OPEN) {
     _ws.send(JSON.stringify({ tipo: 'decir_frase', texto }));
   }
 }
 
 function _reaccionarClic(x, y) {
-  const C = CONFIG.escritorio.clics;
+  if (!_prefsAvatar.reacciones) return;
+  // Umbrales: el de enfado sale del panel; el de "molesta", 3/5 de ese.
+  const C = { ...CONFIG.escritorio.clics, enojadaDesde: _prefsAvatar.clicsEnojo,
+              molestaDesde: Math.max(2, Math.round(_prefsAvatar.clicsEnojo * 0.6)) };
   const ahora = performance.now();
   _fijarPivote(x, y);
   // Un golpecito: vaivén pequeño alrededor de donde se tocó.
@@ -437,6 +448,10 @@ const _ICONOS = {
   modelo: _svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c1.2-4 4.3-6 8-6s6.8 2 8 6"/>'),
   ajustes: _svg('<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>'),
   salir: _svg('<path d="M6 6l12 12M18 6L6 18"/>'),
+  chip: _svg('<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>'),
+  mano: _svg('<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11M11 10V4.5a1.5 1.5 0 0 1 3 0V11M14 10.5V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-.5A5.5 5.5 0 0 1 5 15l-1.4-3a1.5 1.5 0 0 1 2.6-1.4L8 13"/>'),
+  posicion: _svg('<path d="M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/>'),
+  capas: _svg('<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/>'),
 };
 
 function _punteroEncima(dentro) {
@@ -450,65 +465,115 @@ function _punteroEncima(dentro) {
   }
 }
 
-function _accionEscritorio(acc) {
+// Pestañas del panel de control que el menú puede abrir directamente.
+const PESTANAS_AJUSTES = [
+  ['apariencia', 'Apariencia'], ['avatar', 'Avatar'], ['escritorio', 'Escritorio'],
+  ['animaciones', 'Animaciones'], ['voz', 'Voz'], ['chat', 'Chat'], ['personalidad', 'Personalidad'],
+];
+
+function _enviarWS(obj) {
+  if (_ws?.readyState === WebSocket.OPEN) { _ws.send(JSON.stringify(obj)); return true; }
+  return false;
+}
+
+function _accionEscritorio(acc, arg) {
   _cerrarMenu();
   if (acc === 'voz') {
     const activa = !_esc.vozActiva;
-    if (_ws?.readyState === WebSocket.OPEN) _ws.send(JSON.stringify({ tipo: 'voz', activa }));
+    _enviarWS({ tipo: 'voz', activa });
     _esc.vozActiva = activa;   // el servidor lo confirma con voz_actual
     // Apagada: solo texto (el servidor ya no la dice). Encendida: se dice.
     _decir(_frase(activa ? 'vozOn' : 'vozOff'), 2000, activa);
+  } else if (acc === 'modo') {
+    _enviarWS({ tipo: 'cambiar_modo', modo: _esc.modo === 'eco' ? 'ia' : 'eco' });
   } else if (acc === 'bailar') {
     setModoBaile(!_modoBaile);
+  } else if (acc === 'modelo') {
+    if (arg && arg !== MODELO_ACTIVO) _enviarWS({ tipo: 'prefs_set', seccion: 'modelo', cambios: { vrm: arg } });
+  } else if (acc === 'saludar') {
+    if (_catalogo && !_bailando) _dispararSaludo();
+  } else if (acc === 'gesto') {
+    if (_catalogo && !_bailando) _dispararIdleVrma();
+  } else if (acc === 'encima') {
+    // "Encima de pantalla completa" = capa overlay; quitarlo vuelve a top.
+    _enviarWS({ tipo: 'prefs_set', seccion: 'escritorio',
+                cambios: { capa: _prefsEscritorio.capa === 'overlay' ? 'top' : 'overlay' } });
+  } else if (acc === 'ajustes') {
+    _aPython({ tipo: 'accion', accion: 'ajustes', pestana: arg });
   } else {
-    _aPython({ tipo: 'accion', accion: acc });   // chat, panel, ocultar, salir
+    _aPython({ tipo: 'accion', accion: acc });   // chat, posicion_inicial, ocultar, salir
   }
 }
 
+// El menú: ítems simples y cuatro con submenú desplegable en el sitio (no hay
+// sitio para submenús laterales en una superficie de 380 px).
 function _itemsMenu() {
   return [
     { accion: 'chat', texto: 'Chat', icono: _ICONOS.chat },
-    { accion: 'bailar', texto: _modoBaile ? 'Dejar de bailar' : 'Bailar', icono: _ICONOS.nota },
+    { accion: 'modo', texto: _esc.modo === 'eco' ? 'Modo: Eco (pasar a IA)' : 'Modo: IA (pasar a Eco)', icono: _ICONOS.chip },
     { accion: 'voz', texto: _esc.vozActiva ? 'Silenciar la voz' : 'Activar la voz', icono: _esc.vozActiva ? _ICONOS.vozOff : _ICONOS.vozOn },
-    { accion: 'modelos', texto: 'Modelo', icono: _ICONOS.modelo, sub: true },
+    { accion: 'bailar', texto: _modoBaile ? 'Dejar de bailar' : 'Bailar', icono: _ICONOS.nota },
+    { sub: 'modelos', texto: 'Modelo', icono: _ICONOS.modelo },
+    { sub: 'gestos', texto: 'Gesto', icono: _ICONOS.mano },
+    { sub: 'posicion', texto: 'Posición', icono: _ICONOS.posicion },
+    { accion: 'encima', texto: 'Encima de pantalla completa', icono: _ICONOS.capas, marcado: _prefsEscritorio.capa === 'overlay' },
+    { sub: 'ajustes', texto: 'Ajustes', icono: _ICONOS.ajustes },
     { sep: true },
-    { accion: 'panel', texto: 'Panel de control', icono: _ICONOS.ajustes },
     { accion: 'ocultar', texto: 'Ocultar', icono: _ICONOS.ocultar },
     { accion: 'salir', texto: 'Salir', icono: _ICONOS.salir, peligro: true },
   ];
 }
 
-function _pintarMenu(conModelos) {
+function _itemsSubmenu(sub) {
+  if (sub === 'modelos') {
+    if (!_modelosLista.length) return [{ vacio: 'No hay modelos en models/vrm/.' }];
+    return _modelosLista.map(m => ({ accion: 'modelo', arg: m.ruta, texto: m.titulo,
+                                     title: `${m.autor} · ${m.ruta}`, actual: m.ruta === MODELO_ACTIVO }));
+  }
+  if (sub === 'gestos') return [{ accion: 'saludar', texto: 'Saludar' }, { accion: 'gesto', texto: 'Un gesto al azar' }];
+  if (sub === 'posicion') return [{ accion: 'posicion_inicial', texto: 'Volver a la esquina inicial' }];
+  if (sub === 'ajustes') return PESTANAS_AJUSTES.map(([id, t]) => ({ accion: 'ajustes', arg: id, texto: t }));
+  return [];
+}
+
+let _menuSub = null;   // submenú desplegado, o null
+function _pintarMenu(sub = null) {
+  _menuSub = sub;
   const m = _ui.menu;
   m.innerHTML = '';
-  for (const it of _itemsMenu()) {
-    if (it.sep) { m.appendChild(Object.assign(document.createElement('div'), { className: 'esc-sep' })); continue; }
+  const boton = (clase, html) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'esc-item' + (it.peligro ? ' peligro' : '') + (it.sub && conModelos ? ' abierto' : '');
-    b.innerHTML = `<span class="esc-ico"></span><span class="esc-txt"></span>${it.sub ? '<span class="esc-flecha">›</span>' : ''}`;
+    b.className = clase;
+    b.innerHTML = html;
+    return b;
+  };
+  for (const it of _itemsMenu()) {
+    if (it.sep) { m.appendChild(Object.assign(document.createElement('div'), { className: 'esc-sep' })); continue; }
+    const abierto = it.sub && it.sub === sub;
+    const b = boton('esc-item' + (it.peligro ? ' peligro' : '') + (abierto ? ' abierto' : ''),
+      `<span class="esc-ico"></span><span class="esc-txt"></span>${it.sub ? '<span class="esc-flecha">›</span>' : ''}`
+      + (it.marcado !== undefined ? `<span class="esc-marca${it.marcado ? ' si' : ''}"></span>` : ''));
     b.querySelector('.esc-ico').innerHTML = it.icono;   // SVG propio de _ICONOS
     b.querySelector('.esc-txt').textContent = it.texto;
     b.onclick = () => {
-      if (it.sub) { _pintarMenu(!conModelos); _ws?.send(JSON.stringify({ tipo: 'modelos_get' })); _colocarMenu(); }
-      else _accionEscritorio(it.accion);
+      if (it.sub) {
+        _pintarMenu(abierto ? null : it.sub);
+        if (it.sub === 'modelos' && !abierto) _enviarWS({ tipo: 'modelos_get' });
+        _colocarMenu();
+      } else _accionEscritorio(it.accion);
     };
     m.appendChild(b);
-    if (it.sub && conModelos) {
+    if (abierto) {
       const lista = document.createElement('div');
       lista.className = 'esc-sub';
-      if (!_modelosLista.length) lista.textContent = 'No hay modelos en models/vrm/.';
-      for (const mod of _modelosLista) {
-        const mb = document.createElement('button');
-        mb.type = 'button';
-        mb.className = 'esc-item esc-modelo' + (mod.ruta === MODELO_ACTIVO ? ' actual' : '');
-        mb.textContent = mod.titulo;
-        mb.title = `${mod.autor} · ${mod.ruta}`;
-        mb.onclick = () => {
-          _cerrarMenu();
-          if (mod.ruta !== MODELO_ACTIVO) _ws?.send(JSON.stringify({ tipo: 'prefs_set', seccion: 'modelo', cambios: { vrm: mod.ruta } }));
-        };
-        lista.appendChild(mb);
+      for (const s of _itemsSubmenu(sub)) {
+        if (s.vacio) { lista.appendChild(Object.assign(document.createElement('div'), { textContent: s.vacio })); continue; }
+        const sb = boton('esc-item esc-subitem' + (s.actual ? ' actual' : ''), '');
+        sb.textContent = s.texto;
+        if (s.title) sb.title = s.title;
+        sb.onclick = () => _accionEscritorio(s.accion, s.arg);
+        lista.appendChild(sb);
       }
       m.appendChild(lista);
     }
@@ -526,7 +591,7 @@ function _colocarMenu() {
 
 function _abrirMenu(x, y) {
   _menuEn = { x, y };
-  _pintarMenu(false);
+  _pintarMenu(null);
   _ui.menu.hidden = false;
   _esc.menuAbierto = true;
   _esc.menuCierraEn = performance.now() + 12000;
@@ -584,6 +649,14 @@ function _actualizarInterfaz() {
 function crearEscritorioUI() {
   _crearInterfazEscritorio();
 
+  window.__remPrefs = (seccion, v) => {
+    if (seccion === 'avatar') _prefsAvatar = { ..._prefsAvatar, ...v };
+    else if (seccion === 'escritorio') _prefsEscritorio = { ..._prefsEscritorio, ...v };
+    else if (seccion === 'voz' && typeof v.activa === 'boolean') _esc.vozActiva = v.activa;
+    else return;
+    if (_esc.menuAbierto) _pintarMenu(_menuSub);
+  };
+
   // Lo que llama escritorio.py (evaluate_javascript).
   window.__remEscritorio = {
     arrastreInicio(x, y) {
@@ -632,14 +705,14 @@ function crearEscritorioUI() {
     onDelta() {},
     onDone() { _esc.esperando = false; },
     onError(mensaje) { _esc.esperando = false; _decir(`⚠ ${mensaje}`, 4000); },
-    onModoActual() {},
+    onModoActual(modo) { _esc.modo = modo; if (_esc.menuAbierto) _pintarMenu(_menuSub); },
     onVozActual(activa) { _esc.vozActiva = !!activa; },
     onSistema(texto) { enviarAlChat({ que: 'sistema', texto }); },
     onModeloCargado(ruta, titulo, autor) {
       enviarAlChat({ que: 'modelo_cargado', ruta, titulo, autor });
-      if (_esc.menuAbierto) _pintarMenu(false);
+      if (_esc.menuAbierto) { _pintarMenu(_menuSub); _colocarMenu(); }
     },
-    onModelos() { if (_esc.menuAbierto && _ui.menu.querySelector('.esc-sub')) { _pintarMenu(true); _colocarMenu(); } },
+    onModelos() { if (_esc.menuAbierto && _menuSub === 'modelos') { _pintarMenu('modelos'); _colocarMenu(); } },
     onModoBaile(on) { enviarAlChat({ que: 'baile', activo: on }); },
     onClipLanzado(archivo) { enviarAlChat({ que: 'clip_lanzado', archivo, etiqueta: etiquetaClip(archivo) }); },
     onPttEstado(est, detalle) {

@@ -110,6 +110,13 @@ capa = "top"
 zona_exclusiva = 0
 
 
+[apariencia]
+# Tema de la ventana de chat, el menú y los botones del avatar y el panel:
+# "synthwave" (cian y violeta), "cristal" (gris translúcido) o "yoru" (negro y morado).
+# El panel de control lo pisa (pestaña Apariencia).
+tema = "synthwave"
+
+
 [escritorio]
 # Avatar de escritorio (rem_chat.py --modo escritorio): layer surface
 # transparente, click-through salvo el cuerpo del modelo, que se arrastra con

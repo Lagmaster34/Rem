@@ -1,0 +1,68 @@
+/* avatar/temas.css — los temas visuales propios de Rem (preferencia
+   apariencia.tema, pestaña Apariencia del panel de control). Los usan la ventana
+   de chat, el panel de chat de la ventana vieja, el menú/botones/burbuja del
+   avatar de escritorio y el propio panel de control. Cada página pone
+   <html data-tema="..."> al recibir las preferencias; sin atributo, Synthwave.
+
+   Tokens: fondos (--t-fondo, --t-fondo-2, --t-elevado, --t-flotante), burbujas,
+   texto (--t-texto, --t-texto-2, --t-tenue, --t-tenue-2), el acento y lo que va
+   encima de él, y --t-peligro. Los tintes del acento (bordes, brillos, hover)
+   se sacan con color-mix() sobre --t-acento en cada hoja, no hay un token por
+   cada transparencia. */
+
+/* Synthwave: el cian y violeta de siempre (suelo del modo ventana). */
+:root, :root[data-tema="synthwave"] {
+  --t-fondo: #070212;
+  --t-fondo-2: #04000c;
+  --t-elevado: #081a20;
+  --t-flotante: rgba(13, 7, 26, 0.90);
+  --t-burbuja: #0c1c22;
+  --t-burbuja-usuario: #182430;
+  --t-acento: #2be8ff;
+  --t-acento-texto: #04141a;
+  --t-texto: #eaf6ff;
+  --t-texto-2: #b9cbd6;
+  --t-tenue: #7d94a3;
+  --t-tenue-2: #5f7d89;
+  --t-scroll: #244047;
+  --t-peligro: #ff6b86;
+}
+
+/* Cristal: gris carbón translúcido, acento azul hielo, bordes claros finos. En
+   el escritorio los paneles flotantes dejan ver lo de detrás (sin desenfoque:
+   WebKit no puede desenfocar el escritorio; ver la línea opcional de blur de
+   Hyprland en CLAUDE.md, "Modo escritorio"). */
+:root[data-tema="cristal"] {
+  --t-fondo: #17191e;
+  --t-fondo-2: #101216;
+  --t-elevado: #23262d;
+  --t-flotante: rgba(26, 28, 34, 0.70);
+  --t-burbuja: #22252c;
+  --t-burbuja-usuario: #2d323c;
+  --t-acento: #a9cdff;
+  --t-acento-texto: #0d1420;
+  --t-texto: #eef1f6;
+  --t-texto-2: #c4cad4;
+  --t-tenue: #99a1af;
+  --t-tenue-2: #79818f;
+  --t-scroll: #3a3f49;
+  --t-peligro: #ff7a8a;
+}
+
+/* Yoru: los colores del personaje, negro #232027 y morados #7044A3 / #9458C3. */
+:root[data-tema="yoru"] {
+  --t-fondo: #232027;
+  --t-fondo-2: #1b181f;
+  --t-elevado: #2c2833;
+  --t-flotante: rgba(35, 32, 39, 0.92);
+  --t-burbuja: #2d2735;
+  --t-burbuja-usuario: #3f2c58;
+  --t-acento: #9458c3;
+  --t-acento-texto: #f7f1fc;
+  --t-texto: #ece6f5;
+  --t-texto-2: #cdc3db;
+  --t-tenue: #a59bb5;
+  --t-tenue-2: #857b95;
+  --t-scroll: #4a3d5a;
+  --t-peligro: #ff7090;
+}
