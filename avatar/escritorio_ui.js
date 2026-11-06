@@ -63,7 +63,18 @@ let FRASES_ESCRITORIO = {};
 fetch('/frases_escritorio.json', { cache: 'no-cache' })
   .then(r => r.json()).then(d => { FRASES_ESCRITORIO = d; })
   .catch(e => console.warn('[Escritorio] sin frases_escritorio.json:', e));
-const _frase = clave => { const l = FRASES_ESCRITORIO[clave]; return Array.isArray(l) && l.length ? _azar(l) : ''; };
+// «sirviente» nunca en dos reacciones seguidas: si la anterior lo llevaba, se
+// elige entre las que no (si queda alguna en esa lista).
+let _ultimaConSirviente = false;
+function _frase(clave) {
+  const l = FRASES_ESCRITORIO[clave];
+  if (!Array.isArray(l) || !l.length) return '';
+  const tiene = t => /sirviente/i.test(t);
+  const sin = _ultimaConSirviente ? l.filter(t => !tiene(t)) : [];
+  const t = _azar(sin.length ? sin : l);
+  _ultimaConSirviente = tiene(t);
+  return t;
+}
 
 // ═══════════════════════════════════════════════════
 // PROYECCIÓN Y REGIÓN DE CLIC
