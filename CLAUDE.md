@@ -1,5 +1,7 @@
 # Rem — Asistente Virtual IA
 
+## ⚠ Fase 2 en curso (2026-11-05): ver "Nota de traspaso — fase 2" al final y `notas_fase2/README.md`
+
 ## ⚠ Cambio 2026-11-04: avatar multimodelo y director de animación (leer antes que lo de abajo)
 - **Rem (rem.vrm, rem_naenae.vrm) y los 17 clips de `VRMA_MotionPack/` ("Rem anterior") salieron del
   proyecto** (respaldo en `~/Descargas/rem_respaldo/`). Lo que abajo hable de `rem.vrm`, sus visemes vrc.* o
@@ -2583,26 +2585,74 @@ vyath pack...), tk256ailab (MIT) y VRoid Project (crédito obligatorio) para Rem
 `greet.vrma`).
 
 
-## Fase 2: avatar de escritorio al estilo Nerumi (en curso, 2026-11-05)
+## Nota de traspaso — fase 2 (2026-11-05; leer antes de seguir)
 
-Meta: **reemplazar el modo ventana** por un avatar al estilo Nerumi —se arrastra por la pantalla, reacciona
-a los clics, abre el chat en una ventana aparte, menú propio con clic derecho— con código propio (Nerumi
-no tiene licencia; ver la memoria del proyecto). El **modo overlay se queda como está**, quieto.
-Referencia: `~/Descargas/Riclado de nerumoi/` (solo lectura; `mic-check.js` y `themes.css` de ahí son
-copia casi literal de Nerumi y no van al repo).
+**Meta**: reemplazar el modo ventana por un avatar de escritorio al estilo Nerumi —se arrastra por la
+pantalla, reacciona a los clics, abre el chat en una ventana aparte, menú propio con clic derecho— con
+**código propio**. El material de trabajo está en `notas_fase2/` (ignorada por git; empezar por su
+`README.md`): análisis de Nerumi, tabla de equivalencias, clasificación de clips de medio cuerpo y las
+herramientas de prueba.
 
-- **Etapa 0 (prueba en Hyprland anidado)**: una layer surface se arrastra cambiando sus márgenes; la
-  posición sale de la del cursor del sistema (`j/cursorpos` del socket de Hyprland, 0,1-0,5 ms): con
-  deltas locales de la superficie el arrastre se pasaba de largo (7 % lento, ~80 % rápido) porque un
-  evento llega antes de que Hyprland mueva la capa. Click-through fuera del cuerpo con
-  `input_shape_combine_region`, también con WebView encima. Hyprland no anima los cambios de margen.
-- **Etapa 1**: el script de `rem_avatar.html` pasó a `avatar/` sin cambiar código. Verificado con la app
-  real (dentro de un Hyprland anidado, audio a un sumidero nulo): mismos mensajes WS, mismas líneas de
-  log salvo lo aleatorio (saludo sorteado, nombres de WAV), 0 errores, mismas capturas, en ventana y
-  overlay. VRAM: 3146 MiB con Ollama cargado antes y durante (ventana y overlay suman 0 en la NVIDIA).
-- **Visto en la línea base, ya existía antes de la etapa 1**: en el overlay dentro del Hyprland anidado
-  el avatar se ve al cargar pero no en las capturas tomadas mientras habla ni tras cambiar de modelo. Sin
-  confirmar si pasa también en la sesión real.
+### Estado
+
+- **Etapa 0 — hecha** (prueba en un Hyprland anidado, `notas_fase2/prueba_arrastre/`). Una layer surface
+  se arrastra cambiando sus márgenes. La posición **tiene que salir del cursor global** (`j/cursorpos`
+  del socket de Hyprland, 0,1-0,5 ms): con deltas locales de la superficie el arrastre se pasaba de
+  largo (+7 % lento, ~+80 % rápido) porque un evento llega antes de que Hyprland mueva la capa. Con
+  `cursorpos` la posición final fue exacta en arrastres lentos y rápidos, también con un WebView
+  transparente encima; durante el arrastre siguen llegando eventos con el puntero fuera de la
+  superficie. Click-through fuera del cuerpo con `input_shape_combine_region` (+ `queue_draw()`, ver
+  "Modo overlay"). Hyprland no anima los cambios de margen. **No se cubrió**: varios monitores (los
+  márgenes son relativos al monitor de la capa; se probó con uno) ni la región de clic dinámica (la
+  prueba usaba un rectángulo fijo; la página real tendrá que mandar el del modelo dibujado, como hoy
+  manda el de la caja del overlay). Contrapartida: el arrastre solo funciona en Hyprland.
+- **Etapa 1 — hecha** (commit «Avatar: el script de rem_avatar.html pasa a avatar/»): el script del
+  avatar está en `avatar/`, en scripts clásicos que comparten el ámbito global (ver
+  `avatar/README.md`), sin cambiar comportamiento. Verificado con la app real en ventana y overlay.
+  VRAM: 3146 MiB con Ollama cargado, igual con ventana u overlay (WebKit dibuja WebGL por software;
+  en la NVIDIA solo está `llama-server`).
+- **Siguiente, en orden**: 2) superficie del avatar de escritorio detrás de `--modo escritorio`
+  (transparente, arrastrable, inclinación, reacciones al clic, botones al pasar el ratón, región de
+  clic dinámica; comprobar varios monitores); 3) chat en ventana aparte reutilizando el panel actual;
+  4) menú del clic derecho y ajustes en `rem_panel`; 5) voz de entrada (fin de frase automático y
+  filtro de alucinaciones en Python, modo conversación, palabra de activación opcional); 6) quitar el
+  modo ventana; 7) animaciones en el overlay. **Medir VRAM con `nvidia-smi` en cada etapa** (con
+  Ollama cargado; `num_gpu = 99`, ~520 MiB libres).
 - **Nombre del personaje en la interfaz**: `personalidad.NOMBRE_PERSONAJE` llega a la página por la URL
   (`url_avatar()` → `?personaje=`, `NOMBRE_PERSONAJE` en `avatar/config.js`) y lo usan la caja de texto
   ("Escríbele a Yoru…", antes "Rem" fijo en el overlay) y los estados del panel ("Yoru está pensando…").
+- **Visto, sin resolver**: en el overlay dentro del Hyprland anidado el avatar se ve al cargar pero no
+  en capturas tomadas mientras habla ni tras cambiar de modelo. Ya pasaba antes de la etapa 1. Sin
+  confirmar en la sesión real.
+
+### Decisiones tomadas
+
+- **Nada de Nerumi va al repo público.** Nerumi no tiene licencia (todos los derechos reservados).
+  `~/Descargas/Riclado de nerumoi/` es solo referencia: `mic-check.js` y `themes.css` de ahí tienen el
+  80 % de líneas idénticas a Nerumi. Se reescribe con código propio buscando una experiencia parecida;
+  las ideas y los valores numéricos sí se usan.
+- **Sin Electron**: GTK + WebKit + el mismo servidor y WebSocket. El chat, la voz, el recorte de
+  historial, las tools bajo demanda y el modo serio salen gratis por `chat_message`.
+- **Estilo visual propio**, no la paleta Lumi/Midnight de Nerumi.
+- **El overlay se queda quieto en su sitio**; después de la etapa 2 tendrá animaciones, solo con clips
+  aptos para medio cuerpo (`notas_fase2/clips_medio_cuerpo.md`: 60 aptos, 45 activos por defecto; anular
+  la traslación de cadera volvería aptos muchos de los 39 que "se desplazan", porque los pies no se ven)
+  y reutilizando `avatar/clips.js`.
+- **La ventana vieja se mantiene** hasta cumplir `notas_fase2/tabla_equivalencias.md`.
+
+### Personalidad: cerrado, pendiente y descartado
+
+**Corrección de método**: una sola corrida no prueba nada (temperatura 0,7). "al menos" salió 8 y 1 veces
+en dos corridas idénticas; la jerga, 6 y 1 de 20. Toda comparación va con 2-3 corridas por variante.
+
+- Cerrado (commit «Personalidad: modo serio por categoría, filtros y ejemplos sin hechos personales»):
+  ejemplos de tono como turnos y sin hechos personales; modo serio con un ejemplo por categoría y
+  glosario; frase "si lo ves aplazando algo…"; `_un_parrafo` y bloques de código. Ver "Ejemplos de tono"
+  y "Modo serio y tope de oraciones".
+- Descartado: ejemplos dentro del system (los usa como tabla: "hola" → la misma respuesta 10 de 10),
+  regla "solo sabes lo que te dijo" con ejemplos como turnos (le hace listar los ejemplos), separador
+  tras los ejemplos, mini-ejemplos rotando al azar, modo serio sin ejemplo (juzga).
+- Pendiente: el modo serio copia literal el ejemplo de su categoría en ~60 % de los turnos (encaja porque
+  es genérico, pero repite); en "¿qué sabes de mí?" inventa caracterizaciones sacadas del personaje
+  ("eres un npc con skill issue"); la jerga sigue alta (10 menciones en 38 respuestas frente a 5
+  antes); el banco de cumplimiento de las etiquetas de emoción del chat sigue sin hacerse.

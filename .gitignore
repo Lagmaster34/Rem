@@ -56,3 +56,8 @@ fix_pipeline.py
 # Preferencias del panel de control (las edita rem_panel, ver preferencias.py)
 preferencias.json
 preferencias.json.tmp
+
+# Notas y herramientas de trabajo de la fase 2 (avatar de escritorio): análisis de
+# Nerumi (no redistribuible), tabla de equivalencias, prototipos. Ver CLAUDE.md,
+# "Nota de traspaso".
+notas_fase2/
