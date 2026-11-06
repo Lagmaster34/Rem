@@ -13,8 +13,12 @@ class Grabador:
     """Un uso por grabación: iniciar() abre el stream, detener() lo cierra y
     devuelve todo lo capturado como float32 mono a 16 kHz."""
 
-    def __init__(self, max_s=30.0, dispositivo=None):
+    def __init__(self, max_s=30.0, dispositivo=None, al_bloque=None):
+        """`al_bloque(audio)`: se llama con cada bloque (50 ms) en el hilo de
+        audio — lo usa el fin de frase automático (stt/analisis.FinDeFrase);
+        tiene que ser rápido (~0,2 ms medidos) y no lanzar."""
         self.dispositivo = dispositivo   # None = predeterminado del sistema
+        self.al_bloque = al_bloque
         self.max_frames = int(max_s * SAMPLE_RATE)
         self._stream = None
         self._trozos = []
@@ -27,10 +31,17 @@ class Grabador:
 
     def _callback(self, indata, frames, time_info, status):
         # Corre en el hilo de audio de PortAudio: nada pesado acá.
+        bloque = indata[:, 0].copy()
         with self._lock:
             if self._frames < self.max_frames:
-                self._trozos.append(indata[:, 0].copy())
+                self._trozos.append(bloque)
                 self._frames += frames
+        if self.al_bloque is not None:
+            try:
+                self.al_bloque(bloque)
+            except Exception as e:  # nunca tumbar el hilo de audio
+                print(f"[Mic] el análisis del bloque falló: {type(e).__name__}: {e}", flush=True)
+                self.al_bloque = None
 
     def iniciar(self):
         if self._stream is not None:
@@ -38,7 +49,7 @@ class Grabador:
         self._trozos, self._frames = [], 0
         self._stream = sd.InputStream(
             samplerate=SAMPLE_RATE, channels=1, dtype="float32", callback=self._callback,
-            device=self.dispositivo,
+            device=self.dispositivo, blocksize=int(SAMPLE_RATE * 0.05),
         )
         self._stream.start()
 

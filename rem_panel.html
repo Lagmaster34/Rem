@@ -129,6 +129,7 @@
   .muestra span { flex: 1; }
   .tema-nombre { font-weight: 700; }
   .tema-desc { color: var(--texto-suave); font-size: 12px; line-height: 1.4; }
+  .lista-ayuda { margin: 0 0 0 18px; color: var(--texto-suave); font-size: 13px; line-height: 1.55; max-width: 640px; }
   .nota-pie { color: var(--texto-suave); font-size: 12px; max-width: 640px; line-height: 1.45; }
   @media (prefers-reduced-motion: reduce) { .tema, .segmento { transition: none; } }
   .vacio {
@@ -267,8 +268,7 @@ const WS_URL = `ws://${location.hostname}:18766`;
 
 // Una entrada por pestaña. `secciones` = secciones de preferencias.ESQUEMA que
 // la alimentan (la pestaña espera a tenerlas). `pintar(cuerpo)` la dibuja; sin
-// `pintar`, la pestaña todavía no tiene opciones. La de Micrófono llega con la
-// etapa 5 de la fase 2 (voz de entrada).
+// `pintar`, la pestaña todavía no tiene opciones.
 const PESTANAS = [
   { id: 'apariencia', titulo: 'Apariencia', secciones: ['apariencia'], pintar: pintarApariencia,
     desc: 'Tema de la ventana de chat, del menú y los botones del avatar y de este panel.' },
@@ -281,6 +281,8 @@ const PESTANAS = [
     desc: 'Clips del avatar: qué gestos hace en reposo y con qué frecuencia, y el clip de cada emoción. Los cambios se aplican al siguiente gesto.' },
   { id: 'voz', titulo: 'Voz', secciones: ['voz'], pintar: pintarVoz,
     desc: 'Voz de Yoru (Piper, local). La síntesis usa los parámetros del modelo tal cual; aquí, si habla y a qué volumen.' },
+  { id: 'microfono', titulo: 'Micrófono', secciones: ['microfono'], pintar: pintarMicrofono,
+    desc: 'Voz de entrada: el botón 🎙 del chat y la tecla de push-to-talk. Lo que dices se transcribe en local (Whisper).' },
   { id: 'chat', titulo: 'Chat', secciones: [], pintar: pintarChat,
     desc: 'La conversación: modo IA o Eco y borrar el historial. El proveedor del LLM se elige en config.toml.' },
   { id: 'personalidad', titulo: 'Personalidad', secciones: [],
@@ -995,6 +997,24 @@ function pintarVoz(cuerpo) {
                      ctlBool('voz', 'activa', 'Voz activa')));
   t.appendChild(fila('voz', 'volumen', 'Volumen', 'De la voz en el avatar (no el del sistema).',
                      ctlRango('voz', 'volumen', 0, 1, 0.05, v => `${Math.round(v * 100)} %`)));
+}
+
+// ═══ Micrófono ═══════════════════════════════════════════════════════
+function pintarMicrofono(cuerpo) {
+  const t = tarjeta(cuerpo, 'Modo conversación', null);
+  t.appendChild(fila('microfono', 'conversacion', 'Seguir escuchando',
+    'Si Yoru termina su respuesta con una pregunta, el micrófono se vuelve a abrir solo cuando acaba de hablar. Se cierra si nadie habla en 30 s o al escribir.',
+    ctlBool('microfono', 'conversacion', 'Modo conversación')));
+  const c = tarjeta(cuerpo, 'Cómo se usa', null);
+  const lista = el('ul', 'lista-ayuda');
+  for (const linea of [
+    'Toque en 🎙: graba y corta solo al quedarte en silencio un segundo. Otro toque lo corta ya.',
+    'Mantener 🎙 (o SUPER+H): graba mientras lo sujetas.',
+    'Antes de transcribir se mira si hubo voz: el chat dice «voz detectada», «no escuché tu voz», «no llegó audio» o «micrófono muerto».',
+    'Frases que Whisper se inventa con el silencio («Gracias.», «Subtítulos… Amara.org») se descartan si casi no hubo voz.',
+    'Los umbrales y tiempos están en config.toml, [stt.voz]. El umbral de voz se adapta al ruido de cada grabación.',
+  ]) lista.appendChild(el('li', null, linea));
+  c.appendChild(lista);
 }
 
 // ═══ Chat ════════════════════════════════════════════════════════════

@@ -66,6 +66,10 @@ let _modelosLista = [];   // modelos_lista del servidor (models/vrm/)
         if (d.estado === 'escuchando' || d.estado === 'transcribiendo') { if (estado === 'idle') estado = 'listening'; }
         else if (estado === 'listening') estado = 'idle';
         window.__remChat?.onPttEstado?.(d.estado, d.motivo || d.nota || '');
+      } else if (d.tipo === 'mic_veredicto') {
+        window.__remChat?.onMicVeredicto?.(String(d.veredicto ?? ''), String(d.mensaje ?? ''));
+      } else if (d.tipo === 'conversacion') {
+        window.__remChat?.onConversacion?.(!!d.activa, String(d.motivo ?? ''));
       } else if (d.tipo === 'ptt_transcripcion') {
         window.__remChat?.onTranscripcion?.(String(d.texto ?? ''), d.ms ?? 1000);
       } else if (d.tipo === 'accion_confirmar') {

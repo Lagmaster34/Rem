@@ -468,7 +468,8 @@ function _punteroEncima(dentro) {
 // Pestañas del panel de control que el menú puede abrir directamente.
 const PESTANAS_AJUSTES = [
   ['apariencia', 'Apariencia'], ['avatar', 'Avatar'], ['escritorio', 'Escritorio'],
-  ['animaciones', 'Animaciones'], ['voz', 'Voz'], ['chat', 'Chat'], ['personalidad', 'Personalidad'],
+  ['animaciones', 'Animaciones'], ['voz', 'Voz'], ['microfono', 'Micrófono'], ['chat', 'Chat'],
+  ['personalidad', 'Personalidad'],
 ];
 
 function _enviarWS(obj) {
@@ -719,6 +720,10 @@ function crearEscritorioUI() {
       _esc.ptt = (est === 'escuchando' || est === 'transcribiendo') ? est : 'idle';
       if (est === 'ignorado') _decir(`🎙 ${detalle}`, 3000);
     },
+    // Veredicto del micrófono: en la burbuja, solo texto (nunca con voz: el
+    // micrófono acaba de cerrarse o va a reabrirse).
+    onMicVeredicto(veredicto, mensaje) { if (veredicto !== 'enviar') _decir(mensaje, 4500); },
+    onConversacion() {},
     onTranscripcion(texto, ms) { _esc.esperando = true; _decir(`«${texto}»`, Math.max(1500, ms + 600)); },
     // Una acción espera confirmación: se contesta en la ventana de chat, que
     // se abre si estaba cerrada (el servidor le reenvía el pedido al conectar).

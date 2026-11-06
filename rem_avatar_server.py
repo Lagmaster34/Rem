@@ -433,7 +433,7 @@ def cambiar_modo_chat(modo: str) -> bool:
     return cambio
 
 
-async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None):
+async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None, por_voz: bool = False):
     """Maneja un chat_message del panel: corre el turno completo contra el
     LLM (chat_sesion.procesar_turno()) emitiendo chat_delta por cada
     fragmento tal como llega, y si la voz del panel está activa (ver
@@ -450,17 +450,23 @@ async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None):
 
     `t_ref` (time.perf_counter(), opcional): instante de referencia para medir
     "tiempo hasta el primer audio" — el push-to-talk pasa el momento en que se
-    soltó la tecla (ver _ptt_detener())."""
+    soltó la tecla (ver _ptt_detener()).
+
+    Devuelve el texto de la respuesta (None si no hubo turno): el modo
+    conversación mira si termina en "?". Un mensaje escrito (`por_voz=False`)
+    cierra el modo conversación."""
     global _chat_turno_activo
+    if not por_voz and _conv_activa:
+        _conversacion(False, "mensaje escrito")
     if _ptt_estado in ("iniciando", "grabando"):
         # Hablarle a Rem por texto mientras se graba haría sonar su voz
         # encima del micrófono abierto — justo lo que el push-to-talk evita.
         _broadcast_ws({"tipo": "error", "mensaje": "Estás grabando con la tecla de voz — suéltala antes de escribir."})
-        return
+        return None
     with _chat_lock:
         if _chat_turno_activo:
             _broadcast_ws({"tipo": "error", "mensaje": "Yoru ya está respondiendo — espera a que termine."})
-            return
+            return None
         _chat_turno_activo = True
 
     from chat_sesion import procesar_turno
@@ -468,6 +474,7 @@ async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None):
 
     enviar_estado("thinking")
     primer_fragmento = True
+    respuesta = None
 
     def _on_delta(fragmento):
         nonlocal primer_fragmento
@@ -487,7 +494,7 @@ async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None):
         # Sin tools en modo eco: no hay LLM del otro lado que las use.
         import acciones
         tools = acciones.tools_disponibles(_modo_actual) if sesion.modo != "eco" else None
-        await procesar_turno(sesion, texto, memoria_larga, memoria_sistema,
+        respuesta, _done, _turno = await procesar_turno(sesion, texto, memoria_larga, memoria_sistema,
                               on_delta=_on_delta, cola_habla=cola_habla,
                               incluir_contexto=incluir_contexto, t_ref=t_ref,
                               tools=tools, on_confirmar_accion=_pedir_confirmacion_accion,
@@ -501,6 +508,7 @@ async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None):
         with _chat_lock:
             _chat_turno_activo = False
         _marcar_fin_habla()
+    return respuesta
 
 
 # ── Push-to-talk (voz de entrada) ────────────────────────────────────
@@ -528,7 +536,8 @@ _ptt_grabador     = None
 _ptt_tope_handle  = None      # call_later del tope de grabación
 _ptt_stop_pedido  = False     # ptt_stop llegado mientras aún se abría el micrófono
 _ptt_stop_huerfano_t = 0.0    # ptt_stop sin start previo (toque corto: llegó antes que su start)
-_ptt_medicion     = None      # {"t_suelta", "t_stt", ...} hasta el primer audio sonando
+_ptt_medicion     = None      # {"t_suelta", "t_fin_voz", "t_stt", ...} hasta el primer audio sonando
+_ptt_auto         = None      # grabación en automático: {"detector", "origen", "motivo", "t"}
 _ws_reproduciendo = set()     # websockets cuyo frontend reporta audio sonando (voz_estado)
 _ultimo_fin_habla = 0.0       # time.monotonic() del último fin de voz/turno
 
@@ -592,7 +601,9 @@ def _registrar_voz_estado(websocket, reproduciendo: bool):
         if m is not None:
             _ptt_medicion = None
             total = time.perf_counter() - m["t_suelta"]
-            print(f"  [PTT] medición: suelto la tecla -> primer audio SONANDO: {total:.2f}s "
+            desde_voz = time.perf_counter() - m.get("t_fin_voz", m["t_suelta"])
+            print(f"  [PTT] medición: {'fin de frase automático' if m.get('auto') else 'suelto la tecla'} "
+                  f"-> primer audio SONANDO: {total:.2f}s; desde que dejó de hablar: {desde_voz:.2f}s "
                   f"(STT {m['t_stt']:.2f}s de {m['dur']:.1f}s de audio)", flush=True)
     else:
         _ws_reproduciendo.discard(websocket)
@@ -661,9 +672,84 @@ def _ptt_estado_ws(estado: str, **extra):
     _broadcast_ws({"tipo": "ptt_estado", "estado": estado, **extra})
 
 
-async def _ptt_iniciar():
-    global _ptt_estado, _ptt_grabador, _ptt_tope_handle, _ptt_stop_pedido
-    if time.monotonic() - _ptt_stop_huerfano_t < 0.3:
+# ── Micrófono en automático y veredicto (etapa 5) ────────────────────────
+# Dos formas de grabar:
+#   - "tecla": push-to-talk de siempre (ptt_start/ptt_stop: SUPER+H, o mantener
+#     el botón 🎙 del chat más de 260 ms). Graba hasta que se suelta.
+#   - "auto": un toque del botón 🎙 (mensaje mic_toque) o el modo conversación.
+#     stt/analisis.FinDeFrase escucha cada bloque y corta solo: tras 1 s de
+#     silencio después de la voz, a los 15 s de voz, si el micrófono no manda
+#     nada en 4 s o (conversación) si nadie habla en cierre_inactividad_s.
+# En los dos, antes de transcribir se mide la grabación (stt/analisis.veredicto:
+# enviar / sin voz / silencio / micrófono muerto) y después se descartan las
+# frases que Whisper se inventa con casi nada de voz. Cada veredicto se manda
+# como mic_veredicto (lo pinta el chat, la caja del overlay y la burbuja).
+_MENSAJES_VEREDICTO = {
+    "enviar": "🎙 Voz detectada ({voz})",
+    "sin_voz": "🎙 No escuché tu voz (el micrófono sí manda audio).",
+    "silencio": "🎙 No llegó audio del micrófono.",
+    "muerto": "🎙 El micrófono no manda nada: ¿está silenciado o desconectado? Revisa la entrada de audio del sistema.",
+    "inventada": "🎙 Descartado: «{texto}» parece inventado por Whisper (solo {voz} de voz).",
+    "espera": "🎙 Nadie habló: cierro el micrófono.",
+}
+
+
+def _emitir_veredicto(tipo: str, v=None, texto: str = ""):
+    voz = f"{v.voz_ms / 1000:.1f} s de voz".replace(".", ",") if v and tipo == "enviar" else \
+          (f"{v.voz_ms:.0f} ms" if v else "")
+    mensaje = _MENSAJES_VEREDICTO[tipo].format(voz=voz, texto=texto)
+    _broadcast_ws({"tipo": "mic_veredicto", "veredicto": tipo, "mensaje": mensaje,
+                   "voz_ms": round(v.voz_ms) if v else 0, "dur_s": round(v.dur_s, 2) if v else 0},
+                  avisar=False)
+
+
+# Modo conversación: tras un turno POR VOZ cuya respuesta termina en "?", el
+# micrófono se reabre en automático (ver _reabrir_conversacion). Sin etiqueta
+# nueva del modelo: lo decide el texto. Un mensaje escrito o una respuesta que
+# no pregunta lo cierra; también nadie hablando en cierre_inactividad_s.
+_conv_activa = False
+_conv_tarea = None
+
+
+def _conversacion(activa: bool, motivo: str = ""):
+    global _conv_activa, _conv_tarea
+    if not activa and _conv_tarea is not None and not _conv_tarea.done():
+        _conv_tarea.cancel()
+    if activa == _conv_activa:
+        return
+    _conv_activa = activa
+    print(f"  [Mic] modo conversación {'ON' if activa else 'OFF'}{f' ({motivo})' if motivo else ''}", flush=True)
+    _broadcast_ws({"tipo": "conversacion", "activa": activa, "motivo": motivo}, avisar=False)
+
+
+def _respuesta_pregunta(texto: str) -> bool:
+    import re
+    return bool(re.search(r"\?[\s\"'»”’)…\.]*$", texto or ""))
+
+
+async def _reabrir_conversacion():
+    """Espera a que Yoru termine de hablar (turno, cola de voz y audio sonando,
+    más el margen de eco) y reabre el micrófono en automático
+    reabrir_tras_s después."""
+    import stt
+    cfg = stt.leer_config_stt()
+    try:
+        limite = time.monotonic() + 120
+        while time.monotonic() < limite:
+            if _ptt_motivo_ocupada() is None and time.monotonic() - _ultimo_fin_habla >= cfg["reabrir_tras_s"]:
+                break
+            await asyncio.sleep(0.05)
+        else:
+            _conversacion(False, "Yoru no terminó de hablar")
+            return
+        await _ptt_iniciar(auto=True, espera_voz_s=cfg["cierre_inactividad_s"], origen="conversacion")
+    except asyncio.CancelledError:
+        pass
+
+
+async def _ptt_iniciar(auto: bool = False, espera_voz_s: float | None = None, origen: str = "tecla"):
+    global _ptt_estado, _ptt_grabador, _ptt_tope_handle, _ptt_stop_pedido, _ptt_auto
+    if time.monotonic() - _ptt_stop_huerfano_t < 0.3 and origen == "tecla":
         # El stop de un toque corto llegó ANTES que su start (son dos procesos
         # de rem_ptt.py): grabar ahora dejaría el micrófono abierto hasta el tope.
         print("  [PTT] ptt_start ignorado: su ptt_stop ya había llegado (toque corto)", flush=True)
@@ -674,13 +760,40 @@ async def _ptt_iniciar():
         print(f"  [PTT] ptt_start ignorado: {motivo}", flush=True)
         if _ptt_estado == "idle":  # un start repetido durante una grabación no debe pisar la UI
             _ptt_estado_ws("ignorado", motivo=motivo)
+        if origen == "conversacion":
+            _conversacion(False, motivo)
         return
+    if origen != "conversacion" and _conv_tarea is not None and not _conv_tarea.done():
+        _conv_tarea.cancel()   # se adelantó a mano: la reapertura pendiente sobra
 
     import stt
+    from stt import SAMPLE_RATE
+    from stt.analisis import ConfigVoz, FinDeFrase
     from stt.microfono import Grabador
     cfg = stt.leer_config_stt()
     _ptt_estado, _ptt_stop_pedido = "iniciando", False
-    grabador = Grabador(max_s=cfg["max_grabacion_s"], dispositivo=cfg["dispositivo_entrada"])
+    al_bloque = None
+    _ptt_auto = None
+    # Tope de seguridad (por si se pierde el stop): en automático, por detrás
+    # de lo que el detector puede tardar en cortar solo (esperar la voz + la
+    # frase más larga), para que gane siempre su motivo y no el tope.
+    tope_s = cfg["max_grabacion_s"]
+    if auto:
+        cfg_voz = ConfigVoz.desde_config()
+        tope_s = max(tope_s, (espera_voz_s or cfg_voz.muerto_temprano_s) + cfg_voz.max_voz_s + 2)
+        loop = asyncio.get_running_loop()
+        detector = FinDeFrase(SAMPLE_RATE, cfg_voz, espera_voz_s=espera_voz_s)
+        _ptt_auto = {"detector": detector, "origen": origen, "motivo": None}
+
+        def al_bloque(bloque, _det=detector, _estado=_ptt_auto):
+            if _estado["motivo"] is not None:
+                return
+            r = _det.alimentar(bloque)
+            if r:
+                _estado["motivo"] = r
+                _estado["t"] = time.perf_counter()
+                loop.call_soon_threadsafe(lambda: asyncio.create_task(_ptt_detener(motivo_auto=r)))
+    grabador = Grabador(max_s=tope_s, dispositivo=cfg["dispositivo_entrada"], al_bloque=al_bloque)
     try:
         await asyncio.to_thread(grabador.iniciar)
     except Exception as e:
@@ -688,18 +801,19 @@ async def _ptt_iniciar():
         logger.exception("[PTT] no se pudo abrir el micrófono")
         _broadcast_ws({"tipo": "error", "mensaje": f"No se pudo abrir el micrófono: {e}"})
         _ptt_estado_ws("idle")
+        _conversacion(False, "no se pudo abrir el micrófono")
         return
     _ptt_grabador, _ptt_estado = grabador, "grabando"
     _ptt_tope_handle = asyncio.get_running_loop().call_later(
-        cfg["max_grabacion_s"], lambda: asyncio.create_task(_ptt_detener(por_tope=True)))
-    print("  [PTT] grabando...", flush=True)
-    _ptt_estado_ws("escuchando")
+        tope_s, lambda: asyncio.create_task(_ptt_detener(por_tope=True)))
+    print(f"  [PTT] grabando ({'automático' if auto else 'mantenido'}, {origen})...", flush=True)
+    _ptt_estado_ws("escuchando", auto=auto, origen=origen)
     if _ptt_stop_pedido:  # el stop llegó mientras se abría el micrófono
         await _ptt_detener()
 
 
-async def _ptt_detener(por_tope: bool = False):
-    global _ptt_estado, _ptt_grabador, _ptt_tope_handle, _ptt_stop_pedido, _ptt_stop_huerfano_t, _ptt_medicion
+async def _ptt_detener(por_tope: bool = False, motivo_auto: str | None = None):
+    global _ptt_estado, _ptt_grabador, _ptt_tope_handle, _ptt_stop_pedido, _ptt_stop_huerfano_t, _ptt_medicion, _ptt_auto
     if _ptt_estado == "iniciando":
         _ptt_stop_pedido = True
         return
@@ -709,7 +823,14 @@ async def _ptt_detener(por_tope: bool = False):
         # estado actual, para no pisar una UI que está transcribiendo.
         _ptt_estado_ws(_ptt_estado, nota="no estaba grabando")
         return
-    t_suelta = time.perf_counter()
+    auto, _ptt_auto = _ptt_auto, None
+    # Fin de frase: el instante en que el detector lo decidió (en su hilo), o
+    # cuando llegó el stop. "Dejó de hablar" = eso menos el silencio de espera.
+    t_suelta = (auto or {}).get("t") or time.perf_counter()
+    t_fin_voz = t_suelta
+    if auto and auto["detector"].fin_voz_s is not None:
+        t_fin_voz = t_suelta - max(0.0, auto["detector"].t - auto["detector"].fin_voz_s)
+    origen = auto["origen"] if auto else "tecla"
     if _ptt_tope_handle is not None:
         _ptt_tope_handle.cancel()
         _ptt_tope_handle = None
@@ -718,14 +839,37 @@ async def _ptt_detener(por_tope: bool = False):
 
     import stt
     from stt import SAMPLE_RATE
+    from stt.analisis import ConfigVoz, es_inventada, veredicto
     cfg = stt.leer_config_stt()
+    cfg_voz = ConfigVoz.desde_config()
     dur = len(audio) / SAMPLE_RATE
     if por_tope:
         print(f"  [PTT] tope de {cfg['max_grabacion_s']:.0f}s alcanzado — se corta la grabación", flush=True)
-    if dur < cfg["min_grabacion_s"]:
-        print(f"  [PTT] grabación de {dur:.2f}s descartada (< {cfg['min_grabacion_s']}s)", flush=True)
+    if motivo_auto:
+        print(f"  [PTT] fin automático: {motivo_auto} ({dur:.2f}s grabados)", flush=True)
+
+    def _terminar(nota=""):
+        global _ptt_estado
         _ptt_estado = "idle"
-        _ptt_estado_ws("idle", nota="grabación muy corta")
+        _ptt_estado_ws("idle", nota=nota)
+
+    if motivo_auto == "espera" and origen == "conversacion":
+        # Modo conversación sin que nadie hablara: no hay nada que transcribir.
+        _emitir_veredicto("espera")
+        _terminar()
+        _conversacion(False, f"{cfg['cierre_inactividad_s']:.0f} s sin hablar")
+        return
+    if dur < cfg["min_grabacion_s"] and not auto:
+        print(f"  [PTT] grabación de {dur:.2f}s descartada (< {cfg['min_grabacion_s']}s)", flush=True)
+        _terminar("grabación muy corta")
+        return
+
+    v = await asyncio.to_thread(veredicto, audio, SAMPLE_RATE, cfg_voz)
+    print(f"  [Mic] veredicto {v.resumen()}", flush=True)
+    if v.tipo != "enviar":
+        _emitir_veredicto(v.tipo, v)
+        _terminar()
+        _conversacion(False, "sin voz")
         return
 
     _ptt_estado = "transcribiendo"
@@ -736,16 +880,24 @@ async def _ptt_detener(por_tope: bool = False):
         t_stt = time.perf_counter() - t0
     except Exception as e:
         logger.exception("[PTT] falló la transcripción")
-        _ptt_estado = "idle"
         _broadcast_ws({"tipo": "error", "mensaje": f"Falló la transcripción: {e}"})
-        _ptt_estado_ws("idle")
+        _terminar()
+        _conversacion(False, "falló la transcripción")
         return
-    print(f"  [PTT] STT: {dur:.2f}s de audio -> {t_stt:.2f}s ({t_stt / dur:.2f}x tiempo real) | {texto!r}", flush=True)
+    print(f"  [PTT] STT: {dur:.2f}s de audio -> {t_stt:.2f}s ({t_stt / max(dur, 1e-3):.2f}x tiempo real) | {texto!r}", flush=True)
 
     if not texto:
-        _ptt_estado = "idle"
-        _ptt_estado_ws("idle", nota="no se entendió nada")
+        _emitir_veredicto("sin_voz", v)
+        _terminar("no se entendió nada")
+        _conversacion(False, "no se entendió nada")
         return
+    if es_inventada(texto, v.voz_ms, cfg_voz):
+        print(f"  [Mic] descartada por inventada: {texto!r} con {v.voz_ms:.0f} ms de voz", flush=True)
+        _emitir_veredicto("inventada", v, texto=texto.strip())
+        _terminar()
+        _conversacion(False, "frase inventada")
+        return
+    _emitir_veredicto("enviar", v)
 
     # Se muestra lo entendido antes de que Rem responda (la UI lo pone en la
     # caja de texto). El estado sigue en "transcribiendo" durante esa pausa:
@@ -753,10 +905,33 @@ async def _ptt_detener(por_tope: bool = False):
     _broadcast_ws({"tipo": "ptt_transcripcion", "texto": texto,
                    "ms": int(cfg["mostrar_transcripcion_s"] * 1000)})
     await asyncio.sleep(cfg["mostrar_transcripcion_s"])
-    _ptt_estado = "idle"
-    _ptt_estado_ws("idle")
-    _ptt_medicion = {"t_suelta": t_suelta, "t_stt": t_stt, "dur": dur}
-    await _procesar_mensaje_chat(texto, t_ref=t_suelta)
+    _terminar()
+    _ptt_medicion = {"t_suelta": t_suelta, "t_fin_voz": t_fin_voz, "t_stt": t_stt, "dur": dur,
+                     "auto": bool(auto)}
+    respuesta = await _procesar_mensaje_chat(texto, t_ref=t_fin_voz, por_voz=True)
+
+    # Modo conversación: la respuesta pregunta algo -> se reabre el micrófono.
+    import preferencias
+    if respuesta is not None and preferencias.obtener("microfono")["conversacion"] \
+            and _respuesta_pregunta(respuesta):
+        global _conv_tarea
+        _conversacion(True, "la respuesta pregunta algo")
+        _conv_tarea = asyncio.create_task(_reabrir_conversacion())
+    elif _conv_activa:
+        _conversacion(False, "la respuesta no pregunta nada")
+
+
+async def _mic_toque():
+    """Un toque del botón 🎙 del chat: si no graba, abre en automático; si ya
+    graba en automático, corta ahora (lo dicho se procesa)."""
+    if _ptt_estado == "grabando":
+        if _ptt_auto is not None and _ptt_auto["motivo"] is None:
+            _ptt_auto["motivo"] = "manual"
+            _ptt_auto["t"] = time.perf_counter()
+        await _ptt_detener(motivo_auto="manual" if _ptt_auto else None)
+    elif _ptt_estado == "idle":
+        import stt
+        await _ptt_iniciar(auto=True, origen="boton", espera_voz_s=stt.leer_config_stt()["espera_voz_toque_s"])
 
 
 # ── Preferencias del panel de control (preferencias.py) ───────────────
@@ -857,6 +1032,9 @@ async def _ws_handler(websocket):
 
             elif tipo == "ptt_start":
                 asyncio.create_task(_ptt_iniciar())
+
+            elif tipo == "mic_toque":
+                asyncio.create_task(_mic_toque())
 
             elif tipo == "ptt_stop":
                 asyncio.create_task(_ptt_detener())

@@ -119,6 +119,8 @@ function crearOverlayUI() {
       else if (est === 'idle' && detalle) avisar(`🎙 ${detalle}`);
       refrescarEstado();
     },
+    onMicVeredicto(veredicto, mensaje) { if (veredicto !== 'enviar') avisar(mensaje, 4500); },
+    onConversacion(activa) { if (activa) avisar('🎙 Te vuelvo a escuchar al terminar', 3000); },
     // Lo entendido se enseña en la caja (`ms` = cuánto tarda el servidor en
     // mandárselo al LLM); mientras, la caja no acepta Enter (duplicaría el envío).
     onTranscripcion(texto, ms) {

@@ -22,6 +22,10 @@ def leer_config_stt() -> dict:
         "mostrar_transcripcion_s": float(cfg.get("mostrar_transcripcion_s", 1.0)),
         "espera_tras_habla_s": float(cfg.get("espera_tras_habla_s", 0.5)),
         "dispositivo_entrada": _dispositivo_entrada(cfg),
+        # Modo conversación (ver [stt.voz] y rem_avatar_server._reabrir_conversacion).
+        "reabrir_tras_s": float(cfg.get("voz", {}).get("reabrir_tras_s", 0.55)),
+        "cierre_inactividad_s": float(cfg.get("voz", {}).get("cierre_inactividad_s", 30)),
+        "espera_voz_toque_s": float(cfg.get("voz", {}).get("espera_voz_toque_s", 8)),
     }
 
 

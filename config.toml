@@ -156,6 +156,37 @@ espera_tras_habla_s = 0.5
 dispositivo_entrada = ""
 
 
+[stt.voz]
+# Cuándo hay voz (stt/analisis.py). El umbral NO es fijo: es el piso de ruido de
+# la propia grabación (la mínima mediana de ventanas de 0,4 s) + voz_sobre_ruido_db,
+# y nunca por debajo de voz_min_dbfs. Los tiempos sí son fijos:
+gracia_s           = 0.65   # al empezar a hablar, el silencio aún no cuenta
+silencio_s         = 1.0    # silencio seguido tras la voz que cierra la frase (micrófono en automático)
+max_voz_s          = 15     # tope de una frase en automático, desde que empieza la voz
+voz_sobre_ruido_db = 12
+voz_min_dbfs       = -45
+voz_inicio_tramas  = 3      # tramas de 20 ms seguidas sobre el umbral para dar la voz por empezada
+muerto_dbfs        = -80    # pico por debajo de esto = no llega audio del micrófono
+muerto_temprano_s  = 4      # en automático: cortar si en este tiempo no llegó nada
+muerto_min_s       = 1.5    # veredicto: "micrófono muerto" (≥) o "no llegó audio" (<)
+espera_voz_toque_s = 8      # toque del botón 🎙 sin que nadie hable: se corta a los N s
+# Frases que Whisper se inventa sobre el silencio: se descartan si la grabación
+# tuvo menos de alucinacion_max_voz_ms de voz (con voz de verdad se respetan).
+alucinacion_max_voz_ms = 120
+frases_inventadas = [
+    "Gracias.", "Muchas gracias.", "Gracias por ver.", "Gracias por ver el video.",
+    "Subtítulos realizados por la comunidad de Amara.org", "Subtítulos por la comunidad de Amara.org",
+    "Suscríbete.", "Suscríbete al canal.", "Música.", "[Música]", "Thank you.", "Thanks for watching.",
+    "Hasta la próxima.", "Chao.", "...",
+]
+# Modo conversación (si está activo en el panel, pestaña Micrófono): si la
+# respuesta termina en "?", el micrófono se reabre en automático
+# reabrir_tras_s después de que termine de hablar, y la conversación se cierra
+# si en cierre_inactividad_s nadie habla.
+reabrir_tras_s      = 0.55
+cierre_inactividad_s = 30
+
+
 [stt.local]
 # faster-whisper. EN CPU a propósito: la VRAM (4 GB) es para Ollama (ver
 # [llm.ollama].num_gpu), no se toca la GPU.
@@ -169,7 +200,7 @@ beam_size    = 1
 # 0 = que decida ctranslate2.
 cpu_threads  = 0
 # Sesga el vocabulario hacia los nombres propios/técnicos que Rem oye seguido.
-initial_prompt = "Conversación con Rem, una asistente virtual. Vocabulario: Rem, Esteban, Ollama, Claude, Anthropic, Hyprland, Arch Linux, Python, PipeWire, GTK, WebKit, Whisper, Piper, VRM."
+initial_prompt = "Conversación con Yoru, una asistente virtual. Vocabulario: Yoru, Rem, Esteban, Ollama, Claude, Anthropic, Hyprland, Arch Linux, Python, PipeWire, GTK, WebKit, Whisper, Piper, VRM."
 
 
 [herramientas]

@@ -54,6 +54,9 @@ function crearPanelChat(anf = anfitrionChat()) {
     <div id="chat-inputbar">
       <div id="chat-paleta"></div>
       <input id="chat-input" type="text" placeholder="Escríbele algo a ${NOMBRE_PERSONAJE}... (/ para comandos)" autocomplete="off">
+      <button id="chat-mic" type="button" title="Toca para hablar (corta solo al callarte) · mantén pulsado para hablar mientras lo sujetas" aria-label="Micrófono">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>
+      </button>
       <button id="chat-send" type="button" title="Enviar">➤</button>
     </div>
   `;
@@ -70,6 +73,35 @@ function crearPanelChat(anf = anfitrionChat()) {
   const $btnModelo = panel.querySelector('#chat-modelo');
   const $btnBaile  = panel.querySelector('#chat-baile');
   const $modelos   = panel.querySelector('#chat-modelos');
+  const $mic       = panel.querySelector('#chat-mic');
+
+  // ── Botón de micrófono ──
+  // Toque (< MANTENER_MS): grabación en automático, corta sola al callarse
+  // (fin de frase en Python, stt/analisis.py); otro toque mientras graba la
+  // corta ya. Mantener: push-to-talk, igual que SUPER+H (ptt_start/ptt_stop).
+  const MANTENER_MS = 260;
+  let micTimer = null, micMantenido = false;
+  $mic.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    $mic.setPointerCapture(e.pointerId);
+    micMantenido = false;
+    micTimer = setTimeout(() => {
+      micTimer = null;
+      micMantenido = true;
+      anf.enviar({ tipo: 'ptt_start' });
+    }, MANTENER_MS);
+  });
+  const soltarMic = cancelado => {
+    if (micTimer) { clearTimeout(micTimer); micTimer = null; if (!cancelado) anf.enviar({ tipo: 'mic_toque' }); }
+    else if (micMantenido) { micMantenido = false; anf.enviar({ tipo: 'ptt_stop' }); }
+  };
+  $mic.addEventListener('pointerup', () => soltarMic(false));
+  $mic.addEventListener('pointercancel', () => soltarMic(true));
+  function pintarMic(est) {
+    $mic.classList.toggle('grabando', est === 'escuchando');
+    $mic.classList.toggle('transcribiendo', est === 'transcribiendo');
+  }
 
   // ── Selector de modelo y modo baile ──
   function pedirModelo(ruta) {
@@ -471,6 +503,7 @@ function crearPanelChat(anf = anfitrionChat()) {
     // Push-to-talk (ver rem_avatar_server, "Push-to-talk"). La transcripción
     // entra como un mensaje del usuario y el turno arranca solo ~1s después.
     onPttEstado(est, detalle) {
+      pintarMic(est);
       if (est === 'escuchando')          setEstadoUI('🎙 Escuchando…', 'pensando');
       else if (est === 'transcribiendo') setEstadoUI('Transcribiendo…', 'pensando');
       else if (est === 'ignorado')       { setEstadoUI('', ''); agregarSistema(`🎙 Ignorado: ${detalle}`); }
@@ -479,6 +512,16 @@ function crearPanelChat(anf = anfitrionChat()) {
         // Un "stop" sin grabación (p. ej. el bindrt de soltar Super) no es noticia.
         if (detalle && detalle !== 'no estaba grabando') agregarSistema(`🎙 ${detalle}`);
       }
+    },
+    // Veredicto de la grabación (stt/analisis.py): siempre se ve, también el
+    // "voz detectada", para saber qué pasó con lo que se dijo.
+    onMicVeredicto(veredicto, mensaje) {
+      if (veredicto !== 'enviar' && !esperandoRespuesta) setEstadoUI('', '');
+      agregarSistema(mensaje);
+    },
+    onConversacion(activa, motivo) {
+      agregarSistema(activa ? '🎙 Modo conversación: cuando termine de hablar te vuelvo a escuchar.'
+                            : `🎙 Fin del modo conversación${motivo ? ` (${motivo})` : ''}.`);
     },
     onTranscripcion(texto) {
       agregarBurbuja(texto, 'user');

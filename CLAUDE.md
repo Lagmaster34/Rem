@@ -3,7 +3,9 @@
 ## ⚠ Fase 2 en curso (2026-11-05): ver "Nota de traspaso — fase 2" al final y `notas_fase2/README.md`
 Etapa 2 hecha y cerrada (2026-11-06): `--modo escritorio`, ver "Modo escritorio" al final.
 Etapa 4 hecha (2026-11-06): pestañas nuevas del panel, menú completo y temas, ver "Panel de control:
-pestañas nuevas y temas" al final. Siguiente: etapa 5 (micrófono).
+pestañas nuevas y temas" al final.
+Etapa 5 hecha (2026-11-06): micrófono con fin de frase automático, veredictos y modo conversación, ver
+"Voz de entrada: fin de frase, veredictos y modo conversación" al final.
 
 ## ⚠ Cambio 2026-11-04: avatar multimodelo y director de animación (leer antes que lo de abajo)
 - **Rem (rem.vrm, rem_naenae.vrm) y los 17 clips de `VRMA_MotionPack/` ("Rem anterior") salieron del
@@ -2623,9 +2625,10 @@ herramientas de prueba.
   inclinación y pose de «colgada», región de clic que sigue al cuerpo, reacciones con voz, mirada al
   cursor, botones, menú propio del clic derecho y chat en ventana aparte. Ver "Modo escritorio".
 - **Etapa 4 — hecha** (2026-11-06): ver "Panel de control: pestañas nuevas y temas".
-- **Siguiente, en orden**: 5) voz de entrada (fin de frase automático y
-  filtro de alucinaciones en Python, modo conversación, palabra de activación opcional); 6) quitar el
-  modo ventana; 7) animaciones en el overlay. **Medir VRAM con `nvidia-smi` en cada etapa** (con
+- **Etapa 5 — hecha** (2026-11-06): ver "Voz de entrada: fin de frase, veredictos y modo
+  conversación". La palabra de activación queda para después.
+- **Siguiente, en orden**: 6) quitar el modo ventana (cuando `notas_fase2/tabla_equivalencias.md`
+  esté completa); 7) animaciones en el overlay. **Medir VRAM con `nvidia-smi` en cada etapa** (con
   Ollama cargado; `num_gpu = 99`, ~520 MiB libres).
 - **Nombre del personaje en la interfaz**: `personalidad.NOMBRE_PERSONAJE` llega a la página por la URL
   (`url_avatar()` → `?personaje=`, `NOMBRE_PERSONAJE` en `avatar/config.js`) y lo usan la caja de texto
@@ -2824,3 +2827,56 @@ en esa pestaña; tema Yoru aplicado a la vez en panel, chat y menú; las 7 pesta
 desde el interruptor del panel (guardada, sin síntesis, persiste al reiniciar); capa y tamaño en vivo;
 reacciones apagadas; baile desde el panel; ventana y overlay sin errores. VRAM con Ollama cargado:
 3572 MiB de 4096 (igual que en la etapa 2).
+
+
+## Voz de entrada: fin de frase, veredictos y modo conversación (etapa 5 de la fase 2)
+
+Código propio en `stt/analisis.py` (los valores de referencia salen de la guía de Nerumi; el código
+no). Umbrales y tiempos en `config.toml [stt.voz]`; el modo conversación se enciende/apaga en el
+panel (pestaña **Micrófono**, preferencia `microfono.conversacion`, activo por defecto).
+
+**Cuándo hay voz** (tramas de 20 ms, dBFS): umbral = piso de ruido + 12 dB, nunca por debajo de
+−45 dBFS. El piso es la **mínima mediana de ventanas de 0,4 s**. Se probó antes la mediana del 30 %
+de tramas más bajas y fallaba en dos casos que cubre `tests/test_stt_analisis.py`: voz continua
+(15 s de voz: el umbral subía por encima de la voz y cortaba a los 4 s) y hablar desde el primer
+instante (el piso empezaba a nivel de voz). El detector en vivo (`FinDeFrase`) además busca el inicio
+de la voz hacia atrás cuando el piso baja. Coste: ~0,2 ms por bloque de 50 ms (en el hilo de
+PortAudio, gancho `Grabador(al_bloque=)`). En un cuarto con ruido a −28 dBFS el viejo umbral fijo
+de 0,028 RMS (−31 dBFS) nunca daría la frase por terminada; el adaptativo sí (test).
+
+**Dos formas de grabar** (`rem_avatar_server`):
+- *Mantenida*: SUPER+H (`rem_ptt.py`) o mantener el botón 🎙 del chat más de 260 ms
+  (`ptt_start`/`ptt_stop`), igual que antes.
+- *Automática*: un toque del botón 🎙 (`mic_toque`) o el modo conversación. Corta sola tras
+  `silencio_s` (1 s) de silencio después de la voz (sin contar los primeros `gracia_s`, 0,65 s), a
+  los `max_voz_s` (15 s) de voz, si en `muerto_temprano_s` (4 s) no llega audio, o si nadie habla en
+  `espera_voz_toque_s` (8 s; en conversación, `cierre_inactividad_s`, 30 s). Otro toque mientras
+  graba la corta ya. El tope de seguridad de una grabación automática va por detrás de esos tiempos
+  (si coincidía con los 30 s de conversación ganaba él y el motivo salía mal).
+
+**Veredicto antes de transcribir** (`veredicto()`): `muerto` (pico < −80 dBFS y ≥ 1,5 s), `silencio`
+(lo mismo, más corto), `sin_voz` (ninguna trama sobre el umbral) o `enviar`. Después de Whisper,
+`inventada` si el texto es una de `frases_inventadas` («Gracias.», «Subtítulos… Amara.org»…, sin
+tildes ni signos) **y** hubo menos de 120 ms de voz. Cada uno sale como `mic_veredicto` y se ve en el
+chat (también «🎙 Voz detectada (1,3 s de voz)»), en la caja del overlay y en la burbuja del
+escritorio (solo texto). Whisper con `vad_filter` no se inventó nada en la prueba (un chasquido de
+80 ms dio texto vacío): `inventada` solo está probado con el test.
+
+**Modo conversación** (sin etiqueta del modelo): tras un turno **por voz**, si la respuesta termina en
+«?» (admite comillas o «…» detrás), `_reabrir_conversacion()` espera a que no haya turno, ni voz en
+cola, ni audio sonando, y `reabrir_tras_s` (0,55 s) desde el último fin de voz, y reabre en
+automático. Se cierra si la respuesta no pregunta, si nadie habla en 30 s, si hay un veredicto sin
+voz, o al escribir un mensaje. Mensaje WS `conversacion {activa, motivo}`.
+
+**Verificado** (2026-11-06, Hyprland anidado; micrófono simulado con un sumidero nulo y su monitor,
+`REM_MIC_DEVICE=pulse PULSE_SOURCE=…monitor`, frases dichas con Piper): toque → fin de frase →
+«voz detectada» → turno; en Eco «¿Me escuchas bien?» reabre el micrófono solo y la segunda frase lo
+cierra; solo ruido → `sin_voz` a los 8 s; fuente silenciada → `muerto` a los 4 s; SUPER+H/mantener
+igual que antes; botón real (toque y mantener, rojo mientras graba); conversación cerrada a los 30 s
+con ruido de fondo. Ventana y overlay sin errores. **VRAM con Ollama cargado: 3572 MiB** (igual).
+
+**Latencia, de que dejas de hablar al primer audio de la respuesta** (modo IA, Ollama caliente, frase
+de 3,4 s, 3 medidas): **4,9–5,2 s** = 1,0 s de silencio de espera + ~1,65 s de Whisper + 1,0 s de
+`mostrar_transcripcion_s` (pausa para ver lo entendido) + ~1,3 s de LLM hasta la primera oración y
+voz. En Eco, 3,7 s. Los dos tramos fijos (silencio 1 s y la pausa de 1 s) son los fáciles de bajar.
+Whisper oía «Lloro» por «Yoru»: se añadió «Yoru» a `initial_prompt`.

@@ -64,6 +64,8 @@ function _conectarChat() {
       case 'voz_actual': chat.onVozActual?.(d.activa); break;
       case 'error': chat.onError(d.mensaje ?? 'error desconocido'); break;
       case 'ptt_estado': chat.onPttEstado?.(d.estado, d.motivo || d.nota || ''); break;
+      case 'mic_veredicto': chat.onMicVeredicto?.(String(d.veredicto ?? ''), String(d.mensaje ?? '')); break;
+      case 'conversacion': chat.onConversacion?.(!!d.activa, String(d.motivo ?? '')); break;
       case 'ptt_transcripcion': chat.onTranscripcion?.(String(d.texto ?? ''), d.ms ?? 1000); break;
       case 'accion_confirmar': chat.onAccionConfirmar?.(String(d.nombre ?? ''), String(d.descripcion ?? '')); break;
       case 'modelos_lista':

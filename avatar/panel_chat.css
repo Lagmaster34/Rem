@@ -231,6 +231,28 @@
 #chat-input::placeholder { color: var(--t-tenue-2); }
 #chat-input:disabled { opacity: 0.5; }
 
+#chat-mic {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 40px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--t-acento) 22%, transparent);
+  background: transparent;
+  color: var(--t-tenue);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: none;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+#chat-mic:hover { color: var(--t-acento); border-color: var(--t-acento); }
+#chat-mic.grabando {
+  color: var(--t-peligro); border-color: var(--t-peligro);
+  background: color-mix(in srgb, var(--t-peligro) 14%, transparent);
+  animation: chat-pulse 1s ease-in-out infinite;
+}
+#chat-mic.transcribiendo { color: var(--t-acento); border-color: var(--t-acento); }
+@media (prefers-reduced-motion: reduce) { #chat-mic.grabando { animation: none; } }
+
 #chat-send {
   appearance: none;
   border: none;

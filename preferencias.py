@@ -231,6 +231,11 @@ ESQUEMA: dict[str, dict[str, Campo]] = {
         "activa": Campo(_bool_campo("Voz activa"), lambda: True),
         "volumen": Campo(_rango("Volumen", 0, 1), lambda: 1.0),
     },
+    # Pestaña Micrófono (etapa 5): el resto de la voz de entrada (umbrales,
+    # tiempos, frases inventadas) está en config.toml [stt.voz].
+    "microfono": {
+        "conversacion": Campo(_bool_campo("Modo conversación"), lambda: True),
+    },
 }
 
 
