@@ -2880,3 +2880,53 @@ de 3,4 s, 3 medidas): **4,9–5,2 s** = 1,0 s de silencio de espera + ~1,65 s de
 `mostrar_transcripcion_s` (pausa para ver lo entendido) + ~1,3 s de LLM hasta la primera oración y
 voz. En Eco, 3,7 s. Los dos tramos fijos (silencio 1 s y la pausa de 1 s) son los fáciles de bajar.
 Whisper oía «Lloro» por «Yoru»: se añadió «Yoru» a `initial_prompt`.
+
+
+## Congelamientos del avatar: diagnóstico y red de seguridad de los clips (2026-11-06)
+
+**El caso**: en la sesión real de Esteban, Gesto ▸ Saludar eligió `@KA_Idle52_Curtsy` y el avatar se
+quedó congelado del todo (sin parpadeo, mirada, clics, arrastre ni chat); el log terminaba en
+`reproduciendo … (unaVez, gesto)` y los dos `WebKitWebProcess` dormidos al 0 % de CPU. **No se
+reprodujo**: en el anidado, Curtsy por `debug_clip` ×3 y por el menú real (salió 2 veces en 5) a 60 fps.
+El `.vrma` está sano (53 canales, 6,63 s, lineal, tiempos crecientes, cuaterniones unitarios, nada
+no finito; igual que los otros saludos del pack, a todos les falta `specVersion` y los parchea
+`normalizarVrma()`). Los «6,63 s» del log eran su duración (`cargado — Ns` imprime `durS`), no lo
+que tardó en cargar. Con el código de entonces todo lo periódico del log salía desde los frames, así
+que "ninguna línea más" = la página dejó de recibir frames; y como tampoco respondía el arrastre (que
+mueve Python), lo más probable es que se colgara el proceso de la interfaz (como el cuelgue de
+JavaScriptCore de la etapa 2) o que el compositor dejara de mandar frame callbacks. La hipótesis (a),
+una excepción que corta `requestAnimationFrame`, no encaja: es la primera línea de `animate()`.
+
+**Diagnóstico para la próxima vez**:
+- `avatar/bucle.js`: el frame va en try/catch (error con su pila, como mucho uno por segundo);
+  latido `[Bucle] vivo: N fps, E errores, clip …` cada 10 s; `webglcontextlost`/`restored` y
+  `visibilitychange` al log; un temporizador (no depende de los frames) avisa `[Bucle] sin frames
+  desde hace N s` y `vuelven a llegar frames`; `error`/`unhandledrejection` de la página al log con
+  pila (`[Página] …`).
+- `rem_chat.py` (`_iniciar_vigilante`): `[GTK] vivo (página: último latido hace N s)` cada 10 s; un
+  hilo aparte avisa `[Vigilante] el bucle de GTK no late…` (y vuelca las pilas de Python) o `la
+  página del avatar no manda latido…`. La página manda `latido_pagina` por el WS con el suyo.
+- **Cómo leerlo**: no sale `[GTK] vivo` → proceso de la interfaz colgado (pilas en el log; `gdb`
+  solo funciona lanzando la app como hijo). Sale `[GTK] vivo` pero `[Bucle] sin frames` → la superficie
+  no recibe frames: en escritorio la página se lo dice a Python (`sin_frames`) y `escritorio.py`
+  fuerza un redibujado y un commit de márgenes. Probado pausando el Hyprland anidado 9 s con SIGSTOP:
+  `sin frames` a los 3 s, GTK vivo, redibujado forzado, y `vuelven a llegar frames` al reanudarlo.
+  Excepciones en el frame → `[Bucle] error en el frame` con pila.
+
+**Red de seguridad de los clips** (`avatar/clips.js`, `director.js`): una carga que no termina en
+`CARGA_MAX_S` (15 s) se da por fallida esa vez (no queda en caché: el siguiente pedido reintenta);
+`reproducirSeguro()` y `.catch(errorDeCarga())` en saludo, gesto, clip manual, emoción y baile:
+cualquier error descarta el clip (`abortarGesto`) y vuelve al reposo con aviso; `_vigilarGesto()`
+libera el control si un gesto sigue activo pasada su duración + 8 s (30 s si no se sabe); 30 frames
+seguidos con error paran el mixer y vuelven a lo procedural (`_descartarAnimacion`). El saludo
+cancelado ahora dice por qué (p. ej. `estado talking` si el arrastre soltó una frase con voz).
+
+**Saludos**: fuera `@KA_Idle52_Curtsy` («Reverencia») y `@KA_Idle44_GreetingBow` («Saludo con
+reverencia») (`saludo: false` en `catalogo.json`; `catalogo_animaciones.py` conserva el campo).
+Quedan `nerumi/greet.vrma` (Saludo inicial, 11,7 s), `@KA_Idle16_WaveHands` (Saludar con las dos
+manos, 8,0 s) y `@KA_Idle45_WaveHandSlightly` (Saludar con la mano, 7,0 s), **precargados** con los
+fijos (`_clipsFijos`: precarga 9 → 12). `al_avatar` acepta además `saludar`/`gesto` (lo mismo que
+Gesto ▸ del menú). Probado: 5 Saludar seguidos cada 0,5 s, uno a mitad de un arrastre con el botón
+pulsado y otro justo al soltar, sin errores y con los gestos de reposo volviendo después.
+Aparte: al abrir el menú con el clic derecho el puntero cuenta como dentro (con el ratón quieto, un
+"salir" de GTK al cambiar la región lo cerraba a los 1,2 s).

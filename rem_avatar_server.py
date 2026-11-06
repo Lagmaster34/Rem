@@ -64,7 +64,7 @@ DESTINO_CHAT   = ("avatar", "debug", "chat")  # chat_delta/chat_done/modo_actual
 # Tipos de mensaje que la ventana de chat le reenvía al avatar (al_avatar) y
 # que el avatar le devuelve (del_avatar). El estado de los clips, el baile y el
 # modelo cargado vive en la página del avatar; la de chat solo lo pide/muestra.
-CMDS_AL_AVATAR = {"estado_get", "baile", "clip"}
+CMDS_AL_AVATAR = {"estado_get", "baile", "clip", "saludar", "gesto"}
 INFOS_DEL_AVATAR = {"estado", "sistema", "modelo_cargado", "baile", "clip_lanzado"}
 _ws_lock    = threading.Lock()
 _ws_loop    = None
@@ -96,6 +96,10 @@ def establecer_modo(modo: str) -> None:
 # El oyente se llama en el hilo del WS: tiene que pasarle el trabajo a GTK él
 # mismo (GLib.idle_add).
 _oyente_escritorio = None
+
+# Último latido de la página del avatar (latido_pagina, cada 10 s desde el
+# bucle de render: avatar/bucle.js). Lo mira el vigilante de rem_chat.py.
+ultimo_latido_pagina = None
 
 
 def establecer_oyente_escritorio(fn) -> None:
@@ -1087,6 +1091,10 @@ async def _ws_handler(websocket):
                 texto = str(data.get("texto") or "")
                 if texto:
                     asyncio.create_task(_decir_frase(texto))
+
+            elif tipo == "latido_pagina":
+                global ultimo_latido_pagina
+                ultimo_latido_pagina = time.monotonic()
 
             elif tipo == "escritorio":
                 datos = data.get("datos")

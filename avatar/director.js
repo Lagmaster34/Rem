@@ -101,7 +101,12 @@ function _arrancarBaile() {
     if (entry.error || !entry.clip) { _siguienteBaile = true; return; }   // probar con otro
     _ultimoBaile = id;
     _bailando = true;
-    reproducirClip(entry, _opcionesGesto(id, entry, { esBaile: true }));
+    // Si el baile no arranca, se prueba otro (sin quedar "bailando" sin clip).
+    if (!reproducirSeguro(entry, _opcionesGesto(id, entry, { esBaile: true }), 'baile')) _siguienteBaile = true;
+  }).catch(e => {
+    _cargandoBaile = false;
+    console.error(`[Anim] baile: error en la carga de "${id}": ${e?.message ?? e}`);
+    if (tok === _tokenClip) _siguienteBaile = true;
   });
 }
 
@@ -140,8 +145,8 @@ function _dispararIdleVrma() {
     const expr = infoClip(g)?.expresion;
     _caraGesto = expr ? { [expr]: CONFIG.expresiones.gestoPeso } : null;
     _logGesto(`idle VRMA "${g}"${infoClip(g)?.raro ? ' (raro)' : ''}`);
-    reproducirClip(entry, _opcionesGesto(g, entry, { esGesto: true }));
-  });
+    reproducirSeguro(entry, _opcionesGesto(g, entry, { esGesto: true }), 'gesto');
+  }).catch(errorDeCarga(tok, 'gesto'));
   return true;
 }
 
@@ -163,13 +168,16 @@ function _dispararSaludo() {
   const tok = ++_tokenClip;
   obtenerClip(id).then(entry => {
     if (tok !== _tokenClip || estado !== 'idle' || _audioActivo || entry.error || !entry.clip) {
+      _logGesto(`saludo "${id}" cancelado (${tok !== _tokenClip ? 'otro clip ganó mientras cargaba'
+                : estado !== 'idle' ? `estado ${estado}` : _audioActivo ? 'está hablando'
+                : `no carga: ${entry.error?.message ?? 'sin clip'}`})`);
       if (tok === _tokenClip) _gestoActivo = false;
       return;
     }
     _caraGesto = { happy: CONFIG.expresiones.gestoPeso };
     _logGesto(`saludo "${id}"`);
-    reproducirClip(entry, { modo: 'unaVez', esGesto: true });
-  });
+    reproducirSeguro(entry, { modo: 'unaVez', esGesto: true }, 'saludo');
+  }).catch(errorDeCarga(tok, 'saludo'));
 }
 
 // ── Emoción del chat ──────────────────────────────────────────────────────
@@ -193,8 +201,8 @@ function recibirEmocion(nombre) {
     if (tok !== _tokenClip || _bailando || entry.error || !entry.clip) return;
     _ultimoClipEstado.set(nombre, id);
     if (m.enfriamiento) _ultimoUsoClipEstado.set(id, performance.now());
-    reproducirClip(entry, { modo: 'unaVez', esEmocion: true });
-  });
+    reproducirSeguro(entry, { modo: 'unaVez', esEmocion: true }, `emoción ${nombre}`);
+  }).catch(errorDeCarga(tok, `emoción ${nombre}`));
 }
 window.recibirEmocion = recibirEmocion;
 
@@ -209,7 +217,27 @@ function _actualizarEmocion() {
   }
 }
 
+// Tiempo máximo de seguridad de un gesto: lo que dura su clip + este margen
+// (o GESTO_MAX_S si no se sabe). Pasado eso, aunque algo lo pisara o se
+// perdiera el evento de fin, se libera el control y se vuelve al reposo.
+const GESTO_MARGEN_S = 8, GESTO_MAX_S = 30;
+let _gestoDesde = 0;
+
+function _vigilarGesto() {
+  if (!_gestoActivo) { _gestoDesde = 0; return; }
+  const ahora = performance.now();
+  if (!_gestoDesde) { _gestoDesde = ahora; return; }
+  const dur = _accionActual?.getClip?.()?.duration;
+  const tope = Number.isFinite(dur) && _accionActual?._esGesto ? dur + GESTO_MARGEN_S : GESTO_MAX_S;
+  if ((ahora - _gestoDesde) / 1000 > tope) {
+    _gestoDesde = 0;
+    ++_tokenClip;   // cualquier carga pendiente de ese gesto queda obsoleta
+    abortarGesto(`seguía activo a los ${tope.toFixed(0)} s (tiempo máximo de seguridad)`);
+  }
+}
+
 function updateDirector(dt) {
+  _vigilarGesto();
   _actualizarEmocion();
   _gestoTimer -= dt;   // la ruleta corre siempre; ver paso 5
 
@@ -287,8 +315,8 @@ window.dispararClipDebug = function (nombre) {
     }
     _gestoTimer = _sortearIntervaloGesto();
     console.log(`[Anim] debug_clip -> "${archivo}"`);
-    reproducirClip(entry, _opcionesGesto(archivo, entry, { esManual: true }));
-  });
+    reproducirSeguro(entry, _opcionesGesto(archivo, entry, { esManual: true }), 'clip manual');
+  }).catch(errorDeCarga(tok, 'clip manual'));
 };
 
 // ── CLIP EN ESPERA (solo los de giraCuerpo) ──────────────────────────────

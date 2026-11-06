@@ -386,6 +386,15 @@ class AvatarEscritorio:
                     self._js(f"clic({p['x']:.0f},{p['y']:.0f})")
         elif tipo == "accion":
             self._accion(str(d.get("accion")), d)
+        elif tipo == "sin_frames":
+            # La página está viva pero no le llegan frames (avatar/bucle.js).
+            # Puede ser que la superficie dejara de recibir frame callbacks del
+            # compositor: se fuerza un commit (redibujado + márgenes otra vez).
+            _log(f"la página lleva {d.get('s')} s sin frames: se fuerza un redibujado de la superficie")
+            self.webview.queue_draw()
+            self.win.queue_draw()
+            self._fijar_margenes()
+            self.aplicar_region()
 
     def _accion(self, accion, d=None):
         d = d or {}

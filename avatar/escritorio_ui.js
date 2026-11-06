@@ -592,6 +592,10 @@ function _colocarMenu() {
 
 function _abrirMenu(x, y) {
   _menuEn = { x, y };
+  // Se abrió con el puntero encima: cuenta como dentro aunque GTK mande un
+  // "salir" al cambiar la región de clic (si no, con el ratón quieto el menú
+  // se cerraba solo a los 1,2 s).
+  _esc.punteroDentro = true;
   _pintarMenu(null);
   _ui.menu.hidden = false;
   _esc.menuAbierto = true;
@@ -739,6 +743,8 @@ function crearEscritorioUI() {
       _catalogoListo.then(() => enviarAlChat({ que: 'estado', baile: _modoBaile, clips: clipsDisponibles(), modelo: MODELO_ACTIVO }));
     } else if (d.que === 'baile') {
       setModoBaile(!!d.activo);
+    } else if (d.que === 'saludar' || d.que === 'gesto') {
+      _accionEscritorio(d.que);   // lo mismo que Gesto ▸ del menú
     } else if (d.que === 'clip') {
       const id = resolverClip(String(d.nombre ?? ''));
       if (!id) { enviarAlChat({ que: 'sistema', texto: `No hay ninguna animación "${d.nombre}".` }); return; }

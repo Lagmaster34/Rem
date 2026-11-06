@@ -298,12 +298,30 @@ function _clipsFijos() {
   const s = new Set();
   for (const est of Object.keys(_catalogo?.porEstado ?? {})) for (const id of porEstadoEfectivo(est).clips ?? []) s.add(id);
   if (poseBaseArchivo()) s.add(poseBaseArchivo());
+  // Los saludos (al abrir, al cambiar de modelo y Gesto ▸ Saludar): precargados
+  // para que salgan sin esperar la carga la primera vez.
+  for (const [id, c] of Object.entries(_catalogo?.clips ?? {})) if (c.saludo) s.add(id);
   return s;
 }
 
 // Carga perezosa + caché LRU. Cachea también el fallo, para no reintentar en
 // cada disparo. Nunca lanza: en error devuelve {archivo, error} y el llamador
 // cae a lo procedural.
+// Una carga que no termina (red de WebKit caída a mitad, un parseo colgado) no
+// puede dejar esperando al gesto que la pidió: a los CARGA_MAX_S se da por
+// fallida esta vez (no se marca el clip como roto; el siguiente pedido reintenta).
+const CARGA_MAX_S = 15;
+function _conTiempoMaximo(promesa, id) {
+  let timer;
+  const limite = new Promise(res => {
+    timer = setTimeout(() => {
+      console.warn(`[Anim] "${id}" no terminó de cargar en ${CARGA_MAX_S} s — se descarta esta vez`);
+      res({ archivo: id, error: new Error(`no cargó en ${CARGA_MAX_S} s`), _temporal: true });
+    }, CARGA_MAX_S * 1000);
+  });
+  return Promise.race([promesa, limite]).finally(() => clearTimeout(timer));
+}
+
 function obtenerClip(id) {
   if (_clipCache.has(id)) {
     const e = _clipCache.get(id);
@@ -311,9 +329,9 @@ function obtenerClip(id) {
     return Promise.resolve(_clipParaModelo(e));
   }
   if (_clipCargando.has(id)) return _clipCargando.get(id).then(_clipParaModelo);
-  const p = _cargarClip(id).then(entry => {
+  const p = _conTiempoMaximo(_cargarClip(id), id).then(entry => {
     _clipCargando.delete(id);
-    _clipCache.set(id, entry);
+    if (!entry._temporal) _clipCache.set(id, entry);   // un tiempo agotado se reintenta
     return entry;
   });
   _clipCargando.set(id, p);
@@ -466,6 +484,37 @@ function reproducirClip(entry, { modo, duracionS, esGesto, esManual, esEmocion, 
   const tipo = esBaile ? ', baile' : esEmocion ? ', emoción' : esManual ? ', manual' : esGesto ? ', gesto' : '';
   console.log(`[Anim] reproduciendo "${entry.archivo}" (${modo}${duracionS != null ? `, tope ${duracionS.toFixed(2)}s` : ''}${tipo})`);
   return true;
+}
+
+// ── Red de seguridad de los gestos ────────────────────────────────────────
+// Un clip que falla al cargar, al reproducirse o que se queda colgado nunca
+// puede dejar el cuerpo congelado ni _gestoActivo en true sin dueño: se
+// descarta, se avisa en el log y se vuelve al reposo.
+function abortarGesto(motivo) {
+  console.warn(`[Anim] gesto abortado: ${motivo} — vuelve al reposo`);
+  _gestoActivo = false;
+  _caraGesto = null;
+  try { volverABaseIdle(true); } catch (e) { volverAProcedural(true); }
+}
+
+// reproducirClip() con try/catch: true si arrancó.
+function reproducirSeguro(entry, opciones, que) {
+  try {
+    if (reproducirClip(entry, opciones)) return true;
+    abortarGesto(`${que}: el mixer no aceptó "${entry?.archivo}"`);
+  } catch (e) {
+    console.error(`[Anim] ${que}: error al reproducir "${entry?.archivo}": ${e?.message ?? e}\n${e?.stack ?? ''}`);
+    abortarGesto(`${que}: error al reproducir`);
+  }
+  return false;
+}
+
+// Para el .catch() de una carga: si el pedido sigue siendo el vigente, abortar.
+function errorDeCarga(tok, que) {
+  return e => {
+    console.error(`[Anim] ${que}: error en la carga: ${e?.message ?? e}\n${e?.stack ?? ''}`);
+    if (tok === _tokenClip) abortarGesto(`${que}: falló la carga`);
+  };
 }
 
 // No corta el mixer: solo baja el objetivo de mezcla. actualizarAnimacionClips()

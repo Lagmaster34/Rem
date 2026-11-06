@@ -297,6 +297,50 @@ def _crear_overlay():
     return win, webview
 
 
+def _iniciar_vigilante():
+    """Diagnóstico de congelamientos: el bucle de GTK escribe "[GTK] vivo" cada
+    10 s, y un hilo aparte avisa (una vez por episodio) si ese latido o el de
+    la página del avatar (latido_pagina, ver avatar/bucle.js) dejan de llegar.
+    Si se colgó GTK vuelca las pilas de Python al log. Así se distingue un
+    cuelgue del proceso de la interfaz (como el de JavaScriptCore de la etapa
+    2) de una página que deja de dibujar."""
+    import faulthandler
+    import time
+    import rem_avatar_server as srv
+    estado = {"gtk": time.monotonic(), "aviso_gtk": False, "aviso_pagina": False}
+
+    def latido_gtk():
+        estado["gtk"] = time.monotonic()
+        pag = srv.ultimo_latido_pagina
+        print(f"[GTK] vivo (página: {'último latido hace %.0f s' % (time.monotonic() - pag) if pag else 'sin latidos aún'})",
+              flush=True)
+        return True
+    GLib.timeout_add_seconds(10, latido_gtk)
+
+    def vigilar():
+        while True:
+            time.sleep(5)
+            ahora = time.monotonic()
+            hace = ahora - estado["gtk"]
+            if hace > 25 and not estado["aviso_gtk"]:
+                estado["aviso_gtk"] = True
+                print(f"[Vigilante] el bucle de GTK no late desde hace {hace:.0f} s: la interfaz está colgada. "
+                      "Pilas de Python:", flush=True)
+                faulthandler.dump_traceback(all_threads=True)
+            elif hace < 15:
+                estado["aviso_gtk"] = False
+            pag = srv.ultimo_latido_pagina
+            if pag is not None:
+                hace_p = ahora - pag
+                if hace_p > 25 and not estado["aviso_pagina"]:
+                    estado["aviso_pagina"] = True
+                    print(f"[Vigilante] la página del avatar no manda latido desde hace {hace_p:.0f} s "
+                          f"(GTK {'también colgado' if hace > 15 else 'vivo'})", flush=True)
+                elif hace_p < 15:
+                    estado["aviso_pagina"] = False
+    threading.Thread(target=vigilar, daemon=True, name="Vigilante").start()
+
+
 def main():
     global _terminal
     _comprobar_instancia_unica()
@@ -367,6 +411,7 @@ def main():
             win, webview = _crear_ventana()
         cargar_con_retry(webview, rem_avatar_server.url_avatar(MODO))
 
+    _iniciar_vigilante()
     win.connect('destroy', Gtk.main_quit)
     # Cierre limpio con SIGTERM/SIGINT (pkill, Ctrl+C): la overlay no tiene
     # botón de cerrar.

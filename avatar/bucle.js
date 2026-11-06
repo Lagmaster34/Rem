@@ -10,8 +10,92 @@
 // ═══════════════════════════════════════════════════
 // LOOP PRINCIPAL
 // ═══════════════════════════════════════════════════
+// El cuerpo del frame va en un try/catch: un error se registra con su pila
+// (como mucho uno por segundo, para no inundar el log) y el bucle sigue. La
+// cadena de requestAnimationFrame no depende de esto (es la primera línea).
+// Latido "[Bucle] vivo" cada 10 s con los frames dibujados: si deja de salir
+// en el log, la página dejó de recibir frames (ver el latido de Python, que
+// dice si el que se colgó fue el proceso de la interfaz).
+const _bucleDiag = { frames: 0, errores: 0, seguidos: 0, ultimoError: 0, latido: performance.now(),
+                     ultimoFrame: performance.now(), sinFramesAvisado: false };
+const ERRORES_SEGUIDOS_MAX = 30;   // ~0,5 s fallando en cada frame: se descarta la animación
 function animate() {
   requestAnimationFrame(animate);
+  _bucleDiag.frames++;
+  _bucleDiag.ultimoFrame = performance.now();
+  try {
+    _frame();
+    _bucleDiag.seguidos = 0;
+  } catch (e) {
+    _bucleDiag.errores++;
+    _bucleDiag.seguidos++;
+    if (_bucleDiag.ultimoFrame - _bucleDiag.ultimoError > 1000) {
+      _bucleDiag.ultimoError = _bucleDiag.ultimoFrame;
+      console.error(`[Bucle] error en el frame (${_bucleDiag.errores} en total): ${e?.message ?? e}\n${e?.stack ?? ''}`);
+    }
+    if (_bucleDiag.seguidos === ERRORES_SEGUIDOS_MAX) _descartarAnimacion();
+  }
+  if (_bucleDiag.ultimoFrame - _bucleDiag.latido >= 10000) {
+    const s = (_bucleDiag.ultimoFrame - _bucleDiag.latido) / 1000;
+    console.log(`[Bucle] vivo: ${(_bucleDiag.frames / s).toFixed(1)} fps, ${_bucleDiag.errores} errores, `
+              + `clip ${_accionActual?._clip?.name ?? _accionActual?.getClip?.().name ?? 'ninguno'} (peso ${(_clipPeso ?? 0).toFixed(2)})`);
+    _bucleDiag.frames = 0;
+    _bucleDiag.latido = _bucleDiag.ultimoFrame;
+    _ws?.readyState === WebSocket.OPEN && _ws.send(JSON.stringify({ tipo: 'latido_pagina' }));
+  }
+}
+
+// El mismo fallo en cada frame (p. ej. un clip que rompe la mezcla): se para
+// el mixer, se suelta el gesto y el cuerpo vuelve a lo procedural, que no
+// depende de ningún clip.
+function _descartarAnimacion() {
+  console.error(`[Bucle] ${ERRORES_SEGUIDOS_MAX} frames seguidos con error: se descarta la animación `
+              + `"${_accionActual?.getClip?.()?.name ?? '?'}" y se vuelve al reposo procedural`);
+  try {
+    ++_tokenClip;
+    _mixer?.stopAllAction();
+    _accionActual = _accionAnterior = null;
+    _clipPeso = _clipPesoObjetivo = 0;
+    _puente = null;
+    _gestoActivo = _bailando = _siguienteBaile = false;
+    _caraGesto = null;
+    vrm?.humanoid?.resetNormalizedPose();
+  } catch (e) {
+    console.error(`[Bucle] no se pudo descartar la animación: ${e?.message ?? e}`);
+  }
+}
+
+// Errores fuera del bucle (callbacks, promesas sin catch): al log, con su pila.
+window.addEventListener('error', e => console.error(`[Página] error: ${e.message} (${e.filename}:${e.lineno})\n${e.error?.stack ?? ''}`));
+window.addEventListener('unhandledrejection', e => console.error(`[Página] promesa rechazada sin catch: ${e.reason?.message ?? e.reason}\n${e.reason?.stack ?? ''}`));
+
+// Las otras dos hipótesis de un congelamiento: el contexto WebGL perdido y la
+// página oculta o sin frames (el compositor deja de mandar frame callbacks).
+renderer.domElement.addEventListener('webglcontextlost', e => {
+  e.preventDefault();   // permite que se restaure
+  console.error('[Bucle] webglcontextlost: el contexto WebGL se perdió');
+});
+renderer.domElement.addEventListener('webglcontextrestored', () => console.warn('[Bucle] webglcontextrestored'));
+document.addEventListener('visibilitychange', () => console.warn(`[Bucle] visibilidad: ${document.visibilityState}`));
+// Un temporizador NO depende de los frames: si salta y el último frame es de
+// hace más de 3 s, la página está viva pero no recibe frames (hipótesis b).
+// En el modo escritorio además se le avisa a Python (una vez por episodio),
+// que intenta desatascar la superficie forzando un redibujado (escritorio.py).
+setInterval(() => {
+  const hace = performance.now() - _bucleDiag.ultimoFrame;
+  if (hace > 3000) {
+    console.warn(`[Bucle] sin frames desde hace ${(hace / 1000).toFixed(1)} s (la página sí está viva: lo dice este temporizador)`);
+    if (!_bucleDiag.sinFramesAvisado && !_renderPausado && _ws?.readyState === WebSocket.OPEN) {
+      _bucleDiag.sinFramesAvisado = true;
+      _ws.send(JSON.stringify({ tipo: 'escritorio', datos: { tipo: 'sin_frames', s: Math.round(hace / 1000) } }));
+    }
+  } else if (_bucleDiag.sinFramesAvisado) {
+    _bucleDiag.sinFramesAvisado = false;
+    console.warn('[Bucle] vuelven a llegar frames');
+  }
+}, 3000);
+
+function _frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   if (_modeloCambioPendiente && !hayVozSonando()) cambiarModelo(_modeloCambioPendiente);
   if (!vrm) { renderer.render(scene, camera); return; }

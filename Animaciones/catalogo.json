@@ -4036,7 +4036,7 @@
    "sha256": "c57e5ccc3594c22698889f37f924afacef25fe441fe4c5918dcbcaba088b9dfe",
    "raro": false,
    "expresion": null,
-   "saludo": true
+   "saludo": false
   },
   "nerumi/greetings/kawaii/@KA_Idle45_WaveHandSlightly.vrma": {
    "etiqueta": "Saludar con la mano",
@@ -6275,7 +6275,7 @@
    "sha256": "2a67409df9864ac9b753813481fd3ba0090109126f2bdd11b63790939c1873a1",
    "raro": false,
    "expresion": null,
-   "saludo": true
+   "saludo": false
   },
   "nerumi/idle/kawaii/@KA_Idle55_Backflip.vrma": {
    "etiqueta": "Mortal hacia atrás",
