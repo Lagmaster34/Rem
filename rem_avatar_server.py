@@ -589,26 +589,41 @@ async def _saludar_chat(websocket):
         await websocket.send(json.dumps(_confirmacion_payload))
 
 
+def _registrar_voz_sonando():
+    """voz_sonando del frontend: el <audio> disparó 'playing' (suena de verdad).
+    Cierra la medición del push-to-talk con las dos cifras: hasta que la página
+    recibió el audio y hasta que empezó a sonar."""
+    global _ptt_medicion
+    m = _ptt_medicion
+    if m is None:
+        return
+    _ptt_medicion = None
+    ahora = time.perf_counter()
+    ref = m.get("t_fin_voz", m["t_suelta"])
+    recibido = f"{m['t_recibido'] - ref:.2f}s" if "t_recibido" in m else "n/d"
+    print(f"  [PTT] medición: {'fin de frase automático' if m.get('auto') else 'suelto la tecla'} "
+          f"| desde que dejó de hablar: audio recibido en la página {recibido}, "
+          f"SONANDO {ahora - ref:.2f}s (desde soltar/cortar: {ahora - m['t_suelta']:.2f}s) "
+          f"| STT {m['t_stt']:.2f}s de {m['dur']:.1f}s de audio | energía: {m.get('energia', 'n/d')}",
+          flush=True)
+
+
 def _marcar_fin_habla():
     global _ultimo_fin_habla
     _ultimo_fin_habla = time.monotonic()
 
 
 def _registrar_voz_estado(websocket, reproduciendo: bool):
-    """voz_estado del frontend: su cola de audio empezó a sonar (True) o se
-    vació (False). Es la única forma de saber que Rem sigue hablando cuando el
-    turno de LLM y la síntesis ya terminaron pero el <audio> todavía suena."""
-    global _ptt_medicion
+    """voz_estado del frontend: su cola de audio recibió algo (True, al LLEGAR el
+    audio a la página, antes de play()) o se vació (False). Es la única forma de
+    saber que Rem sigue hablando cuando el turno de LLM y la síntesis ya
+    terminaron pero el <audio> todavía suena. Para la medición del push-to-talk
+    solo apunta cuándo llegó: la cierra voz_sonando (_registrar_voz_sonando)."""
     if reproduciendo:
         _ws_reproduciendo.add(websocket)
         m = _ptt_medicion
-        if m is not None:
-            _ptt_medicion = None
-            total = time.perf_counter() - m["t_suelta"]
-            desde_voz = time.perf_counter() - m.get("t_fin_voz", m["t_suelta"])
-            print(f"  [PTT] medición: {'fin de frase automático' if m.get('auto') else 'suelto la tecla'} "
-                  f"-> primer audio SONANDO: {total:.2f}s; desde que dejó de hablar: {desde_voz:.2f}s "
-                  f"(STT {m['t_stt']:.2f}s de {m['dur']:.1f}s de audio)", flush=True)
+        if m is not None and "t_recibido" not in m:
+            m["t_recibido"] = time.perf_counter()
     else:
         _ws_reproduciendo.discard(websocket)
         _marcar_fin_habla()
@@ -888,7 +903,12 @@ async def _ptt_detener(por_tope: bool = False, motivo_auto: str | None = None):
         _terminar()
         _conversacion(False, "falló la transcripción")
         return
-    print(f"  [PTT] STT: {dur:.2f}s de audio -> {t_stt:.2f}s ({t_stt / max(dur, 1e-3):.2f}x tiempo real) | {texto!r}", flush=True)
+    from llm._energia import estado_alimentacion, perfil_cpu
+    energia = f"{estado_alimentacion()}; {perfil_cpu()}"
+    voz_s = v.voz_ms / 1000
+    print(f"  [PTT] STT: {dur:.2f}s de audio ({voz_s:.2f}s de voz) -> {t_stt:.2f}s "
+          f"({t_stt / max(dur, 1e-3):.2f}x el audio, {t_stt / max(voz_s, 1e-3):.2f}x la voz) "
+          f"| energía: {energia} | {texto!r}", flush=True)
 
     if not texto:
         _emitir_veredicto("sin_voz", v)
@@ -912,7 +932,7 @@ async def _ptt_detener(por_tope: bool = False, motivo_auto: str | None = None):
                    "ms": int(cfg["mostrar_transcripcion_s"] * 1000)})
     _terminar()
     _ptt_medicion = {"t_suelta": t_suelta, "t_fin_voz": t_fin_voz, "t_stt": t_stt, "dur": dur,
-                     "auto": bool(auto)}
+                     "auto": bool(auto), "energia": energia}
     respuesta = await _procesar_mensaje_chat(texto, t_ref=t_fin_voz, por_voz=True)
 
     # Modo conversación: la respuesta pregunta algo -> se reabre el micrófono.
@@ -1026,6 +1046,11 @@ async def _ws_handler(websocket):
                 # El frontend avisa cuándo su cola de audio empieza a sonar / se
                 # vacía — el push-to-talk lo necesita para no grabar a Rem.
                 _registrar_voz_estado(websocket, bool(data.get("reproduciendo")))
+
+            elif tipo == "voz_sonando":
+                # El <audio> empezó a sonar de verdad ('playing'): cierra la
+                # medición de latencia del push-to-talk.
+                _registrar_voz_sonando()
 
             elif tipo == "accion_confirmar_resp":
                 # Respuesta del panel a un accion_confirmar (ver

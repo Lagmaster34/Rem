@@ -143,6 +143,9 @@ _audioEl.addEventListener('playing', () => {
   console.log('[Lipsync] evento "playing" ->', _audioEl.src);
   _audioActivo = true;
   estado = 'talking';
+  // Suena de verdad: cierra la medición de latencia del push-to-talk en el
+  // servidor (voz_estado se manda antes, al RECIBIR el audio).
+  if (_ws && _ws.readyState === WebSocket.OPEN) _ws.send(JSON.stringify({ tipo: 'voz_sonando' }));
 });
 _audioEl.addEventListener('ended', _avanzarCola);
 // MediaError.code: 1=ABORTED 2=NETWORK 3=DECODE 4=SRC_NOT_SUPPORTED.

@@ -2659,6 +2659,8 @@ herramientas de prueba.
 3. ~~**Latencia del micrófono**~~ — hecho (2026-11-06): el servidor ya no espera
    `mostrar_transcripcion_s` antes de mandar lo transcrito al LLM; ese valor solo dice cuánto lo
    enseña la interfaz. A/B en la misma sesión: 4,36 s → 3,42 s de media (ver "Voz de entrada").
+   Esas cifras eran hasta que la página RECIBE el audio; hasta que suena de verdad, ~0,08 s más
+   (3,34-3,78 s, medido después con `voz_sonando`).
 4. **Pruebas del micrófono real**: pendientes por parte de Esteban; él las pedirá.
 5. **MPRIS / «localhost» en la barra de música**: mejora opcional para el final, sin cambiar cómo se
    reproduce el audio. WebKitGTK 2.52 publica por MPRIS los `<audio>` y no tiene un ajuste para
@@ -2926,6 +2928,18 @@ sesión (entorno aislado, Hyprland anidado, micrófono simulado, modo IA con Oll
 de ahora: 1,0 s de silencio de espera + ~1,7 s de Whisper (5,7 s de audio grabado contando el silencio
 inicial) + ~0,7 s de LLM y voz. Lo que queda fijo y se podría bajar es `[stt.voz].silencio_s` (1 s),
 a costa de cortar frases con pausas largas. Whisper sigue oyendo a veces «video-cuegos».
+
+**Qué mide la línea `[PTT] medición`** (corregido 2026-11-06): antes la cerraba `voz_estado: true`,
+que la página manda al RECIBIR el audio (en `encolarAudio()`, antes de `play()`), aunque el log decía
+«SONANDO». Ahora `voz_estado` solo apunta esa llegada y la cierra un mensaje nuevo, `voz_sonando`,
+que `avatar/cara.js` manda en el evento `playing` del `<audio>`; la línea da las dos cifras desde que
+dejaste de hablar («audio recibido en la página» y «SONANDO»). Medido: 3,34 / 3,42 / 3,78 s sonando,
+0,07-0,08 s después de recibido. La línea de STT y la de medición llevan además
+`energía: AC|batería N% …; perfil <platform_profile>, EPP <preferencia>` (`llm/_energia.py`,
+`estado_alimentacion()` + `perfil_cpu()`: solo lee `/sys`, no `nvidia-smi`, porque Whisper va en CPU),
+y la de STT el factor de tiempo real sobre el audio grabado y sobre la voz sola: con 5,7 s grabados y
+2,6 s de voz (lo que cuenta el detector), Whisper tarda ~1,6 s = 0,28× el audio, 0,6× la voz. Las cifras
+de septiembre (0,17-0,38×) eran sobre el audio grabado: comparables a 0,28×, no a 0,6×.
 
 
 ## Entorno aislado de pruebas (`REM_DATOS`, `tests/entorno_aislado.sh`)

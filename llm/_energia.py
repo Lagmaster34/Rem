@@ -32,6 +32,21 @@ def estado_alimentacion() -> str:
         return "n/d"
 
 
+def perfil_cpu() -> str:
+    """"perfil balanced, EPP balance_performance" (ACPI platform_profile y la
+    preferencia energía/rendimiento de la CPU 0), o "n/d". Solo lee /sys: es
+    instantáneo y se puede llamar en mitad de un turno. Importa para Whisper,
+    que corre en CPU (la GPU no le afecta)."""
+    partes = []
+    for nombre, ruta in (("perfil", "/sys/firmware/acpi/platform_profile"),
+                         ("EPP", "/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference")):
+        try:
+            partes.append(f"{nombre} {open(ruta).read().strip()}")
+        except OSError:
+            pass
+    return ", ".join(partes) or "n/d"
+
+
 def estado_gpu() -> dict | None:
     """{"pstate": "P5", "mem_mhz": 810, "sm_mhz": 1717} de la primera GPU NVIDIA, o None."""
     try:
