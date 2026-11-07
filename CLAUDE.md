@@ -1495,7 +1495,7 @@ overlay) con `cache: 'no-cache'`; sin catálogo no hay clips y todo sigue proced
 identifican por su ruta relativa a `Animaciones/` (`nerumi/dance/Dance11-spooky.vrma`).
 
 - **Precarga solo de los fijos** (`precargarClipsFijos()`: los de `porEstado` y la pose base, hoy 6):
-  con 189 clips (58 MB) no se puede precargar todo en un WebGL rasterizado por software. El resto se
+  con 189 clips (58 MB) no se puede precargar todo (la página ya gasta ~40 % de un núcleo). El resto se
   carga la primera vez que se usa.
 - **Caché LRU** (`obtenerClip()`, `_podarCacheClips()`): hasta `cacheMax` (20) clips parseados, sin
   contar los fijos ni los fallos; al pasarse se desaloja el usado hace más tiempo (con
@@ -1635,10 +1635,9 @@ clip que toque — siempre con crossfade, nunca corte.
 
 `pixelRatioMax` (1.0) y `resolucionMaxPx` (~1,6 Mpx) topan el framebuffer del WebGL; `aplicarTamanoRender()`
 (arranque + resize) baja el `devicePixelRatio` efectivo y deja que el canvas se reescale por CSS.
-**Medido con `nvidia-smi`: en esta máquina (WebKitGTK 2.52 sobre Wayland/NVIDIA) el canvas aporta
-solo ~5 MiB de VRAM NVIDIA** — WebKit no acelera el WebGL por GPU acá, lo rasteriza por software
-(`WebKitWebProcess` ~2,6 GB de RAM, 0 en `nvidia-smi`). O sea estas mitigaciones bajan CPU/RAM y
-suben FPS del render por software, pero **no liberan VRAM para el LLM** — el `num_gpu` de
+**El WebGL va por la iGPU Intel, no por la NVIDIA ni por software** (corregido 2026-11-06, ver
+"Renderer WebGL: iGPU Intel"): estas mitigaciones bajan el trabajo de la iGPU y de la página, pero
+**no liberan VRAM para el LLM**, que no comparten — el `num_gpu` de
 `config.toml` no depende de esto (24/28 se limitaban por el pico de VRAM de RVC en la conversión, no
 por la ventana; RVC ya no existe — ver "Voz de Yoru (Piper)").
 
@@ -1738,19 +1737,21 @@ dos modelos: `rem.vrm` pasó de `position.y=-0,571` a `-1,032` (mejor encuadrada
 y `models/rem_naenae.vrm` de `-0,043` (cabeza fuera de cuadro) a `-0,977` (cuerpo completo visible),
 coincidiendo ambos con el cálculo teórico hecho a mano para descartar que fuera casualidad.
 
-## Pendiente: confirmar software vs. iGPU para el renderer WebGL real
+## Renderer WebGL: iGPU Intel (no software, no NVIDIA) — medido 2026-11-06
 
-CLAUDE.md viene asumiendo "WebGL por software" a partir de que `WebKitWebProcess` no aparece en
-`nvidia-smi` (confirmado de nuevo con el modelo nuevo: 0 MiB en `nvidia-smi --query-compute-apps`
-tanto con `rem.vrm` como con `models/rem_naenae.vrm`, con o sin RVC/Ollama cargados). Eso descarta
-la NVIDIA, pero esta máquina también tiene una iGPU Intel — `nvidia-smi` no puede verla, así que
-"no es la NVIDIA" no es lo mismo que "es software (llvmpipe)". `WEBGL_debug_renderer_info` tampoco
-sirve para esto: WebKit devuelve un valor fijo de fingerprinting (`"Apple GPU"` / `"Apple Inc."`),
-no el hardware real, en cualquier plataforma. La forma de confirmarlo de verdad es mirar qué
-librerías de Mesa carga el proceso `WebKitWebProcess` en runtime:
-`grep -i 'swrast\|llvmpipe\|iris\|i965' /proc/<pid_de_WebKitWebProcess>/maps` — `swrast`/`llvmpipe`
-confirma software puro, `iris`/`i965` confirmaría que sí usa la iGPU Intel por DRI. No se hizo
-todavía (hace falta encontrar el PID del proceso hijo correcto, no el de `rem_chat.py`).
+CLAUDE.md decía "WebGL por software" porque `WebKitWebProcess` no salía en
+`nvidia-smi --query-compute-apps` — pero esa consulta solo lista procesos de **cómputo** (CUDA),
+nunca los gráficos: no podía verlo aunque usara la NVIDIA. No hubo ninguna decisión detrás
+(`webview_comun.py` pide `HardwareAccelerationPolicy.ALWAYS`). Medido con la app en modo escritorio
+(Hyprland anidado): el `WebKitWebProcess` tiene abierto `/dev/dri/renderD128`, que es la Intel
+(`/sys/class/drm/renderD128` → driver `i915`; la NVIDIA es `renderD129`) y ningún `/dev/nvidia*`.
+Carga las librerías EGL/GL de NVIDIA y Mesa (`libgallium`), pero dibuja en la Intel. La tabla
+completa de `nvidia-smi` (que sí lista procesos gráficos, tipo `G`) solo muestra `llama-server`:
+**VRAM de la NVIDIA del avatar = 0**. **CPU del `WebKitWebProcess` con el avatar en reposo: ~42 % de
+un núcleo** (JS, animación, física del pelo, composición). `WEBGL_debug_renderer_info` no sirve para
+esto: WebKit devuelve un valor fijo (`"Apple GPU"`). No se probó dibujar en la NVIDIA: le quitaría
+VRAM a Ollama (3,5 de 4 GB). Bajar los fps mientras Whisper transcribe (20-30 fps) no acelera
+Whisper (A/B 2026-11-06: 1,70-1,79 s en los tres casos), así que esa CPU no es lo que lo frena.
 
 ## Modo overlay: arranque, superficie y exclusión mutua con el modo ventana
 
@@ -2624,8 +2625,8 @@ herramientas de prueba.
 - **Etapa 1 — hecha** (commit «Avatar: el script de rem_avatar.html pasa a avatar/»): el script del
   avatar está en `avatar/`, en scripts clásicos que comparten el ámbito global (ver
   `avatar/README.md`), sin cambiar comportamiento. Verificado con la app real en ventana y overlay.
-  VRAM: 3146 MiB con Ollama cargado, igual con ventana u overlay (WebKit dibuja WebGL por software;
-  en la NVIDIA solo está `llama-server`).
+  VRAM: 3146 MiB con Ollama cargado, igual con ventana u overlay (WebKit dibuja WebGL en la iGPU
+  Intel, ver "Renderer WebGL"; en la NVIDIA solo está `llama-server`).
 - **Etapas 2 y 3 — hechas y commiteadas** (2026-11-05/06, `02e16b4` + `10d3cdf`): `--modo escritorio`
   con avatar arrastrable, inclinación y pose de «colgada», región de clic que sigue al cuerpo,
   reacciones con voz, mirada al cursor, botones, menú propio del clic derecho y chat en ventana aparte.
@@ -2936,6 +2937,27 @@ sesión (entorno aislado, Hyprland anidado, micrófono simulado, modo IA con Oll
 de ahora: 1,0 s de silencio de espera + ~1,7 s de Whisper (5,7 s de audio grabado contando el silencio
 inicial) + ~0,7 s de LLM y voz. Lo que queda fijo y se podría bajar es `[stt.voz].silencio_s` (1 s),
 a costa de cortar frases con pausas largas. Whisper sigue oyendo a veces «video-cuegos».
+
+**Transcripción adelantada** (2026-11-06, `[stt.voz] adelantar_s`/`adelantar_min_voz_s`): en una
+grabación automática, tras 0,35 s de silencio se transcribe ya lo dicho (`Grabador.instantanea()`,
+`STTProvider.transcribir_adelantada()`), y si al cortar no hubo voz nueva se usa ese texto: Whisper
+queda escondido dentro del segundo de silencio. Dos protecciones, medidas en una simulación en tiempo
+real con el detector y el Whisper de la app (sin ellas, «Oye Yoru» + 0,4 s + «¿cómo estás?» pasaba de
+1,40 a 4,07 s: la adelantada sobre 0,7 s de voz alucinaba y sus reintentos a otras temperaturas
+bloqueaban a la de verdad): solo con ≥ 1 s de voz, y la adelantada va a temperatura 0 sin reintentos;
+si algún segmento no pasa los umbrales con los que faster-whisper reintentaría (compresión > 2,4,
+logprob < −1 sin ser silencio) devuelve `None` y se transcribe de nuevo, así que la precisión es la de
+siempre. Whisper va de uno en uno: hablar tras una pausa deja la adelantada vieja corriendo y la de
+verdad la espera. En la app (anidado, micrófono simulado, 3 toques por frase), sonando desde que dejas
+de hablar: sin pausa **2,68-2,92 s** (antes ~3,5); pausa 0,4 s + continuación larga 3,04-4,60 s
+(adelantada de ~2,1 s, solo esconde 0,64 s); «Oye Yoru» + 0,4 s + «¿cómo estás?» 2,97-3,65 s (sin
+adelantada en la pausa). El log dice por qué vía salió el texto: `STT (adelantada (1,62s de
+Whisper))` o `STT (normal (la adelantada quedó vieja…))`, y el tiempo es el que se espera tras cortar.
+
+**`initial_prompt` técnico vs. de conversación** (medido, sin cambiar): con 14 frases × 2 ruidos
+(Piper), el actual da 17,3 % de errores por palabra y cuela palabras técnicas («Oye Yoru, ¿cómo
+estás?» → «Ollama, ¿cómo estás?»); uno con vocabulario de conversación (Yoru, sirviente, videojuegos,
+por favor, estuve, servidor, micro, PC…) 11,1 % y ninguna colada; el mínimo sin lista, 15,4 %.
 
 **Qué mide la línea `[PTT] medición`** (corregido 2026-11-06): antes la cerraba `voz_estado: true`,
 que la página manda al RECIBIR el audio (en `encolarAudio()`, antes de `play()`), aunque el log decía

@@ -76,7 +76,20 @@ class LocalSTTProvider(STTProvider):
     def transcribir(self, audio: np.ndarray) -> str:
         return self._transcribir(audio, vad=True)
 
-    def _transcribir(self, audio, vad):
+    # Umbrales con los que faster-whisper decide reintentar con otra temperatura
+    # (sus valores por defecto). La adelantada no reintenta: si un segmento no
+    # los pasa, su texto no se usa y se transcribe de nuevo como siempre.
+    _COMPRESION_MAX = 2.4
+    _LOGPROB_MIN = -1.0
+    _NO_HABLA_MIN = 0.6
+
+    def transcribir_adelantada(self, audio: np.ndarray) -> str | None:
+        """Una sola pasada a temperatura 0 (sin los reintentos a temperaturas
+        más altas, que sobre un trozo que alucina tardaban ~3 s y bloqueaban a
+        la transcripción de verdad). None si algún segmento no es fiable."""
+        return self._transcribir(audio, vad=True, adelantada=True)
+
+    def _transcribir(self, audio, vad, adelantada=False):
         with self._lock:
             modelo = self._obtener_modelo()
             # transcribe() es un generador perezoso: la inferencia real ocurre
@@ -95,5 +108,15 @@ class LocalSTTProvider(STTProvider):
                 # previo como contexto solo propaga alucinaciones.
                 condition_on_previous_text=False,
                 without_timestamps=True,
+                **({"temperature": 0.0} if adelantada else {}),
             )
+            segmentos = list(segmentos)
+            if adelantada:
+                for s in segmentos:
+                    silencio = s.no_speech_prob > self._NO_HABLA_MIN
+                    if s.compression_ratio > self._COMPRESION_MAX or \
+                            (s.avg_logprob < self._LOGPROB_MIN and not silencio):
+                        _log(f"adelantada no fiable (compresión {s.compression_ratio:.2f}, "
+                             f"logprob {s.avg_logprob:.2f}): se transcribirá de nuevo")
+                        return None
             return " ".join(s.text.strip() for s in segmentos).strip()

@@ -808,7 +808,7 @@ async def _ptt_iniciar(auto: bool = False, espera_voz_s: float | None = None, or
         detector = FinDeFrase(SAMPLE_RATE, cfg_voz, espera_voz_s=espera_voz_s)
         _ptt_auto = {"detector": detector, "origen": origen, "motivo": None}
 
-        def al_bloque(bloque, _det=detector, _estado=_ptt_auto):
+        def al_bloque(bloque, _det=detector, _estado=_ptt_auto, _cfg=cfg_voz):
             if _estado["motivo"] is not None:
                 return
             r = _det.alimentar(bloque)
@@ -816,7 +816,11 @@ async def _ptt_iniciar(auto: bool = False, espera_voz_s: float | None = None, or
                 _estado["motivo"] = r
                 _estado["t"] = time.perf_counter()
                 loop.call_soon_threadsafe(lambda: asyncio.create_task(_ptt_detener(motivo_auto=r)))
+            else:
+                _quizas_adelantar(_det, _estado, _cfg, loop)
     grabador = Grabador(max_s=tope_s, dispositivo=cfg["dispositivo_entrada"], al_bloque=al_bloque)
+    if _ptt_auto is not None:
+        _ptt_auto["grabador"] = grabador   # la transcripción adelantada saca de aquí lo grabado
     try:
         await asyncio.to_thread(grabador.iniciar)
     except Exception as e:
@@ -833,6 +837,61 @@ async def _ptt_iniciar(auto: bool = False, espera_voz_s: float | None = None, or
     _ptt_estado_ws("escuchando", auto=auto, origen=origen)
     if _ptt_stop_pedido:  # el stop llegó mientras se abría el micrófono
         await _ptt_detener()
+
+
+# Transcripción adelantada (grabación automática): tras adelantar_s de silencio
+# se transcribe ya lo dicho, y si al cortar (silencio_s después) no hubo voz
+# nueva, se usa ese texto: Whisper queda escondido dentro del silencio de
+# espera. Medido en simulación (2026-11-06): ~1,35 s -> ~0,7 s desde el fin de
+# frase hasta el texto. Dos protecciones, sin ellas el peor caso empeoraba de
+# 1,4 a 4,1 s: solo con adelantar_min_voz_s de voz (sobre un trozo corto
+# Whisper alucina) y la adelantada no reintenta a otras temperaturas (coste
+# acotado, ver LocalSTTProvider.transcribir_adelantada). Whisper va de uno en
+# uno: si hablas después de una pausa, la adelantada vieja no se cancela y la
+# de verdad la espera. Si su texto no es fiable, se transcribe de nuevo.
+_ADELANTO_TOLERANCIA_S = 0.1   # fin de voz recalculado con el piso nuevo: puede moverse una trama
+
+
+def _quizas_adelantar(det, estado, cfg_voz, loop):
+    """Corre en el hilo de PortAudio (al_bloque): nada pesado, solo lanza."""
+    if cfg_voz.adelantar_s <= 0 or det.voz_desde is None or det.fin_voz_s is None:
+        return
+    if det.silencio_s < cfg_voz.adelantar_s or det.fin_voz_s - det.voz_desde < cfg_voz.adelantar_min_voz_s:
+        return
+    ad = estado.get("adelantada")
+    if ad is not None and (abs(ad["fin_voz"] - det.fin_voz_s) < _ADELANTO_TOLERANCIA_S
+                           or not ad["futuro"].done()):
+        return   # ya está lanzada para este silencio, o Whisper sigue ocupado con la anterior
+    grabador = estado.get("grabador")
+    if grabador is None:
+        return
+    import stt
+    audio = grabador.instantanea()
+    ad = {"fin_voz": det.fin_voz_s, "t0": time.perf_counter()}
+    ad["futuro"] = asyncio.run_coroutine_threadsafe(
+        asyncio.to_thread(stt.obtener_stt().transcribir_adelantada, audio), loop)
+    ad["futuro"].add_done_callback(lambda _f, _ad=ad: _ad.__setitem__("t_fin", time.perf_counter()))
+    estado["adelantada"] = ad
+    print(f"  [PTT] transcripción adelantada: {det.silencio_s:.2f}s de silencio tras "
+          f"{det.fin_voz_s - det.voz_desde:.2f}s de voz", flush=True)
+
+
+async def _texto_adelantado(auto) -> tuple[str | None, str]:
+    """(texto, cómo): el texto de la transcripción adelantada si sirve para lo
+    grabado, o (None, motivo) y hay que transcribir como siempre."""
+    ad = (auto or {}).get("adelantada")
+    if ad is None:
+        return None, "normal"
+    fin_voz = auto["detector"].fin_voz_s
+    if fin_voz is None or abs(ad["fin_voz"] - fin_voz) >= _ADELANTO_TOLERANCIA_S:
+        return None, "normal (la adelantada quedó vieja: hubo voz después)"
+    try:
+        texto = await asyncio.wrap_future(ad["futuro"])
+    except Exception as e:
+        return None, f"normal (la adelantada falló: {type(e).__name__})"
+    if texto is None:
+        return None, "normal (la adelantada no era fiable)"
+    return texto, f"adelantada ({ad.get('t_fin', time.perf_counter()) - ad['t0']:.2f}s de Whisper)"
 
 
 async def _ptt_detener(por_tope: bool = False, motivo_auto: str | None = None):
@@ -899,8 +958,10 @@ async def _ptt_detener(por_tope: bool = False, motivo_auto: str | None = None):
     _ptt_estado_ws("transcribiendo")
     try:
         t0 = time.perf_counter()
-        texto = await asyncio.to_thread(stt.obtener_stt().transcribir, audio)
-        t_stt = time.perf_counter() - t0
+        texto, via = await _texto_adelantado(auto)
+        if texto is None:
+            texto = await asyncio.to_thread(stt.obtener_stt().transcribir, audio)
+        t_stt = time.perf_counter() - t0   # lo que se espera DESPUÉS de cortar
     except Exception as e:
         logger.exception("[PTT] falló la transcripción")
         _broadcast_ws({"tipo": "error", "mensaje": f"Falló la transcripción: {e}"})
@@ -910,7 +971,7 @@ async def _ptt_detener(por_tope: bool = False, motivo_auto: str | None = None):
     from llm._energia import estado_alimentacion, perfil_cpu
     energia = f"{estado_alimentacion()}; {perfil_cpu()}"
     voz_s = v.voz_ms / 1000
-    print(f"  [PTT] STT: {dur:.2f}s de audio ({voz_s:.2f}s de voz) -> {t_stt:.2f}s "
+    print(f"  [PTT] STT ({via}): {dur:.2f}s de audio ({voz_s:.2f}s de voz) -> {t_stt:.2f}s tras cortar "
           f"({t_stt / max(dur, 1e-3):.2f}x el audio, {t_stt / max(voz_s, 1e-3):.2f}x la voz) "
           f"| energía: {energia} | {texto!r}", flush=True)
 

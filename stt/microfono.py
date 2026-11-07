@@ -53,6 +53,12 @@ class Grabador:
         )
         self._stream.start()
 
+    def instantanea(self) -> np.ndarray:
+        """Copia de lo grabado hasta ahora, sin parar la grabación (la
+        transcripción adelantada del fin de frase)."""
+        with self._lock:
+            return np.concatenate(self._trozos) if self._trozos else np.zeros(0, np.float32)
+
     def detener(self) -> np.ndarray:
         stream, self._stream = self._stream, None
         if stream is not None:

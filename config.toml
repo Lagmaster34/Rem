@@ -170,6 +170,12 @@ muerto_dbfs        = -80    # pico por debajo de esto = no llega audio del micr�
 muerto_temprano_s  = 4      # en automático: cortar si en este tiempo no llegó nada
 muerto_min_s       = 1.5    # veredicto: "micrófono muerto" (≥) o "no llegó audio" (<)
 espera_voz_toque_s = 8      # toque del botón 🎙 sin que nadie hable: se corta a los N s
+# Transcripción adelantada (solo en automático): tras adelantar_s de silencio se
+# transcribe ya lo dicho, y si al cortar no hubo voz nueva se usa ese texto
+# (esconde Whisper dentro de silencio_s). Solo con adelantar_min_voz_s de voz:
+# sobre un trozo corto Whisper alucina y bloquea a la de verdad. 0 = no adelantar.
+adelantar_s         = 0.35
+adelantar_min_voz_s = 1.0
 # Frases que Whisper se inventa sobre el silencio: se descartan si la grabación
 # tuvo menos de alucinacion_max_voz_ms de voz (con voz de verdad se respetan).
 alucinacion_max_voz_ms = 120

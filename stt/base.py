@@ -21,6 +21,14 @@ class STTProvider(ABC):
         modelo, calentar). No-op por defecto: un backend remoto no tiene nada
         que cargar. Seguro de llamar desde un hilo de fondo al arrancar."""
 
+    def transcribir_adelantada(self, audio: np.ndarray) -> str | None:
+        """Transcripción especulativa de una frase que quizá no ha terminado
+        (ver la transcripción adelantada en rem_avatar_server). Tiene que tener
+        un coste acotado: no puede bloquear mucho a la de verdad si al final
+        sobra. None = no soportado o resultado no fiable (se transcribe de
+        nuevo). Por defecto, no soportado."""
+        return None
+
     @abstractmethod
     def transcribir(self, audio: np.ndarray) -> str:
         """`audio`: float32 mono a SAMPLE_RATE (16 kHz), valores en [-1, 1].

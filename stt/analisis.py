@@ -44,6 +44,8 @@ class ConfigVoz:
     muerto_temprano_s: float = 4.0    # en vivo: cortar si en este tiempo no llegó nada
     muerto_min_s: float = 1.5         # veredicto: "muerto" (≥) o "silencio" (<)
     alucinacion_max_voz_ms: float = 120.0
+    adelantar_s: float = 0.35         # tras este silencio se transcribe ya lo dicho (0 = no adelantar)
+    adelantar_min_voz_s: float = 1.0  # ...solo si ya hubo esta voz (un trozo corto hace alucinar a Whisper)
     frases_inventadas: list[str] = field(default_factory=list)
 
     @classmethod
@@ -53,7 +55,8 @@ class ConfigVoz:
         base = cls()
         valores = {}
         for nombre in ("gracia_s", "silencio_s", "max_voz_s", "voz_sobre_ruido_db", "voz_min_dbfs",
-                       "muerto_dbfs", "muerto_temprano_s", "muerto_min_s", "alucinacion_max_voz_ms"):
+                       "muerto_dbfs", "muerto_temprano_s", "muerto_min_s", "alucinacion_max_voz_ms",
+                       "adelantar_s", "adelantar_min_voz_s"):
             try:
                 valores[nombre] = float(cfg.get(nombre, getattr(base, nombre)))
             except (TypeError, ValueError):
