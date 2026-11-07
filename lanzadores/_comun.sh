@@ -6,7 +6,12 @@
 LANZADORES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RAIZ="$(dirname "$LANZADORES_DIR")"
 PYTHON="$RAIZ/venv/bin/python"
-LOG_DIR="$LANZADORES_DIR/logs"
+# Con REM_DATOS (entorno aislado de pruebas, ver config.DATOS_DIR) los logs y el
+# pidfile van ahí: un lanzador corrido dentro de una prueba nunca encuentra ni
+# cierra la instancia real.
+DATOS="${REM_DATOS:-$RAIZ}"
+LOG_DIR="${REM_DATOS:+$REM_DATOS/lanzadores_logs}"
+LOG_DIR="${LOG_DIR:-$LANZADORES_DIR/logs}"
 mkdir -p "$LOG_DIR"
 
 # Abre el log del lanzador (se agrega, no se pisa) con una cabecera por arranque.
@@ -28,7 +33,7 @@ comprobar_venv() {
 # rem_chat.py escribe su pid (línea 1) y su modo (línea 2) en este archivo al
 # levantar el servidor y lo borra al salir. Los lanzadores lo usan en vez de
 # buscar procesos por patrón.
-PIDFILE="$RAIZ/rem_chat.pid"
+PIDFILE="$DATOS/rem_chat.pid"
 # Segundos de espera al cierre limpio antes de darlo por colgado y matarlo.
 _ESPERA_CIERRE_S=5
 

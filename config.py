@@ -9,6 +9,26 @@ BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH  = os.path.join(BASE_DIR, ".env")
 TOML_PATH = os.path.join(BASE_DIR, "config.toml")
 
+# Carpeta de lo que la app ESCRIBE en tiempo de ejecución: preferencias, estado
+# del escritorio, memorias, caché de frases, logs, pidfile y los datos de
+# WebKit (caché, localStorage). Por defecto, la del proyecto (y los datos de
+# WebKit, los de siempre en ~/.cache y ~/.local/share). Con REM_DATOS=<dir>
+# todo eso va a <dir>: es el entorno aislado de las pruebas
+# (tests/entorno_aislado.sh), que nunca debe tocar los archivos del usuario.
+# Lo que solo se lee (config.toml, .env, modelos, catálogo) sigue en BASE_DIR,
+# y tmp_audio/ también (lo sirve el HTTP; son temporales).
+DATOS_DIR = os.path.abspath(os.environ["REM_DATOS"]) if os.environ.get("REM_DATOS") else BASE_DIR
+ENTORNO_AISLADO = DATOS_DIR != BASE_DIR
+if ENTORNO_AISLADO and DATOS_DIR.startswith(BASE_DIR + os.sep):
+    raise SystemExit(f"REM_DATOS={DATOS_DIR} está dentro del repo: tiene que quedar fuera")
+if ENTORNO_AISLADO:
+    os.makedirs(DATOS_DIR, exist_ok=True)
+
+
+def ruta_datos(nombre: str) -> str:
+    """Ruta de un archivo de datos de tiempo de ejecución (ver DATOS_DIR)."""
+    return os.path.join(DATOS_DIR, nombre)
+
 
 def cargar_dotenv(ruta: str = ENV_PATH) -> None:
     """Carga variables de `ruta` (.env) al entorno vía os.environ.setdefault

@@ -2653,9 +2653,9 @@ herramientas de prueba.
    `WebKitWebProcess` muere solo al morir Python (PR_SET_PDEATHSIG); aquí WebKit no usa bwrap (los
    procesos WebKit son hijos directos). **No probado con la app real colgada**; una instancia
    abierta con el código de antes no tiene pidfile: cerrarla a mano una vez.
-2. **Las pruebas cambiaron el `preferencias.json` real de Esteban** (ls15 → Neru, ya restaurado). El
-   entorno de prueba debe usar siempre una copia aislada de preferencias, estado
-   (`escritorio_estado.json`) y caché, y nunca escribir en sus archivos.
+2. ~~**Las pruebas cambiaron el `preferencias.json` real de Esteban**~~ — hecho (2026-11-06): ver
+   "Entorno aislado de pruebas". La causa: `cliente_ws.py` cambiaba el modelo y lo «restauraba» con
+   otro `prefs_set` sobre el archivo real (y `verificar.sh` borraba el `rem_chat.log` real).
 3. **Latencia del micrófono**: quitar la pausa de 1 s para enseñar lo transcrito
    (`[stt].mostrar_transcripcion_s`) y volver a medir (hoy 4,9–5,2 s de fin de voz a primer audio).
 4. **Pruebas del micrófono real**: pendientes por parte de Esteban; él las pedirá.
@@ -2916,6 +2916,43 @@ de 3,4 s, 3 medidas): **4,9–5,2 s** = 1,0 s de silencio de espera + ~1,65 s de
 voz. En Eco, 3,7 s. Los dos tramos fijos (silencio 1 s y la pausa de 1 s) son los fáciles de bajar.
 Whisper oía «Lloro» por «Yoru»: se añadió «Yoru» a `initial_prompt`.
 
+
+## Entorno aislado de pruebas (`REM_DATOS`, `tests/entorno_aislado.sh`)
+
+**Toda prueba que arranque la app (o el panel, o toque preferencias) va dentro de
+`tests/entorno_aislado.sh [-d CARPETA] -- comando...`.** Con `REM_DATOS=<dir>` (`config.DATOS_DIR` /
+`config.ruta_datos()`), todo lo que la app escribe en tiempo de ejecución va a esa carpeta:
+`preferencias.json`, `escritorio_estado.json`, `memoria_*.json`, `cache_frases/`, `rem_chat.log`,
+`rem_panel.log`, `rem_chat.pid` y los datos de WebKit (caché, localStorage: un `WebContext` propio en
+`<dir>/webkit`, `webview_comun._contexto_aislado()`; sin `REM_DATOS` se usa el contexto por defecto de
+siempre). Lo que solo se lee (`config.toml`, `.env`, modelos, catálogo) sigue en el proyecto, y
+`tmp_audio/` también (lo sirve el HTTP; son temporales). El log dice `ENTORNO AISLADO` al arrancar.
+
+El envoltorio siembra la carpeta (si es nueva; por defecto `${TMPDIR:-/tmp}/rem_prueba.XXXXXX`, y
+siempre fuera del repo: `-d` dentro del repo se rechaza, y `config.py` aborta si `REM_DATOS` cae dentro)
+con una COPIA de los datos reales, corre el comando con `REM_DATOS` y al terminar busca cambios y
+borrados en los archivos reales (proyecto, `lanzadores/logs/` y
+`~/.cache|~/.local/share/rem_chat.py|rem_panel.py`): si hay alguno lo lista y sale con 3.
+**Se niega a correr (sale con 4) si hay una instancia real viva** (pidfile real válido o los puertos
+18765/18766 ocupados por quien sea): con los puertos tomados la app de la prueba no levanta y sus
+clientes hablarían con la real. Se eligió esto y no puertos distintos con `REM_DATOS` porque los
+puertos están fijos en el servidor, los orígenes del WS, las páginas, `rem_ptt.py`, `rem_escritorio.py`,
+`bench_chat.py` y los clientes de prueba: cambiarlos solo en pruebas tocaba todo eso y las pruebas
+correrían con una configuración distinta de la real. Los lanzadores también respetan `REM_DATOS`
+(pidfile y logs en `<dir>`; un lanzador dentro de una prueba nunca cierra la instancia real).
+`notas_fase2/prueba_arrastre/verificar.sh` se niega a correr sin `REM_DATOS`.
+
+**Auditoría de escrituras** (2026-11-06, grep de `open` w/a, `json.dump`, `write_text`, `shutil`,
+`os.remove`/`unlink`/`rmtree`, `os.replace`, `sf.write`, `makedirs`, `FileHandler` —no hay—,
+`localStorage` y redirecciones de shell en todo lo versionado): pasan por `config.ruta_datos()` o
+`REM_DATOS` preferencias, estado del escritorio, `memoria_sistema` (`acciones.py`), caché de frases,
+logs, pidfile, logs de lanzadores y el localStorage (`WebContext` aislado). Fuera, justificadas:
+`tmp_audio/` (temporales servidos por el HTTP; la limpieza de WAV viejos solo podría afectar a una
+instancia real, que el envoltorio ya excluye), `catalogo_animaciones.py` (herramienta que regenera el
+`catalogo.json` versionado), `vendor/espejo_esm.py` y `lanzadores/instalar.sh` (herramientas de
+instalación, no de ejecución). **Verificado** (2026-11-06, Hyprland anidado): modo escritorio + 3
+`prefs_set` + el panel abierto → todo en la carpeta aislada, los hashes de los archivos reales iguales;
+control negativo (escribir, borrar o crear un archivo real) → detectado, salida 3.
 
 ## Congelamientos del avatar: diagnóstico y red de seguridad de los clips (2026-11-06)
 

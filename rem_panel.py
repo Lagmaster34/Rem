@@ -28,7 +28,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-LOG_PATH = os.path.join(BASE_DIR, "rem_panel.log")
+import config
+LOG_PATH = config.ruta_datos("rem_panel.log")
 INSPECTOR = "127.0.0.1:9223"
 
 # Antes de que WebKit2 se inicialice. Fijo, no setdefault: si el entorno trae

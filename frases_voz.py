@@ -20,9 +20,10 @@ import time
 import numpy as np
 import soundfile as sf
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRASES_PATH = os.path.join(BASE_DIR, "frases_escritorio.json")
-CACHE_DIR = os.path.join(BASE_DIR, "cache_frases")
+import config
+
+FRASES_PATH = os.path.join(config.BASE_DIR, "frases_escritorio.json")
+CACHE_DIR = config.ruta_datos("cache_frases")
 
 _lock = threading.Lock()
 _id_modelo = None

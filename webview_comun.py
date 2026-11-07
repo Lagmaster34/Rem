@@ -35,6 +35,29 @@ def redirigir_salida_a_log(ruta_log):
     return terminal
 
 
+_contexto = None
+
+
+def _contexto_aislado(prefijo):
+    """En el entorno aislado de pruebas (REM_DATOS, ver config.DATOS_DIR), un
+    WebContext propio con la caché y los datos (localStorage...) de WebKit
+    dentro de esa carpeta, compartido por todos los WebView del proceso. Fuera
+    de él, None: el contexto por defecto de siempre (~/.cache/<programa>,
+    ~/.local/share/<programa>), sin cambios."""
+    global _contexto
+    import config
+    if not config.ENTORNO_AISLADO:
+        return None
+    if _contexto is None:
+        base = config.ruta_datos("webkit")
+        gestor = WebKit2.WebsiteDataManager(
+            base_data_directory=os.path.join(base, "datos"),
+            base_cache_directory=os.path.join(base, "cache"))
+        _contexto = WebKit2.WebContext(website_data_manager=gestor)
+        print(f"{prefijo} entorno aislado: datos de WebKit en {base}")
+    return _contexto
+
+
 def crear_webview(transparente=False, prefijo="[Chat]"):
     # Settings y WebsitePolicies armados en objetos APARTE, completos, ANTES de
     # crear el WebView (ver CLAUDE.md, "Regresión repetida de la política de
@@ -74,10 +97,13 @@ def crear_webview(transparente=False, prefijo="[Chat]"):
         policies = None
         print(f"{prefijo} WebsitePolicies no disponible en esta WebKit2 ({e})")
 
+    contexto = _contexto_aislado(prefijo)
+    props = {"settings": settings}
     if policies is not None:
-        webview = WebKit2.WebView(settings=settings, website_policies=policies)
-    else:
-        webview = WebKit2.WebView.new_with_settings(settings)
+        props["website_policies"] = policies
+    if contexto is not None:
+        props["web_context"] = contexto
+    webview = WebKit2.WebView(**props)
 
     if transparente:
         webview.set_background_color(Gdk.RGBA(0, 0, 0, 0))

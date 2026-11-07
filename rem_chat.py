@@ -41,9 +41,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-LOG_PATH = os.path.join(BASE_DIR, "rem_chat.log")
-
 import config
+
+LOG_PATH = config.ruta_datos("rem_chat.log")
 
 
 def _parsear_args():
@@ -128,7 +128,7 @@ def _comprobar_instancia_unica():
 
 # Pidfile: lo leen los lanzadores para cerrar o encontrar esta instancia sin
 # buscar procesos por patrón. Línea 1: pid; línea 2: modo.
-PID_PATH = os.path.join(BASE_DIR, "rem_chat.pid")
+PID_PATH = config.ruta_datos("rem_chat.pid")
 
 
 def _escribir_pidfile():
@@ -388,6 +388,8 @@ def main():
 
     config.cargar_dotenv()
     print(f"[Chat] Modo: {MODO}")
+    if config.ENTORNO_AISLADO:
+        print(f"[Chat] ENTORNO AISLADO (REM_DATOS): datos de ejecución en {config.DATOS_DIR}")
     # Diagnóstico: `kill -USR2 <pid>` vuelca al log la pila de todos los hilos
     # de Python (p. ej. si algo no deja cerrar la app con SIGTERM).
     import faulthandler

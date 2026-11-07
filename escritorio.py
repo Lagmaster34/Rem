@@ -35,8 +35,10 @@ from gi.repository import GtkLayerShell, Gtk, Gdk, GLib  # noqa: E402
 
 from webview_comun import cargar_con_retry, crear_webview  # noqa: E402
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ESTADO_PATH = os.path.join(BASE_DIR, "escritorio_estado.json")
+import config  # noqa: E402
+
+BASE_DIR = config.BASE_DIR
+ESTADO_PATH = config.ruta_datos("escritorio_estado.json")
 UMBRAL_ARRASTRE_PX = 6
 TICK_ARRASTRE_MS = 16
 SUAVIZADO_VEL_S = 0.06    # constante de tiempo del filtro de la velocidad de arrastre

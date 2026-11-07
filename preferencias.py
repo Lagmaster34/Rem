@@ -32,7 +32,7 @@ from typing import Any, Callable
 
 import config
 
-ARCHIVO = os.path.join(config.BASE_DIR, "preferencias.json")
+ARCHIVO = config.ruta_datos("preferencias.json")
 
 
 class PreferenciaInvalida(ValueError):
