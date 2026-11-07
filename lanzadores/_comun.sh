@@ -25,29 +25,125 @@ comprobar_venv() {
     fi
 }
 
-# Cierra con SIGTERM cualquier rem_chat.py que esté corriendo (rem_chat.py lo
-# atiende con Gtk.main_quit(), cierre limpio) y espera a que suelte el puerto.
-# Solo si no se va en 5 s manda SIGKILL.
-# Solo procesos cuyo argv[0] es un python y argv[1] es rem_chat.py — no una
-# shell o un editor que tenga el texto "rem_chat.py" en su línea de comandos.
-_PATRON_REM_CHAT='^[^ ]*python[0-9.]* ([^ ]*/)?rem_chat\.py( |$)'
+# rem_chat.py escribe su pid (línea 1) y su modo (línea 2) en este archivo al
+# levantar el servidor y lo borra al salir. Los lanzadores lo usan en vez de
+# buscar procesos por patrón.
+PIDFILE="$RAIZ/rem_chat.pid"
+# Segundos de espera al cierre limpio antes de darlo por colgado y matarlo.
+_ESPERA_CIERRE_S=5
 
+# Imprime el pid de la instancia de Rem abierta, o nada. Antes de fiarse del
+# pidfile comprueba que ese pid sigue siendo un python con ESTE rem_chat.py
+# (argv[1] resuelto contra su directorio de trabajo): tras un SIGKILL el
+# archivo queda y el pid puede haberlo reusado otro proceso. Un pidfile
+# viejo se borra.
+pid_rem_chat() {
+    local pid arg0 arg1 cwd
+    [[ -f "$PIDFILE" ]] || return 0
+    pid="$(head -n1 "$PIDFILE" 2>/dev/null || true)"
+    if [[ "$pid" =~ ^[0-9]+$ ]] && [[ -r /proc/$pid/cmdline ]]; then
+        { IFS= read -r -d '' arg0; IFS= read -r -d '' arg1; } <"/proc/$pid/cmdline" || true
+        cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+        [[ "$arg1" == /* ]] || arg1="$cwd/$arg1"
+        if [[ "$(basename "$arg0")" =~ ^python[0-9.]*$ ]] &&
+           [[ "$(readlink -f "$arg1" 2>/dev/null)" == "$RAIZ/rem_chat.py" ]]; then
+            echo "$pid"
+            return 0
+        fi
+    fi
+    echo "pidfile viejo (pid ${pid:-?} ya no es rem_chat.py): se borra" >>"$LOG"
+    rm -f "$PIDFILE"
+}
+
+# El modo de la instancia abierta (ventana/overlay/escritorio), o nada.
+modo_rem_chat() {
+    [[ -n "$(pid_rem_chat)" ]] && sed -n 2p "$PIDFILE" 2>/dev/null || true
+}
+
+# Todos los descendientes de los pids dados (WebKitWebProcess, WebKitNetworkProcess,
+# bwrap, xdg-dbus-proxy...), a cualquier profundidad.
+_descendientes() {
+    ps -eo pid=,ppid= | awk -v raices="$*" '
+        { padre[$1] = $2 }
+        END {
+            n = split(raices, r, " "); for (i = 1; i <= n; i++) en[r[i]] = 1
+            do { nuevo = 0
+                 for (p in padre) if (!(p in en) && (padre[p] in en)) { en[p] = 1; nuevo = 1 }
+            } while (nuevo)
+            for (i = 1; i <= n; i++) delete en[r[i]]
+            for (p in en) print p
+        }'
+}
+
+# Los pids de la lista que siguen vivos (un zombi cuenta como muerto).
+_vivos() {
+    local p
+    for p in "$@"; do
+        [[ -d /proc/$p ]] || continue
+        [[ "$(awk '{print $3}' "/proc/$p/stat" 2>/dev/null)" == Z ]] && continue
+        echo "$p"
+    done
+}
+
+# Cierra la instancia de Rem abierta, si hay (ver cerrar_procesos), y espera a
+# que suelte el puerto.
 cerrar_rem_chat() {
-    local pids
-    pids="$(pgrep -f "$_PATRON_REM_CHAT" || true)"
-    [[ -z "$pids" ]] && return 0
-    echo "Cerrando instancia previa de rem_chat.py (pid $pids)" >>"$LOG"
+    local pid
+    pid="$(pid_rem_chat)"
+    [[ -z "$pid" ]] && return 0
+    cerrar_procesos "$pid"
+    rm -f "$PIDFILE"   # tras un SIGKILL nadie lo borra
+    _esperar_puerto_libre
+}
+
+# Cierre limpio y, si no responde, forzado, de los pids dados y su árbol.
+# Con la interfaz colgada SIGTERM no hace nada (el manejador corre dentro del
+# bucle de GTK). Al matar Python, el WebKitWebProcess muere solo (WebKit le pone
+# PR_SET_PDEATHSIG), pero otros hijos pueden seguir vivos un rato (el de red, en
+# la prueba) y como huérfanos con ppid 1 ya no se encuentran por el árbol: por
+# eso el árbol se apunta ANTES de mandar ninguna señal.
+cerrar_procesos() {
+    local pids="$*" hijos vivos
+    hijos="$(_descendientes $pids | tr '\n' ' ')"
+    echo "Cerrando rem_chat.py (pid $pids; descendientes: ${hijos:-ninguno})" >>"$LOG"
     kill -TERM $pids 2>/dev/null || true
-    for _ in $(seq 50); do
-        pgrep -f "$_PATRON_REM_CHAT" >/dev/null || break
+    for _ in $(seq $((_ESPERA_CIERRE_S * 10))); do
+        [[ -z "$(_vivos $pids)" ]] && break
         sleep 0.1
     done
-    pids="$(pgrep -f "$_PATRON_REM_CHAT" || true)"
-    if [[ -n "$pids" ]]; then
-        echo "No cerró en 5 s, SIGKILL a $pids" >>"$LOG"
-        kill -KILL $pids 2>/dev/null || true
-        sleep 0.5
+    vivos="$(_vivos $pids | tr '\n' ' ')"
+    if [[ -n "${vivos// }" ]]; then
+        echo "No cerró en ${_ESPERA_CIERRE_S} s: se le da por colgado" >>"$LOG"
+        # Antes de matarlo, sus pilas de Python al rem_chat.log (faulthandler):
+        # sirven para saber dónde se colgó.
+        kill -USR2 $vivos 2>/dev/null || true
+        sleep 0.3
+        # Los hijos que hayan nacido mientras tanto también.
+        hijos="$(printf '%s\n' $hijos $(_descendientes $vivos) | sort -un | tr '\n' ' ')"
+        echo "SIGKILL a $vivos" >>"$LOG"
+        kill -KILL $vivos 2>/dev/null || true
+        command -v notify-send >/dev/null && \
+            notify-send "Rem" "No respondía: se cerró a la fuerza" || true
     fi
+    # Los hijos que sigan vivos (huérfanos de un cierre forzado, o colgados ellos
+    # mismos): SIGTERM y, si en 2 s no se van, SIGKILL.
+    vivos="$(_vivos $hijos | tr '\n' ' ')"
+    if [[ -n "${vivos// }" ]]; then
+        echo "Quedaban procesos hijos vivos, SIGTERM a $vivos" >>"$LOG"
+        kill -TERM $vivos 2>/dev/null || true
+        for _ in $(seq 20); do
+            [[ -z "$(_vivos $vivos)" ]] && break
+            sleep 0.1
+        done
+        vivos="$(_vivos $vivos | tr '\n' ' ')"
+        if [[ -n "${vivos// }" ]]; then
+            echo "SIGKILL a los hijos $vivos" >>"$LOG"
+            kill -KILL $vivos 2>/dev/null || true
+        fi
+    fi
+}
+
+_esperar_puerto_libre() {
     # Espera a que el puerto quede libre (el SO puede tardar un instante).
     for _ in $(seq 30); do
         ss -ltn 2>/dev/null | grep -q ':18765 ' || return 0

@@ -7,13 +7,12 @@ set -euo pipefail
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_comun.sh"
 abrir_log rem-escritorio
 comprobar_venv
-PATRON_ESCRITORIO='^[^ ]*python[0-9.]* ([^ ]*/)?rem_chat\.py .*--modo escritorio'
-if pgrep -f "$PATRON_ESCRITORIO" >/dev/null; then
+if [[ "$(modo_rem_chat)" == escritorio ]]; then
     if "$PYTHON" "$RAIZ/rem_escritorio.py" mostrar >>"$LOG" 2>&1; then
         echo "Ya estaba abierto: mostrar" >>"$LOG"
     else
         echo "Ya estaba abierto y el WebSocket no respondió: SIGUSR1" >>"$LOG"
-        pkill -USR1 -f "$PATRON_ESCRITORIO"
+        kill -USR1 "$(pid_rem_chat)" 2>/dev/null || true
     fi
     exit 0
 fi

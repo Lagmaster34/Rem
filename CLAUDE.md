@@ -2640,9 +2640,19 @@ herramientas de prueba.
 
 ### Pendientes, en orden (2026-11-06)
 
-1. **Rem Cerrar no cierra la app con el avatar congelado**: Esteban tuvo que usar `pkill -9` y
-   `kill -9` de los `WebKitWebProcess`. El lanzador debe pedir el cierre normal y, si no responde en
-   unos segundos, matar el proceso y sus `WebKitWebProcess` hijos. Probarlo con un cuelgue simulado.
+1. ~~**Rem Cerrar no cierra la app con el avatar congelado**~~ — hecho (2026-11-06):
+   `rem_chat.py` escribe `rem_chat.pid` (pid y modo, ignorado por git) al levantar el servidor y
+   lo borra en `atexit`. Los lanzadores ya no buscan por patrón: `pid_rem_chat()` lee el pidfile y
+   comprueba que ese pid sigue siendo un python con ESTE `rem_chat.py` (si no, lo borra como
+   viejo). `cerrar_procesos()` apunta todos los descendientes (recursivo) ANTES de cualquier señal,
+   manda SIGTERM, y si en 5 s no se fue vuelca las pilas al `rem_chat.log` (faulthandler en SIGUSR2:
+   SIGUSR1 es el «mostrar» del modo escritorio), SIGKILL y aviso con `notify-send`; después
+   SIGTERM/SIGKILL a los descendientes que queden. Probado con un `rem_chat.py` falso (WebView real,
+   un nieto bash→sleep, bucle de GTK bloqueado): normal 0,19 s; colgado 5,8-5,9 s, pilas en el log,
+   ningún descendiente vivo; un pidfile con el pid de otro proceso se descarta sin tocarlo. El
+   `WebKitWebProcess` muere solo al morir Python (PR_SET_PDEATHSIG); aquí WebKit no usa bwrap (los
+   procesos WebKit son hijos directos). **No probado con la app real colgada**; una instancia
+   abierta con el código de antes no tiene pidfile: cerrarla a mano una vez.
 2. **Las pruebas cambiaron el `preferencias.json` real de Esteban** (ls15 → Neru, ya restaurado). El
    entorno de prueba debe usar siempre una copia aislada de preferencias, estado
    (`escritorio_estado.json`) y caché, y nunca escribir en sus archivos.

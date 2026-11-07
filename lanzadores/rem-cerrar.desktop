@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Rem Cerrar
-Comment=Cierra Rem (ventana u overlay)
+Comment=Cierra Rem (ventana, overlay o escritorio), también si está colgado
 Exec=@LANZADORES@/rem-cerrar.sh
 Icon=@ICONO@
 Terminal=false

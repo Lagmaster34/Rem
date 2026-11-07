@@ -5,6 +5,8 @@
 memoria_*.json
 # Última posición del avatar del modo escritorio
 escritorio_estado.json
+# Pid y modo de la instancia abierta (lo leen los lanzadores)
+rem_chat.pid
 # Frases fijas del avatar ya sintetizadas (frases_voz.py)
 cache_frases/
 

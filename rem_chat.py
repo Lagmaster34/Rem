@@ -126,6 +126,35 @@ def _comprobar_instancia_unica():
                  f"en modo ventana u overlay, nunca las dos.")
 
 
+# Pidfile: lo leen los lanzadores para cerrar o encontrar esta instancia sin
+# buscar procesos por patrón. Línea 1: pid; línea 2: modo.
+PID_PATH = os.path.join(BASE_DIR, "rem_chat.pid")
+
+
+def _escribir_pidfile():
+    """Se llama con el servidor ya levantado (esta instancia es la única).
+    Escritura atómica: un lanzador nunca lee un archivo a medias. Se borra en
+    atexit, que Python corre DESPUÉS de esperar a los hilos: si la salida se
+    atasca ahí, el pidfile sigue y «Rem Cerrar» todavía encuentra el proceso."""
+    import atexit
+    tmp = PID_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(f"{os.getpid()}\n{MODO}\n")
+    os.replace(tmp, PID_PATH)
+    atexit.register(_borrar_pidfile)
+
+
+def _borrar_pidfile():
+    """Solo si sigue siendo el nuestro. Tras un SIGKILL queda uno viejo: el
+    lanzador lo detecta (el pid ya no es rem_chat.py) y lo borra."""
+    try:
+        with open(PID_PATH) as f:
+            if f.readline().strip() == str(os.getpid()):
+                os.remove(PID_PATH)
+    except OSError:
+        pass
+
+
 def _precargar_stt():
     import stt
     stt.precargar_stt()
@@ -390,6 +419,7 @@ def main():
         # La comprobación de arriba ya lo cubre; esto atrapa la carrera de dos
         # instancias lanzadas casi a la vez.
         _fatal(f"{e}. Solo puede haber una instancia de Rem.")
+    _escribir_pidfile()
 
     if MODO == "escritorio":
         import escritorio
