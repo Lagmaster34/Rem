@@ -89,12 +89,12 @@ function crearPanelChat(anf = anfitrionChat()) {
     micTimer = setTimeout(() => {
       micTimer = null;
       micMantenido = true;
-      anf.enviar({ tipo: 'ptt_start' });
+      anf.enviar({ tipo: 'ptt_start', origen: 'boton' });
     }, MANTENER_MS);
   });
   const soltarMic = cancelado => {
     if (micTimer) { clearTimeout(micTimer); micTimer = null; if (!cancelado) anf.enviar({ tipo: 'mic_toque' }); }
-    else if (micMantenido) { micMantenido = false; anf.enviar({ tipo: 'ptt_stop' }); }
+    else if (micMantenido) { micMantenido = false; anf.enviar({ tipo: 'ptt_stop', origen: 'boton' }); }
   };
   $mic.addEventListener('pointerup', () => soltarMic(false));
   $mic.addEventListener('pointercancel', () => soltarMic(true));
@@ -155,6 +155,10 @@ function crearPanelChat(anf = anfitrionChat()) {
 
   function agregarSistema(texto) {
     agregarBurbuja(texto, 'sistema');
+  }
+  // Un aviso que hay que ver (no una nota): más visible que la línea de sistema.
+  function agregarAviso(texto) {
+    agregarBurbuja(texto, 'aviso');
   }
 
   // Confirmación de una acción que la requiere (ver acciones.py,
@@ -506,7 +510,9 @@ function crearPanelChat(anf = anfitrionChat()) {
       pintarMic(est);
       if (est === 'escuchando')          setEstadoUI('🎙 Escuchando…', 'pensando');
       else if (est === 'transcribiendo') setEstadoUI('Transcribiendo…', 'pensando');
-      else if (est === 'ignorado')       { setEstadoUI('', ''); agregarSistema(`🎙 Ignorado: ${detalle}`); }
+      // Hablar mientras Yoru habla no abre el micrófono (no se graba a sí
+      // misma): que se note, no una línea gris que se pierde.
+      else if (est === 'ignorado')       { setEstadoUI('', ''); agregarAviso(`🎙 No te escuché: ${detalle}. Vuelve a intentarlo cuando termine.`); }
       else {
         if (!esperandoRespuesta) setEstadoUI('', '');
         // Un "stop" sin grabación (p. ej. el bindrt de soltar Super) no es noticia.

@@ -722,7 +722,7 @@ function crearEscritorioUI() {
     onClipLanzado(archivo) { enviarAlChat({ que: 'clip_lanzado', archivo, etiqueta: etiquetaClip(archivo) }); },
     onPttEstado(est, detalle) {
       _esc.ptt = (est === 'escuchando' || est === 'transcribiendo') ? est : 'idle';
-      if (est === 'ignorado') _decir(`🎙 ${detalle}`, 3000);
+      if (est === 'ignorado') _decir(`🎙 No te escuché: ${detalle}`, 4000);
     },
     // Veredicto del micrófono: en la burbuja, solo texto (nunca con voz: el
     // micrófono acaba de cerrarse o va a reabrirse).

@@ -36,7 +36,7 @@ def main(argv):
         return 1
 
     with ws:
-        ws.send(json.dumps({"tipo": f"ptt_{accion}"}))
+        ws.send(json.dumps({"tipo": f"ptt_{accion}", "origen": "tecla"}))
         while True:
             try:
                 msg = json.loads(ws.recv(timeout=ESPERA_S))

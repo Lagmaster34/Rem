@@ -2042,6 +2042,14 @@ casi todas; **con otra tecla ya pulsada bajo ese modificador (el caso real: SUPE
 consumió la tecla y "tapa" a los demás binds de release del mismo modificador. Un `bindr = SUPER,
 Super_L` normal (lo que se documentó primero, sin probar) no corta nada.
 
+**Un `ptt_stop` solo corta la grabación que abrió el mismo pulsador** (2026-11-06): `rem_ptt.py` manda
+`origen: "tecla"` y mantener el botón 🎙 del chat, `origen: "boton"` (sin origen cuenta como tecla). Una
+grabación automática (toque del botón o modo conversación) no la corta ningún `ptt_stop`, solo su
+detector u otro toque. Motivo, visto con el micrófono real: el `bindrt` de soltar Super manda un
+`stop` cada vez que se suelta Super por cualquier cosa, y cortaba una grabación del botón a los
+0,15 s («sin_voz»). Un stop ignorado se contesta solo a quien lo mandó (`ptt_estado: escuchando` con
+la nota) y queda en el log (`[PTT] stop de tecla ignorado: la grabación es automática (boton)`).
+
 **Red de seguridad independiente de las teclas**: `[stt].max_grabacion_s` (30 s por defecto, en
 `config.toml`) — `_ptt_iniciar()` agenda un `call_later()` al abrir el micrófono que cierra Y
 transcribe solo, pase lo que pase con las teclas. Un `ptt_stop` que llega después del tope es

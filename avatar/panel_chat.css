@@ -124,6 +124,16 @@
   text-align: center;
 }
 
+.msg.aviso {
+  align-self: center;
+  max-width: 92%;
+  text-align: center;
+  font-size: 13px;
+  color: var(--t-texto);
+  background: color-mix(in srgb, var(--t-acento) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--t-acento) 45%, transparent);
+}
+
 #chat-status {
   flex: 0 0 auto;
   min-height: 26px;

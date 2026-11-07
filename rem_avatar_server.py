@@ -541,6 +541,7 @@ _ptt_tope_handle  = None      # call_later del tope de grabación
 _ptt_stop_pedido  = False     # ptt_stop llegado mientras aún se abría el micrófono
 _ptt_stop_huerfano_t = 0.0    # ptt_stop sin start previo (toque corto: llegó antes que su start)
 _ptt_medicion     = None      # {"t_suelta", "t_fin_voz", "t_stt", ...} hasta el primer audio sonando
+_ptt_origen       = None      # quién abrió la grabación en curso: "tecla" | "boton" | "conversacion"
 _ptt_auto         = None      # grabación en automático: {"detector", "origen", "motivo", "t"}
 _ws_reproduciendo = set()     # websockets cuyo frontend reporta audio sonando (voz_estado)
 _ultimo_fin_habla = 0.0       # time.monotonic() del último fin de voz/turno
@@ -635,18 +636,20 @@ def _ptt_motivo_ocupada():
         return {"iniciando": "ya se está abriendo el micrófono",
                 "grabando": "ya se está grabando",
                 "transcribiendo": "todavía transcribiendo lo anterior"}[_ptt_estado]
+    import personalidad as _personalidad
+    nombre = _personalidad.NOMBRE_PERSONAJE
     if _chat_turno_activo:
-        return "Yoru está respondiendo"
+        return f"{nombre} está respondiendo"
     cola = _chat_cola_habla
     # _unfinished_tasks: lo que Queue.join() espera — frases encoladas O en
     # síntesis que el worker aún no marcó con task_done().
     if cola is not None and getattr(cola, "_unfinished_tasks", 0) > 0:
-        return "Yoru está preparando su voz"
+        return f"{nombre} está preparando su voz"
     if _ws_reproduciendo:
-        return "Yoru está hablando"
+        return f"{nombre} está hablando"
     import stt
     if time.monotonic() - _ultimo_fin_habla < stt.leer_config_stt()["espera_tras_habla_s"]:
-        return "Rem acaba de terminar de hablar"
+        return f"{nombre} acaba de terminar de hablar"
     return None
 
 
@@ -767,7 +770,7 @@ async def _reabrir_conversacion():
 
 
 async def _ptt_iniciar(auto: bool = False, espera_voz_s: float | None = None, origen: str = "tecla"):
-    global _ptt_estado, _ptt_grabador, _ptt_tope_handle, _ptt_stop_pedido, _ptt_auto
+    global _ptt_estado, _ptt_grabador, _ptt_tope_handle, _ptt_stop_pedido, _ptt_auto, _ptt_origen
     if time.monotonic() - _ptt_stop_huerfano_t < 0.3 and origen == "tecla":
         # El stop de un toque corto llegó ANTES que su start (son dos procesos
         # de rem_ptt.py): grabar ahora dejaría el micrófono abierto hasta el tope.
@@ -791,6 +794,7 @@ async def _ptt_iniciar(auto: bool = False, espera_voz_s: float | None = None, or
     from stt.microfono import Grabador
     cfg = stt.leer_config_stt()
     _ptt_estado, _ptt_stop_pedido = "iniciando", False
+    _ptt_origen = origen
     al_bloque = None
     _ptt_auto = None
     # Tope de seguridad (por si se pierde el stop): en automático, por detrás
@@ -946,6 +950,36 @@ async def _ptt_detener(por_tope: bool = False, motivo_auto: str | None = None):
         _conversacion(False, "la respuesta no pregunta nada")
 
 
+# Pulsadores que mandan ptt_start/ptt_stop: SUPER+H (rem_ptt.py) y mantener el
+# botón 🎙 del chat. Cualquier otro valor cuenta como "tecla" (compatibilidad).
+ORIGENES_PULSADOR = ("tecla", "boton")
+
+
+def _origen_pulsador(data: dict) -> str:
+    o = data.get("origen")
+    return o if o in ORIGENES_PULSADOR else "tecla"
+
+
+async def _ptt_stop_de(websocket, origen: str):
+    """ptt_stop de un pulsador. Solo corta la grabación que abrió ESE pulsador:
+    el bindrt de Hyprland manda un stop cada vez que se suelta Super, por
+    cualquier motivo, y antes eso cortaba también una grabación automática del
+    botón a los 0,15 s (visto en la prueba con el micrófono real). Una
+    grabación automática solo la cortan su detector u otro toque del botón."""
+    if _ptt_estado in ("iniciando", "grabando") and _ptt_origen != origen:
+        tipo = "automática" if _ptt_auto is not None else "mantenida"
+        nota = f"stop de {origen} ignorado: la grabación es {tipo} ({_ptt_origen})"
+        print(f"  [PTT] {nota}", flush=True)
+        # Solo a quien lo mandó (rem_ptt.py espera una confirmación): las
+        # interfaces siguen en "escuchando", no hay nada que repintar.
+        try:
+            await websocket.send(json.dumps({"tipo": "ptt_estado", "estado": "escuchando", "nota": nota}))
+        except Exception:
+            pass
+        return
+    await _ptt_detener()
+
+
 async def _mic_toque():
     """Un toque del botón 🎙 del chat: si no graba, abre en automático; si ya
     graba en automático, corta ahora (lo dicho se procesa)."""
@@ -1061,13 +1095,13 @@ async def _ws_handler(websocket):
                     _confirmacion_pendiente.set_result(bool(data.get("ok")))
 
             elif tipo == "ptt_start":
-                asyncio.create_task(_ptt_iniciar())
+                asyncio.create_task(_ptt_iniciar(origen=_origen_pulsador(data)))
 
             elif tipo == "mic_toque":
                 asyncio.create_task(_mic_toque())
 
             elif tipo == "ptt_stop":
-                asyncio.create_task(_ptt_detener())
+                asyncio.create_task(_ptt_stop_de(websocket, _origen_pulsador(data)))
 
             elif tipo == "estado":
                 # Un cliente (p.ej. bench_chat.py conectado como cliente WS,
