@@ -1,11 +1,8 @@
 # Rem — Asistente Virtual IA
 
-## ⚠ Fase 2 en curso (2026-11-05): ver "Nota de traspaso — fase 2" al final y `notas_fase2/README.md`
-Etapa 2 hecha y cerrada (2026-11-06): `--modo escritorio`, ver "Modo escritorio" al final.
-Etapa 4 hecha (2026-11-06): pestañas nuevas del panel, menú completo y temas, ver "Panel de control:
-pestañas nuevas y temas" al final.
-Etapa 5 hecha (2026-11-06): micrófono con fin de frase automático, veredictos y modo conversación, ver
-"Voz de entrada: fin de frase, veredictos y modo conversación" al final.
+## ⚠ Fase 2 en curso: ver "Nota de traspaso — fase 2" al final (estado y PENDIENTES en orden) y `notas_fase2/README.md`
+Etapas 2, 4 y 5 hechas y commiteadas (2026-11-06): modo escritorio, ajustes y temas, micrófono.
+**Regla: enseñar siempre el diff antes de cada commit y esperar el ok de Esteban.**
 
 ## ⚠ Cambio 2026-11-04: avatar multimodelo y director de animación (leer antes que lo de abajo)
 - **Rem (rem.vrm, rem_naenae.vrm) y los 17 clips de `VRMA_MotionPack/` ("Rem anterior") salieron del
@@ -2621,21 +2618,49 @@ herramientas de prueba.
   `avatar/README.md`), sin cambiar comportamiento. Verificado con la app real en ventana y overlay.
   VRAM: 3146 MiB con Ollama cargado, igual con ventana u overlay (WebKit dibuja WebGL por software;
   en la NVIDIA solo está `llama-server`).
-- **Etapas 2 y 3 — hechas** (2026-11-05/06): `--modo escritorio` con avatar arrastrable,
-  inclinación y pose de «colgada», región de clic que sigue al cuerpo, reacciones con voz, mirada al
-  cursor, botones, menú propio del clic derecho y chat en ventana aparte. Ver "Modo escritorio".
-- **Etapa 4 — hecha** (2026-11-06): ver "Panel de control: pestañas nuevas y temas".
-- **Etapa 5 — hecha** (2026-11-06): ver "Voz de entrada: fin de frase, veredictos y modo
-  conversación". La palabra de activación queda para después.
-- **Siguiente, en orden**: 6) quitar el modo ventana (cuando `notas_fase2/tabla_equivalencias.md`
-  esté completa); 7) animaciones en el overlay. **Medir VRAM con `nvidia-smi` en cada etapa** (con
-  Ollama cargado; `num_gpu = 99`, ~520 MiB libres).
+- **Etapas 2 y 3 — hechas y commiteadas** (2026-11-05/06, `02e16b4` + `10d3cdf`): `--modo escritorio`
+  con avatar arrastrable, inclinación y pose de «colgada», región de clic que sigue al cuerpo,
+  reacciones con voz, mirada al cursor, botones, menú propio del clic derecho y chat en ventana aparte.
+  Ver "Modo escritorio".
+- **Etapa 4 — hecha y commiteada** (2026-11-06, `2e97135`): ver "Panel de control: pestañas nuevas y
+  temas".
+- **Etapa 5 — hecha y commiteada** (2026-11-06, `21000ce`): ver "Voz de entrada: fin de frase,
+  veredictos y modo conversación". La palabra de activación queda para después.
+- **Congelamiento total con Gesto ▸ Saludar** (`@KA_Idle52_Curtsy`, en la sesión real; **no
+  reproducido** en el anidado): el commit `e2e5dc9` añadió latidos de diagnóstico (`[Bucle] vivo`,
+  `[GTK] vivo`, el vigilante) y protecciones de clips. Ver "Congelamientos del avatar". **Si vuelve a
+  pasar: pedirle a Esteban las últimas 40 líneas de `rem_chat.log`** (dicen si se colgó la interfaz
+  o la superficie dejó de recibir frames).
 - **Nombre del personaje en la interfaz**: `personalidad.NOMBRE_PERSONAJE` llega a la página por la URL
   (`url_avatar()` → `?personaje=`, `NOMBRE_PERSONAJE` en `avatar/config.js`) y lo usan la caja de texto
   ("Escríbele a Yoru…", antes "Rem" fijo en el overlay) y los estados del panel ("Yoru está pensando…").
 - **Visto, sin resolver**: en el overlay dentro del Hyprland anidado el avatar se ve al cargar pero no
   en capturas tomadas mientras habla ni tras cambiar de modelo. Ya pasaba antes de la etapa 1. Sin
   confirmar en la sesión real.
+
+### Pendientes, en orden (2026-11-06)
+
+1. **Rem Cerrar no cierra la app con el avatar congelado**: Esteban tuvo que usar `pkill -9` y
+   `kill -9` de los `WebKitWebProcess`. El lanzador debe pedir el cierre normal y, si no responde en
+   unos segundos, matar el proceso y sus `WebKitWebProcess` hijos. Probarlo con un cuelgue simulado.
+2. **Las pruebas cambiaron el `preferencias.json` real de Esteban** (ls15 → Neru, ya restaurado). El
+   entorno de prueba debe usar siempre una copia aislada de preferencias, estado
+   (`escritorio_estado.json`) y caché, y nunca escribir en sus archivos.
+3. **Latencia del micrófono**: quitar la pausa de 1 s para enseñar lo transcrito
+   (`[stt].mostrar_transcripcion_s`) y volver a medir (hoy 4,9–5,2 s de fin de voz a primer audio).
+4. **Pruebas del micrófono real**: pendientes por parte de Esteban; él las pedirá.
+5. **MPRIS / «localhost» en la barra de música**: mejora opcional para el final, sin cambiar cómo se
+   reproduce el audio. WebKitGTK 2.52 publica por MPRIS los `<audio>` y no tiene un ajuste para
+   apagarlo; las salidas vistas son reproducir con la Web Audio API (riesgo: el `AudioContext` se
+   quedaba suspendido sin gesto del usuario, ver "Reproducción de audio") o reproducir desde Python
+   (toca la cola de voz y el aviso `voz_estado`).
+
+Después: 6) quitar el modo ventana (cuando `notas_fase2/tabla_equivalencias.md` esté completa);
+7) animaciones en el overlay. **Medir VRAM con `nvidia-smi` en cada etapa** (con Ollama cargado;
+`num_gpu = 99`; hoy 3572 de 4096 MiB).
+
+**Regla de trabajo**: enseñar siempre el diff antes de cada commit y esperar el ok de Esteban; sin
+líneas de Claude/Anthropic en el mensaje.
 
 ### Decisiones tomadas
 
