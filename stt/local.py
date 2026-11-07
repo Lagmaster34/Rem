@@ -25,6 +25,11 @@ def _log(msg):
     print(f"  [STT] {msg}", flush=True)
 
 
+class _Cancelada(Exception):
+    """Una transcripción adelantada que ya no sirve, abandonada al salir del
+    codificador (ver LocalSTTProvider.transcribir_adelantada)."""
+
+
 class LocalSTTProvider(STTProvider):
     def __init__(self, model="small", compute_type="int8", device="cpu",
                  language="es", beam_size=1, cpu_threads=0, initial_prompt=None):
@@ -83,40 +88,71 @@ class LocalSTTProvider(STTProvider):
     _LOGPROB_MIN = -1.0
     _NO_HABLA_MIN = 0.6
 
-    def transcribir_adelantada(self, audio: np.ndarray) -> str | None:
+    def transcribir_adelantada(self, audio: np.ndarray, cancelar=None) -> str | None:
         """Una sola pasada a temperatura 0 (sin los reintentos a temperaturas
         más altas, que sobre un trozo que alucina tardaban ~3 s y bloqueaban a
-        la transcripción de verdad). None si algún segmento no es fiable."""
-        return self._transcribir(audio, vad=True, adelantada=True)
+        la transcripción de verdad). None si algún segmento no es fiable, o si
+        `cancelar` se activó: se mira al salir del codificador (~1 s de los
+        ~1,5 s de Whisper, no se puede cortar a mitad) y se salta la
+        decodificación (~0,5 s). Sin eso, una adelantada que quedó vieja por
+        una continuación corta («…videojuegos, ¿y tú?») seguía ocupando
+        Whisper al cortar y la transcripción de verdad la esperaba: medido
+        (2026-11-07), 3,58 s de media frente a 3,38 sin adelantar."""
+        return self._transcribir(audio, vad=True, adelantada=True, cancelar=cancelar)
 
-    def _transcribir(self, audio, vad, adelantada=False):
+    def _transcribir(self, audio, vad, adelantada=False, cancelar=None):
         with self._lock:
             modelo = self._obtener_modelo()
-            # transcribe() es un generador perezoso: la inferencia real ocurre
-            # al iterar los segmentos, así que se consume acá adentro, con el
-            # lock tomado.
-            segmentos, _info = modelo.transcribe(
-                audio.astype(np.float32, copy=False),
-                language=self.language,
-                beam_size=self.beam_size,
-                initial_prompt=self.initial_prompt,
-                # El VAD (silero, viene con faster-whisper) recorta el silencio
-                # antes de decodificar: sin él Whisper alucina texto ("Gracias
-                # por ver el video...") sobre pausas y ruido de fondo.
-                vad_filter=vad,
-                # Cada push-to-talk es un enunciado suelto: arrastrar el texto
-                # previo como contexto solo propaga alucinaciones.
-                condition_on_previous_text=False,
-                without_timestamps=True,
-                **({"temperature": 0.0} if adelantada else {}),
-            )
-            segmentos = list(segmentos)
-            if adelantada:
-                for s in segmentos:
-                    silencio = s.no_speech_prob > self._NO_HABLA_MIN
-                    if s.compression_ratio > self._COMPRESION_MAX or \
-                            (s.avg_logprob < self._LOGPROB_MIN and not silencio):
-                        _log(f"adelantada no fiable (compresión {s.compression_ratio:.2f}, "
-                             f"logprob {s.avg_logprob:.2f}): se transcribirá de nuevo")
-                        return None
-            return " ".join(s.text.strip() for s in segmentos).strip()
+            if cancelar is None:
+                return self._transcribir_con(modelo, audio, vad, adelantada)
+            if cancelar.is_set():
+                return None
+            # generate_segments() de faster-whisper llama a self.encode() y
+            # después decodifica: se envuelve encode() SOLO en esta instancia y
+            # solo mientras dura esta llamada (con el lock tomado, ninguna otra
+            # transcripción lo ve).
+            encode = modelo.encode
+
+            def encode_cancelable(*a, **k):
+                salida = encode(*a, **k)
+                if cancelar.is_set():
+                    raise _Cancelada
+                return salida
+            modelo.encode = encode_cancelable
+            try:
+                return self._transcribir_con(modelo, audio, vad, adelantada)
+            except _Cancelada:
+                _log("adelantada abandonada tras el codificador (hubo voz después)")
+                return None
+            finally:
+                del modelo.encode   # vuelve el método de la clase
+
+    def _transcribir_con(self, modelo, audio, vad, adelantada):
+        # Llamar con self._lock tomado (desde _transcribir).
+        # transcribe() es un generador perezoso: la inferencia real ocurre
+        # al iterar los segmentos, así que se consume acá adentro.
+        segmentos, _info = modelo.transcribe(
+            audio.astype(np.float32, copy=False),
+            language=self.language,
+            beam_size=self.beam_size,
+            initial_prompt=self.initial_prompt,
+            # El VAD (silero, viene con faster-whisper) recorta el silencio
+            # antes de decodificar: sin él Whisper alucina texto ("Gracias
+            # por ver el video...") sobre pausas y ruido de fondo.
+            vad_filter=vad,
+            # Cada push-to-talk es un enunciado suelto: arrastrar el texto
+            # previo como contexto solo propaga alucinaciones.
+            condition_on_previous_text=False,
+            without_timestamps=True,
+            **({"temperature": 0.0} if adelantada else {}),
+        )
+        segmentos = list(segmentos)
+        if adelantada:
+            for s in segmentos:
+                silencio = s.no_speech_prob > self._NO_HABLA_MIN
+                if s.compression_ratio > self._COMPRESION_MAX or \
+                        (s.avg_logprob < self._LOGPROB_MIN and not silencio):
+                    _log(f"adelantada no fiable (compresión {s.compression_ratio:.2f}, "
+                         f"logprob {s.avg_logprob:.2f}): se transcribirá de nuevo")
+                    return None
+        return " ".join(s.text.strip() for s in segmentos).strip()

@@ -2,6 +2,7 @@
 
 ## ⚠ Fase 2 en curso: ver "Nota de traspaso — fase 2" al final (estado y PENDIENTES en orden) y `notas_fase2/README.md`
 Etapas 2, 4 y 5 hechas y commiteadas (2026-11-06): modo escritorio, ajustes y temas, micrófono.
+Pendiente 1 de la nota hecho el 2026-11-07 (adelantada vieja abandonada); lo siguiente es el 2.
 **Regla: enseñar siempre el diff antes de cada commit y esperar el ok de Esteban.**
 
 ## ⚠ Cambio 2026-11-04: avatar multimodelo y director de animación (leer antes que lo de abajo)
@@ -2647,42 +2648,74 @@ herramientas de prueba.
   en capturas tomadas mientras habla ni tras cambiar de modelo. Ya pasaba antes de la etapa 1. Sin
   confirmar en la sesión real.
 
-### Pendientes, en orden (2026-11-06)
+### Hecho el 2026-11-06 (sesión de pendientes)
 
-1. ~~**Rem Cerrar no cierra la app con el avatar congelado**~~ — hecho (2026-11-06):
-   `rem_chat.py` escribe `rem_chat.pid` (pid y modo, ignorado por git) al levantar el servidor y
-   lo borra en `atexit`. Los lanzadores ya no buscan por patrón: `pid_rem_chat()` lee el pidfile y
-   comprueba que ese pid sigue siendo un python con ESTE `rem_chat.py` (si no, lo borra como
-   viejo). `cerrar_procesos()` apunta todos los descendientes (recursivo) ANTES de cualquier señal,
-   manda SIGTERM, y si en 5 s no se fue vuelca las pilas al `rem_chat.log` (faulthandler en SIGUSR2:
-   SIGUSR1 es el «mostrar» del modo escritorio), SIGKILL y aviso con `notify-send`; después
-   SIGTERM/SIGKILL a los descendientes que queden. Probado con un `rem_chat.py` falso (WebView real,
-   un nieto bash→sleep, bucle de GTK bloqueado): normal 0,19 s; colgado 5,8-5,9 s, pilas en el log,
-   ningún descendiente vivo; un pidfile con el pid de otro proceso se descarta sin tocarlo. El
-   `WebKitWebProcess` muere solo al morir Python (PR_SET_PDEATHSIG); aquí WebKit no usa bwrap (los
-   procesos WebKit son hijos directos). **No probado con la app real colgada**; una instancia
-   abierta con el código de antes no tiene pidfile: cerrarla a mano una vez.
-2. ~~**Las pruebas cambiaron el `preferencias.json` real de Esteban**~~ — hecho (2026-11-06): ver
-   "Entorno aislado de pruebas". La causa: `cliente_ws.py` cambiaba el modelo y lo «restauraba» con
-   otro `prefs_set` sobre el archivo real (y `verificar.sh` borraba el `rem_chat.log` real).
-3. ~~**Latencia del micrófono**~~ — hecho (2026-11-06): el servidor ya no espera
-   `mostrar_transcripcion_s` antes de mandar lo transcrito al LLM; ese valor solo dice cuánto lo
-   enseña la interfaz. A/B en la misma sesión: 4,36 s → 3,42 s de media (ver "Voz de entrada").
-   Esas cifras eran hasta que la página RECIBE el audio; hasta que suena de verdad, ~0,08 s más
-   (3,34-3,78 s, medido después con `voz_sonando`).
-4. **Pruebas del micrófono real**: pendientes por parte de Esteban; él las pedirá.
-5. **MPRIS / «localhost» en la barra de música**: mejora opcional para el final, sin cambiar cómo se
+- Rem Cerrar con la app colgada: pidfile + cierre del árbol de procesos (`1ec596f`; detalle en los
+  comentarios de `lanzadores/_comun.sh`). **No probado con la app real colgada**, solo con una falsa.
+- Entorno aislado de pruebas, `REM_DATOS` + `tests/entorno_aislado.sh` (`3ccab2a`).
+- Lo transcrito va al LLM sin la espera de 1 s (`a34b335`); la medición llega hasta que el audio
+  suena y el log anota la energía (`e2bcc91`).
+- Un `ptt_stop` solo corta la grabación de su pulsador, y el aviso de PTT ignorado se ve (`7607c81`).
+- Transcripción adelantada durante el silencio de fin de frase (`8f4560e`).
+- Pruebas con el micrófono real (Esteban, con cargador): toque 3,35-3,95 s y SUPER+H 2,77-3,62 s de
+  fin de voz a audio sonando; «videojuegos» bien; la pausa larga no cortó; «muerto» bien detectado.
+  Fueron antes de la transcripción adelantada.
+
+### Pendientes, en orden (2026-11-06, al cerrar la sesión)
+
+1. ~~**Medir las dos frases con pausa con `adelantar_s = 0`**~~ — hecho (2026-11-07): en las dos sale
+   mejor la adelantada; salía peor con una continuación corta y se arregló abandonando la adelantada
+   vieja (ver "A/B con `adelantar_s = 0`" en "Voz de entrada").
+2. **Cambiar el `initial_prompt`** de `[stt.local]` al de conversación, **sin «sirviente»**, y volver a
+   medir los errores por palabra (comparación previa en "`initial_prompt` técnico vs. de
+   conversación": 17,3 % el actual, 11,1 % el de conversación con «sirviente»).
+3. **Avisos con voz** (lo que hoy sale en el chat sin voz). Frases aprobadas por Esteban, en el
+   registro de Yoru de `personalidad.py` (tú, «sirviente», sin exclamaciones, sin español de España),
+   para sintetizar con la caché de `frases_voz.py` como las reacciones del escritorio:
+   - Micrófono silenciado o sin audio (`muerto`/`silencio`): «No me llega nada del micro, sirviente.
+     ¿Lo tienes silenciado?» · «…Silencio total. Revisa el micro.» · «Tu micro está muerto. O mudo.
+     Revísalo.»
+   - Llega audio pero no voz (`sin_voz`): «No oí nada. Repite.» · «…¿Dijiste algo? Más alto,
+     sirviente.» · «Solo oí ruido. Otra vez.»
+   - Frase inventada por Whisper: «Eso no lo dijiste tú, ¿verdad? Repite.» · «…Creo que oí
+     fantasmas. Dilo de nuevo.» · «Mi oído se inventó algo. Otra vez, sirviente.»
+   - Error de un turno: «Se me trabó la cabeza. Dímelo otra vez.» · «…Lag mental. Repite,
+     sirviente.» · «Algo falló de mi lado. Por esta vez no es skill issue tuyo.»
+   - No se pudo abrir el micrófono: «No puedo abrir el micro. Revisa que esté conectado.» · «El micro
+     no me deja entrar, sirviente. Revísalo.»
+   - Falló la transcripción: «No te entendí. Repite.» · «…Se me perdió lo que dijiste. Otra vez.»
+   - Escribir con la tecla de voz pulsada: «Suelta la tecla primero, sirviente.» · «O hablas o
+     escribes. Suelta la tecla.»
+   - Confirmación de apagar la PC: «¿Apago la PC, sirviente? Dime sí o no en el chat.» · «¿Seguro que
+     apago la PC? Confírmalo en el chat.» — **unificarlas con el grupo `confirmar` de
+     `frases_escritorio.json`** (hoy «Confírmalo en el chat, sirviente.» / «Confírmalo en el chat.»).
+   - En `frases_escritorio.json`, «…Vale. Vuelvo a hablar.» → «…Bueno. Vuelvo a hablar.».
+   - **Se quedan solo escritos**: «No te escuché: Yoru está hablando» (y «Yoru ya está respondiendo»:
+     ella está hablando), los fallos de la propia voz, «Voz detectada», la depuración y los avisos de
+     la interfaz (modo, modelo, clips, comandos, conexión).
+   - **Modo conversación: un sonido corto en vez de frase** (aprobados): al abrir el micrófono dos
+     notas que suben, mi5 (659,3 Hz, 90 ms) → silencio 25 ms → si5 (987,8 Hz, 140 ms); al cerrar,
+     las mismas al revés (si5 → mi5). Seno + 25 % de 2.º armónico, ataque 8 ms, caída exponencial
+     (constante = duración/2,2), pico −16 dBFS, 22050 Hz, 255 ms en total. El cierre por «nadie
+     habló» usa el de cerrar, sin frase.
+4. **MPRIS / «localhost» en la barra de música**: opcional, para el final, sin cambiar cómo se
    reproduce el audio. WebKitGTK 2.52 publica por MPRIS los `<audio>` y no tiene un ajuste para
    apagarlo; las salidas vistas son reproducir con la Web Audio API (riesgo: el `AudioContext` se
    quedaba suspendido sin gesto del usuario, ver "Reproducción de audio") o reproducir desde Python
    (toca la cola de voz y el aviso `voz_estado`).
 
-Después: 6) quitar el modo ventana (cuando `notas_fase2/tabla_equivalencias.md` esté completa);
-7) animaciones en el overlay. **Medir VRAM con `nvidia-smi` en cada etapa** (con Ollama cargado;
-`num_gpu = 99`; hoy 3572 de 4096 MiB).
+Después: 5) quitar el modo ventana (cuando `notas_fase2/tabla_equivalencias.md` esté completa);
+6) animaciones en el overlay. **Medir VRAM con `nvidia-smi` en cada etapa** (con Ollama cargado;
+`num_gpu = 99`; hoy 3577 de 4096 MiB).
 
-**Regla de trabajo**: enseñar siempre el diff antes de cada commit y esperar el ok de Esteban; sin
-líneas de Claude/Anthropic en el mensaje.
+**Reglas de trabajo**:
+- **El entorno de prueba nunca puede tocar el escritorio, los archivos ni los puertos de Esteban; si
+  pasa, avisarle.** Pruebas siempre dentro de `tests/entorno_aislado.sh`, y la app de prueba solo con
+  el Hyprland anidado ya arriba (si no, se abre en su escritorio real: pasó el 2026-11-06). Mientras
+  una prueba ocupa los puertos 18765/18766 su Rem no puede arrancar (también pasó): cerrar siempre la
+  prueba al terminar.
+- **Enseñar el diff antes de cada commit y esperar el ok de Esteban**; sin líneas de
+  Claude/Anthropic en el mensaje.
 
 ### Decisiones tomadas
 
@@ -2947,12 +2980,39 @@ real con el detector y el Whisper de la app (sin ellas, «Oye Yoru» + 0,4 s + �
 bloqueaban a la de verdad): solo con ≥ 1 s de voz, y la adelantada va a temperatura 0 sin reintentos;
 si algún segmento no pasa los umbrales con los que faster-whisper reintentaría (compresión > 2,4,
 logprob < −1 sin ser silencio) devuelve `None` y se transcribe de nuevo, así que la precisión es la de
-siempre. Whisper va de uno en uno: hablar tras una pausa deja la adelantada vieja corriendo y la de
-verdad la espera. En la app (anidado, micrófono simulado, 3 toques por frase), sonando desde que dejas
-de hablar: sin pausa **2,68-2,92 s** (antes ~3,5); pausa 0,4 s + continuación larga 3,04-4,60 s
+siempre. Whisper va de uno en uno: hablar tras una pausa deja la adelantada vieja corriendo y lo
+que venga después la espera (ver abajo, «A/B con `adelantar_s = 0`»). En la app (anidado, micrófono
+simulado, 3 toques por frase), sonando desde que dejas de hablar: sin pausa **2,68-2,92 s** (antes
+~3,5); pausa 0,4 s + continuación larga 3,04-4,60 s
 (adelantada de ~2,1 s, solo esconde 0,64 s); «Oye Yoru» + 0,4 s + «¿cómo estás?» 2,97-3,65 s (sin
 adelantada en la pausa). El log dice por qué vía salió el texto: `STT (adelantada (1,62s de
 Whisper))` o `STT (normal (la adelantada quedó vieja…))`, y el tiempo es el que se espera tras cortar.
+
+**A/B con `adelantar_s = 0` y adelantada vieja abandonada** (2026-11-07). Banco: la app en el anidado
+(entorno aislado), modo **Eco** (sin LLM: lo único que cambia entre variantes es el camino de Whisper),
+con corriente, micrófono simulado, toques del botón y las dos variantes alternadas en la misma sesión
+(un lanzador que lee `adelantar_s` de un archivo en cada grabación, sin tocar `config.toml`). Frases de
+Piper con `sil(0.3)` alrededor y 0,4 s entre partes. Sonando desde que dejas de hablar, medias:
+
+| Frase | `adelantar_s = 0` | 0,35 (antes del arreglo) | 0,35 (con el arreglo) |
+|---|---|---|---|
+| Sin pausa (3,7 s) | 3,04 · 3,40 | 2,31 | 2,59 |
+| 2,2 s + pausa + continuación larga (4,3 s) | 3,51 · 3,00 · 3,66 | 2,96 · 2,33 (9 pares; pierde en 2 por la variación de Whisper) | 2,79 |
+| «Oye Yoru,» + pausa + «¿cómo estás?» | 2,94 · 3,15 | 2,22 | 2,35 |
+| 2,1 s + pausa + **continuación corta** («¿y tú?», 0,6 s) | 3,38 · 3,44 | **3,58** (peor en 4 de 5 con la vieja) | **3,20** (mejor o igual en 6 de 6) |
+
+(Cada celda, una corrida de 3-6 pares; las de `= 0` son el emparejado de cada corrida. El nivel absoluto
+se mueve entre corridas en ~0,3 s.) El caso que salía peor era el de continuación corta: la adelantada
+de la pausa seguía ocupando Whisper al cortar, la final no llegaba a lanzarse y la normal la esperaba.
+Arreglo: en cuanto el detector ve voz después de lanzarla, `_quizas_adelantar` activa su
+`threading.Event` y `LocalSTTProvider` la abandona **al salir del codificador** (envuelve `encode()` de
+esa instancia mientras dura la llamada): el codificador es ~1,0 s de ~1,5 s y no se puede cortar a mitad;
+lo que se ahorra es la decodificación (~0,5 s), suficiente para que la final se lance en la pausa final.
+Log: `[PTT] transcripción adelantada vieja (hubo voz después): se abandona` y `[STT] adelantada
+abandonada tras el codificador`. Descartado: dos workers de Whisper en paralelo (aislado: la final, 1 s
+después de la vieja, tarda 2,24 s con dos workers frente a 2,52 con uno y 1,5 sola: compiten por la CPU;
++250 MiB de RAM). Whisper oye «Oye Yoru» como «¡Oh, GTK» (palabra del `initial_prompt` técnico) y «¿y
+tú?» como «¿Listo?»: lo trata el pendiente del `initial_prompt`.
 
 **`initial_prompt` técnico vs. de conversación** (medido, sin cambiar): con 14 frases × 2 ruidos
 (Piper), el actual da 17,3 % de errores por palabra y cuela palabras técnicas («Oye Yoru, ¿cómo

@@ -847,8 +847,9 @@ async def _ptt_iniciar(auto: bool = False, espera_voz_s: float | None = None, or
 # 1,4 a 4,1 s: solo con adelantar_min_voz_s de voz (sobre un trozo corto
 # Whisper alucina) y la adelantada no reintenta a otras temperaturas (coste
 # acotado, ver LocalSTTProvider.transcribir_adelantada). Whisper va de uno en
-# uno: si hablas después de una pausa, la adelantada vieja no se cancela y la
-# de verdad la espera. Si su texto no es fiable, se transcribe de nuevo.
+# uno: si hablas después de una pausa, la adelantada vieja se abandona al salir
+# del codificador (no se puede antes) y lo que venga después espera solo eso.
+# Si su texto no es fiable, se transcribe de nuevo.
 _ADELANTO_TOLERANCIA_S = 0.1   # fin de voz recalculado con el piso nuevo: puede moverse una trama
 
 
@@ -856,9 +857,15 @@ def _quizas_adelantar(det, estado, cfg_voz, loop):
     """Corre en el hilo de PortAudio (al_bloque): nada pesado, solo lanza."""
     if cfg_voz.adelantar_s <= 0 or det.voz_desde is None or det.fin_voz_s is None:
         return
+    ad = estado.get("adelantada")
+    if (ad is not None and not ad["cancelar"].is_set() and not ad["futuro"].done()
+            and abs(ad["fin_voz"] - det.fin_voz_s) >= _ADELANTO_TOLERANCIA_S):
+        # Hubo voz después: su texto ya no sirve. Que suelte Whisper cuanto
+        # antes, para que la de la pausa nueva (o la normal) no la espere.
+        ad["cancelar"].set()
+        print("  [PTT] transcripción adelantada vieja (hubo voz después): se abandona", flush=True)
     if det.silencio_s < cfg_voz.adelantar_s or det.fin_voz_s - det.voz_desde < cfg_voz.adelantar_min_voz_s:
         return
-    ad = estado.get("adelantada")
     if ad is not None and (abs(ad["fin_voz"] - det.fin_voz_s) < _ADELANTO_TOLERANCIA_S
                            or not ad["futuro"].done()):
         return   # ya está lanzada para este silencio, o Whisper sigue ocupado con la anterior
@@ -867,9 +874,9 @@ def _quizas_adelantar(det, estado, cfg_voz, loop):
         return
     import stt
     audio = grabador.instantanea()
-    ad = {"fin_voz": det.fin_voz_s, "t0": time.perf_counter()}
+    ad = {"fin_voz": det.fin_voz_s, "t0": time.perf_counter(), "cancelar": threading.Event()}
     ad["futuro"] = asyncio.run_coroutine_threadsafe(
-        asyncio.to_thread(stt.obtener_stt().transcribir_adelantada, audio), loop)
+        asyncio.to_thread(stt.obtener_stt().transcribir_adelantada, audio, ad["cancelar"]), loop)
     ad["futuro"].add_done_callback(lambda _f, _ad=ad: _ad.__setitem__("t_fin", time.perf_counter()))
     estado["adelantada"] = ad
     print(f"  [PTT] transcripción adelantada: {det.silencio_s:.2f}s de silencio tras "
