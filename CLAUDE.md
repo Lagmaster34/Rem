@@ -2,7 +2,7 @@
 
 ## ⚠ Fase 2 en curso: ver "Nota de traspaso — fase 2" al final (estado y PENDIENTES en orden) y `notas_fase2/README.md`
 Etapas 2, 4 y 5 hechas y commiteadas (2026-11-06): modo escritorio, ajustes y temas, micrófono.
-Pendiente 1 de la nota hecho el 2026-11-07 (adelantada vieja abandonada); lo siguiente es el 2.
+Pendiente 1 de la nota hecho el 2026-11-07; el 2 queda sin decidir (falta grabar con la voz de Esteban); lo siguiente es el 3.
 **Regla: enseñar siempre el diff antes de cada commit y esperar el ok de Esteban.**
 
 ## ⚠ Cambio 2026-11-04: avatar multimodelo y director de animación (leer antes que lo de abajo)
@@ -2666,9 +2666,15 @@ herramientas de prueba.
 1. ~~**Medir las dos frases con pausa con `adelantar_s = 0`**~~ — hecho (2026-11-07): en las dos sale
    mejor la adelantada; salía peor con una continuación corta y se arregló abandonando la adelantada
    vieja (ver "A/B con `adelantar_s = 0`" en "Voz de entrada").
-2. **Cambiar el `initial_prompt`** de `[stt.local]` al de conversación, **sin «sirviente»**, y volver a
-   medir los errores por palabra (comparación previa en "`initial_prompt` técnico vs. de
-   conversación": 17,3 % el actual, 11,1 % el de conversación con «sirviente»).
+2. **`initial_prompt` de `[stt.local]`: se queda el técnico** (decidido por Esteban, 2026-11-07).
+   - Estado: comparado con un banco de voz sintética (Piper); no decide, porque la conclusión se
+     invirtió entre dos bancos (técnico 7,4 % vs conversación sin «sirviente» 9,1 % hoy; al revés
+     ayer). Banco: `tests/banco_wer.py` (16 frases × 3 síntesis × 2 ruidos + los dos audios de la
+     app; cinco variantes del prompt).
+   - Falta: grabar con el micrófono de Esteban las 16 frases, dos veces cada una, más «Oye Yoru,
+     ¿cómo estás?» y «Ayer estuve jugando videojuegos, [pausa] ¿y tú?», y pasarlas por las cinco
+     variantes.
+   - Los WAV con la voz de Esteban van fuera del repo (es público), nunca en git.
 3. **Avisos con voz** (lo que hoy sale en el chat sin voz). Frases aprobadas por Esteban, en el
    registro de Yoru de `personalidad.py` (tú, «sirviente», sin exclamaciones, sin español de España),
    para sintetizar con la caché de `frases_voz.py` como las reacciones del escritorio:
