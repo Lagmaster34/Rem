@@ -145,8 +145,8 @@ provider = "local"
 max_grabacion_s = 30
 # Grabaciones más cortas que esto se descartan (un toque accidental de la tecla).
 min_grabacion_s = 0.4
-# Cuánto se muestra lo transcrito en la caja de texto ANTES de mandárselo al
-# LLM, para ver qué entendió.
+# Cuánto enseña la interfaz lo transcrito (caja del overlay, burbuja del
+# escritorio), para ver qué entendió. No retrasa el envío al LLM.
 mostrar_transcripcion_s = 1.0
 # Margen tras el último audio de Rem antes de aceptar otro ptt_start (cola de
 # reproducción/eco de sala).

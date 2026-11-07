@@ -1942,8 +1942,8 @@ aceptado, 1 sin conexión/sin respuesta, 2 ignorado (con el motivo impreso). Tod
 solo hilo): `ptt_start` abre `stt.microfono.Grabador` (`asyncio.to_thread`, no bloquea el loop),
 manda `ptt_estado: escuchando`; `ptt_stop` lo cierra, descarta grabaciones más cortas que
 `[stt].min_grabacion_s` (toque accidental), transcribe (`asyncio.to_thread`), muestra el texto en
-la caja/panel (`ptt_transcripcion`, con `[stt].mostrar_transcripcion_s` de pausa para que se vea
-qué entendió antes de mandarlo) y recién entonces lo corre como un `chat_message` normal
+la caja/panel (`ptt_transcripcion`; `[stt].mostrar_transcripcion_s` es cuánto lo enseña la
+interfaz, no una espera) y a la vez lo corre como un `chat_message` normal
 (`_procesar_mensaje_chat(texto, t_ref=...)`) — mismo turno de LLM/voz que si se hubiera escrito, sin
 duplicar ese pipeline. Un tope de grabación (`[stt].max_grabacion_s`) se agenda con
 `call_later()` al abrir el micrófono, por si se pierde el `ptt_stop` (tecla soltada fuera de foco,
@@ -2656,8 +2656,9 @@ herramientas de prueba.
 2. ~~**Las pruebas cambiaron el `preferencias.json` real de Esteban**~~ — hecho (2026-11-06): ver
    "Entorno aislado de pruebas". La causa: `cliente_ws.py` cambiaba el modelo y lo «restauraba» con
    otro `prefs_set` sobre el archivo real (y `verificar.sh` borraba el `rem_chat.log` real).
-3. **Latencia del micrófono**: quitar la pausa de 1 s para enseñar lo transcrito
-   (`[stt].mostrar_transcripcion_s`) y volver a medir (hoy 4,9–5,2 s de fin de voz a primer audio).
+3. ~~**Latencia del micrófono**~~ — hecho (2026-11-06): el servidor ya no espera
+   `mostrar_transcripcion_s` antes de mandar lo transcrito al LLM; ese valor solo dice cuánto lo
+   enseña la interfaz. A/B en la misma sesión: 4,36 s → 3,42 s de media (ver "Voz de entrada").
 4. **Pruebas del micrófono real**: pendientes por parte de Esteban; él las pedirá.
 5. **MPRIS / «localhost» en la barra de música**: mejora opcional para el final, sin cambiar cómo se
    reproduce el audio. WebKitGTK 2.52 publica por MPRIS los `<audio>` y no tiene un ajuste para
@@ -2915,6 +2916,16 @@ de 3,4 s, 3 medidas): **4,9–5,2 s** = 1,0 s de silencio de espera + ~1,65 s de
 `mostrar_transcripcion_s` (pausa para ver lo entendido) + ~1,3 s de LLM hasta la primera oración y
 voz. En Eco, 3,7 s. Los dos tramos fijos (silencio 1 s y la pausa de 1 s) son los fáciles de bajar.
 Whisper oía «Lloro» por «Yoru»: se añadió «Yoru» a `initial_prompt`.
+
+**Sin la pausa de 1 s** (2026-11-06): `ptt_transcripcion` sale y el turno arranca a la vez
+(`mostrar_transcripcion_s` queda solo como cuánto lo enseña la interfaz; entre el fin de la grabación
+y el flag del turno no hay ningún `await`, así que un `ptt_start` no se cuela). A/B en la misma
+sesión (entorno aislado, Hyprland anidado, micrófono simulado, modo IA con Ollama caliente, frase de
+3,2 s, 3 medidas por variante, la espera vuelta a meter a mano para la B): **con la pausa 4,25 /
+4,45 / 4,39 s (media 4,36); sin ella 3,55 / 3,47 / 3,24 s (media 3,42)**: ~0,94 s menos. Desglose
+de ahora: 1,0 s de silencio de espera + ~1,7 s de Whisper (5,7 s de audio grabado contando el silencio
+inicial) + ~0,7 s de LLM y voz. Lo que queda fijo y se podría bajar es `[stt.voz].silencio_s` (1 s),
+a costa de cortar frases con pausas largas. Whisper sigue oyendo a veces «video-cuegos».
 
 
 ## Entorno aislado de pruebas (`REM_DATOS`, `tests/entorno_aislado.sh`)

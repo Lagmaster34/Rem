@@ -34,7 +34,7 @@ function crearOverlayUI() {
   const $input  = raiz.querySelector('#ov-input');
 
   let esperandoRespuesta = false;   // hay un turno en curso (escrito o por voz)
-  let mostrandoTranscripcion = false; // la caja enseña lo que entendió el STT antes de enviarlo
+  let mostrandoTranscripcion = false; // la caja enseña lo que entendió el STT (el turno ya arrancó)
   let pttEstado = 'idle';           // 'escuchando' | 'transcribiendo' | 'idle'
   let avisoTemporal = null;         // {texto, hasta} — errores/notas breves
 
@@ -121,10 +121,10 @@ function crearOverlayUI() {
     },
     onMicVeredicto(veredicto, mensaje) { if (veredicto !== 'enviar') avisar(mensaje, 4500); },
     onConversacion(activa) { if (activa) avisar('🎙 Te vuelvo a escuchar al terminar', 3000); },
-    // Lo entendido se enseña en la caja (`ms` = cuánto tarda el servidor en
-    // mandárselo al LLM); mientras, la caja no acepta Enter (duplicaría el envío).
+    // Lo entendido se enseña en la caja durante `ms` (el turno ya arrancó a la
+    // vez); mientras, la caja no acepta Enter (duplicaría el envío).
     onTranscripcion(texto, ms) {
-      console.log(`[Overlay] transcripción en la caja: "${texto}" (${ms}ms antes de enviarla)`);
+      console.log(`[Overlay] transcripción en la caja: "${texto}" (se enseña ${ms}ms)`);
       $input.value = texto;
       $input.classList.add('transcrito');
       mostrandoTranscripcion = true;

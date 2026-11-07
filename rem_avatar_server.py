@@ -519,8 +519,8 @@ async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None, por_voz
 # Flujo: `rem_ptt.py start` (bindr/bind de Hyprland) -> ptt_start por WS ->
 # se abre el micrófono; `rem_ptt.py stop` -> ptt_stop -> se cierra, se
 # transcribe (stt/, en un hilo: es CPU y bloquearía el loop) -> la
-# transcripción se muestra un instante (ptt_transcripcion) y recién después
-# entra como un chat_message normal — mismo turno de LLM/voz que si se
+# transcripción se enseña (ptt_transcripcion) y entra a la vez como un
+# chat_message normal — mismo turno de LLM/voz que si se
 # hubiera escrito.
 #
 # DECISIÓN — ¿qué pasa con ptt_start mientras Rem habla? SE IGNORA (no la
@@ -903,12 +903,13 @@ async def _ptt_detener(por_tope: bool = False, motivo_auto: str | None = None):
         return
     _emitir_veredicto("enviar", v)
 
-    # Se muestra lo entendido antes de que Rem responda (la UI lo pone en la
-    # caja de texto). El estado sigue en "transcribiendo" durante esa pausa:
-    # un ptt_start nuevo se ignora hasta que arranque el turno.
+    # Se enseña lo entendido (caja del overlay, burbuja del escritorio, burbuja
+    # del chat) y el turno arranca YA: `ms` es solo cuánto lo enseña la UI, no
+    # una espera (antes el servidor esperaba ese tiempo antes de mandarlo al
+    # LLM: 1 s más de latencia). Entre _terminar() y el flag del turno no hay
+    # ningún await, así que un ptt_start no puede colarse en medio.
     _broadcast_ws({"tipo": "ptt_transcripcion", "texto": texto,
                    "ms": int(cfg["mostrar_transcripcion_s"] * 1000)})
-    await asyncio.sleep(cfg["mostrar_transcripcion_s"])
     _terminar()
     _ptt_medicion = {"t_suelta": t_suelta, "t_fin_voz": t_fin_voz, "t_stt": t_stt, "dur": dur,
                      "auto": bool(auto)}
