@@ -3109,7 +3109,10 @@ con una COPIA de los datos reales, corre el comando con `REM_DATOS` y al termina
 borrados en los archivos reales (proyecto, `lanzadores/logs/` y
 `~/.cache|~/.local/share/rem_chat.py|rem_panel.py`): si hay alguno lo lista y sale con 3.
 **Se niega a correr (sale con 4) si hay una instancia real viva** (pidfile real válido o los puertos
-18765/18766 ocupados por quien sea): con los puertos tomados la app de la prueba no levanta y sus
+18765/18766 ocupados por quien sea) **o un cliente real que se reconecta solo** (`rem_panel.py` o
+`bench_chat.py` de este proyecto sin `REM_DATOS` en su entorno: el 2026-11-10 el panel real, abierto
+tras un cuelgue, se enganchó durante ~3 min a la app de una prueba; no mandó cambios, pero su log real
+cambió y el envoltorio lo detectó): con los puertos tomados la app de la prueba no levanta y sus
 clientes hablarían con la real. Se eligió esto y no puertos distintos con `REM_DATOS` porque los
 puertos están fijos en el servidor, los orígenes del WS, las páginas, `rem_ptt.py`, `rem_escritorio.py`,
 `bench_chat.py` y los clientes de prueba: cambiarlos solo en pruebas tocaba todo eso y las pruebas
