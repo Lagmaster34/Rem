@@ -75,31 +75,46 @@ def leer_modelo_tts() -> str:
     return ruta if os.path.isabs(ruta) else os.path.join(BASE_DIR, ruta)
 
 
-def leer_modo_app() -> str:
-    """Modo de presentación de rem_chat.py, desde config.toml [app].modo:
-    "ventana" (default), "overlay" o "escritorio". Cualquier otro valor cae a
-    "ventana". rem_chat.py --modo lo pisa."""
-    valor = str(leer_config_toml().get("app", {}).get("modo", "ventana")).strip().lower()
-    return valor if valor in ("ventana", "overlay", "escritorio") else "ventana"
+MODOS_APP = ("ventana", "escritorio")
+
+
+def modo_de_toml() -> str:
+    """[app].modo de config.toml, tal cual (puede ser el alias "overlay")."""
+    return str(leer_config_toml().get("app", {}).get("modo", "escritorio")).strip().lower()
+
+
+def resolver_modo(valor: str) -> tuple[str, bool]:
+    """(modo, fijado) de un valor de --modo/[app].modo. "overlay" es un alias
+    del escritorio fijado en la esquina (el modo overlay se fusionó con el de
+    escritorio, 2026-11-10). Un valor desconocido cae a escritorio."""
+    valor = (valor or "").strip().lower()
+    if valor == "overlay":
+        return "escritorio", True
+    return (valor if valor in MODOS_APP else "escritorio"), False
+
+
+def leer_modo_app() -> tuple[str, bool]:
+    """Modo con el que arranca rem_chat.py sin --modo: config.toml [app].modo.
+    Devuelve (modo, fijado-por-alias)."""
+    return resolver_modo(modo_de_toml())
 
 
 def leer_config_overlay() -> dict:
-    """[overlay] de config.toml con defaults: geometría, capa y zona exclusiva
-    de la layer surface del modo overlay."""
+    """[overlay] de config.toml con defaults: la superficie del escritorio
+    FIJADO en la esquina (el antiguo modo overlay): tamaño y márgenes. La capa y
+    las barras son las del escritorio (pestaña Escritorio del panel)."""
     cfg = leer_config_toml().get("overlay", {})
     def _int(clave, default):
         try:
             return int(cfg.get(clave, default))
         except (TypeError, ValueError):
             return default
-    capa = str(cfg.get("capa", "top")).strip().lower()
     return {
         "ancho": max(100, _int("ancho", 420)),
         "alto": max(100, _int("alto", 600)),
         "margen_izquierdo": _int("margen_izquierdo", 0),
         "margen_inferior": _int("margen_inferior", 0),
-        "capa": capa if capa in ("top", "overlay") else "top",
-        "zona_exclusiva": _int("zona_exclusiva", 0),
+        "aire_lateral": max(0, _int("aire_lateral", 90)),
     }
 
 

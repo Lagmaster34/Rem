@@ -21,7 +21,7 @@
 // El cuerpo se mueve SOLO con clips: entre gestos, la pose base (catálogo ->
 // poseBase, Respirar en bucle) — también hablando; thinking y listening
 // tienen su propio clip (porEstado). Lo procedural queda como respaldo
-// mientras carga el primer clip, y en overlay (sin mixer).
+// mientras carga el primer clip.
 // Los números salen de catalogo.json -> ajustes (probRaro,
 // probSuperRaro, intervaloReposo), pisables desde el panel.
 let _modoBaile = (() => { try { return localStorage.getItem('rem_modo_baile') === '1'; } catch { return false; } })();
@@ -60,7 +60,7 @@ const _bolsas = (() => {
 function _bailesDisponibles(superRaro) {
   if (!_catalogo) return [];
   return Object.entries(_catalogo.clips)
-    .filter(([id, c]) => c.categoria === 'dance' && clipUsable(id) && clipActivo(id) && (c.raro === true) === superRaro)
+    .filter(([id, c]) => c.categoria === 'dance' && clipUsable(id) && clipActivo(id) && clipAptoFijo(id) && (c.raro === true) === superRaro)
     .map(([id]) => id);
 }
 function _barajar(a) {
@@ -120,7 +120,7 @@ function _elegirGesto(excluir) {
   const hora = new Date().getHours();
   const raros = [], comunes = [];
   for (const [id, c] of Object.entries(_catalogo.clips)) {
-    if (c.categoria === 'dance' || !clipUsable(id) || !clipActivo(id) || !(c.peso > 0)) continue;
+    if (c.categoria === 'dance' || !clipUsable(id) || !clipActivo(id) || !clipAptoFijo(id) || !(c.peso > 0)) continue;
     if (c.horas && !(hora >= c.horas[0] && hora < c.horas[1])) continue;
     (c.raro ? raros : comunes).push({ id, peso: c.peso * pesoCategoria(c.categoria) });
   }
@@ -159,7 +159,7 @@ function _dispararSaludo() {
   const clave = 'rem_ultimo_saludo:' + MODELO_ACTIVO;
   let anterior = null;
   try { anterior = localStorage.getItem(clave); } catch {}
-  let ids = Object.entries(_catalogo.clips).filter(([id, c]) => c.saludo && clipUsable(id)).map(([id]) => id);
+  let ids = Object.entries(_catalogo.clips).filter(([id, c]) => c.saludo && clipUsable(id) && clipAptoFijo(id)).map(([id]) => id);
   if (ids.length > 1) ids = ids.filter(id => id !== anterior);
   if (!ids.length) return;
   const id = ids[Math.floor(Math.random() * ids.length)];
@@ -191,7 +191,7 @@ function recibirEmocion(nombre) {
   const breve = nombre === 'surprised';
   _emocion = { nombre, hasta: breve ? performance.now() + ajusteAnim('emocionBreveS', 5) * 1000 : null };
   console.log(`[Emoción] ${nombre}${breve ? ' (breve)' : ''}`);
-  if (ES_OVERLAY || !_mixer || _bailando || hayClipManual()) return;
+  if (!_mixer || _bailando || hayClipManual()) return;
   const m = porEstadoEfectivo(nombre);
   const id = m ? _elegirClipDeEstado(nombre, m) : null;
   if (!id || (clipGiraCuerpo(id) && hayVozSonando())) return;
@@ -297,7 +297,6 @@ function updateDirector(dt) {
 // Se comporta como cualquier gesto: si entra audio o cambia el estado, se
 // interrumpe con crossfade (la voz manda).
 window.dispararClipDebug = function (nombre) {
-  if (ES_OVERLAY) { console.log(`[Anim] debug_clip "${nombre}" ignorado: el modo overlay no usa clips VRMA`); return; }
   const archivo = resolverClip(nombre);
   if (!archivo) { console.warn(`[Anim] debug_clip "${nombre}": no está en el catálogo — no se dispara`); return; }
   const tok = ++_tokenClip;
@@ -396,7 +395,7 @@ function aplicarCabezaSigueMiradaEncima(k) {
 // Llamada desde animate() en lugar del bloque de pose de cuerpo. Decide entre
 // procedural puro, clip puro, o la mezcla de los dos durante un crossfade.
 function actualizarAnimacionClips(dt, t) {
-  if (!_mixer) { _idleAmpMult = 1; aplicarCuerpoProcedural(t, dt); return; } // overlay, o aún no cargó el VRM
+  if (!_mixer) { _idleAmpMult = 1; aplicarCuerpoProcedural(t, dt); return; } // aún no cargó el VRM
   updateDirector(dt);
 
   // Salida NATURAL de un clip 'bucle' con tope (baile corto, duracionS): arranca

@@ -12,6 +12,11 @@ Dos ventanas en el mismo proceso que el servidor:
     rápido) porque llegan eventos antes de que el compositor mueva la capa
     (etapa 0 de la fase 2, ver CLAUDE.md). Un clic sin arrastre se le pasa a la
     página (reacciones); el derecho lo resuelve la página (su menú).
+    FIJADO EN LA ESQUINA (menú → «Fijar en la esquina», o --modo overlay, el
+    antiguo modo overlay): sin arrastre, anclado abajo a la izquierda con el
+    tamaño y los márgenes de config.toml [overlay], a medio cuerpo y con una caja
+    de texto. Se activa y se quita en vivo; la posición libre se conserva. El
+    teclado solo se toma con el puntero sobre la caja o escribiendo en ella.
   * El CHAT: ventana GTK normal con rem_chat_ventana.html (el panel de chat de
     siempre, con su propio WebSocket). Se crea la primera vez que se pide y al
     cerrarla solo se oculta.
@@ -171,10 +176,17 @@ class VentanaChat:
 
 
 class AvatarEscritorio:
-    def __init__(self, cfg, url_avatar, chat):
+    def __init__(self, cfg, url_avatar, chat, fijar=False):
+        """`url_avatar(fijo, aire) -> str`: la URL de la página (fijo añade
+        ?fijo=1 y el aire lateral en px).
+        `fijar`: arrancar fijado en la esquina aunque no estuviera guardado así
+        (alias --modo overlay)."""
         self.cfg = cfg
+        self.cfg_fijo = config.leer_config_overlay()
         self.chat = chat
         self.hypr = Hyprland()
+        guardado = self._leer_estado()
+        self.fijado = bool(guardado.get("fijado")) or fijar
         # Capa, barras y tamaño: preferencias del panel (pestaña Escritorio)
         # sobre config.toml [escritorio]; se aplican también en vivo.
         import preferencias
@@ -183,6 +195,10 @@ class AvatarEscritorio:
         self.rects = []                 # región del cuerpo + interfaz, px de superficie
         self.region_recibida = False
         self.izq, self.inf = cfg["margen_izquierdo"], cfg["margen_inferior"]
+        self.libre = (self.izq, self.inf)   # posición suelta, la que se guarda
+        # Caja de texto (solo fijado): puntero encima / escribiendo en ella.
+        self.caja = {"encima": False, "foco": False}
+        self._modo_teclado = None
         self.monitor = None             # dict de Hyprland.monitores()
         self.pulsado = None             # estado del botón izquierdo, o None
         self._soltado = None            # último soltar sin 'presion' todavía (ver _on_mensaje)
@@ -199,8 +215,6 @@ class AvatarEscritorio:
         GtkLayerShell.init_for_window(win)
         GtkLayerShell.set_namespace(win, "rem_escritorio")   # para layerrule de Hyprland
         GtkLayerShell.set_layer(win, _CAPAS.get(self.prefs["capa"], GtkLayerShell.Layer.TOP))
-        # Nunca toma el teclado: aquí no se escribe (eso es la ventana de chat).
-        GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.NONE)
         GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.LEFT, True)
         GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.BOTTOM, True)
         GtkLayerShell.set_exclusive_zone(win, 0 if self.prefs["respetarBarras"] else -1)
@@ -241,9 +255,14 @@ class AvatarEscritorio:
         win.connect("map", self.aplicar_region)
 
         self.win, self.webview = win, webview
-        self._posicion_inicial()
+        # Teclado: NONE salvo con el puntero sobre la caja de texto o
+        # escribiendo en ella (solo fijado). Ver _actualizar_teclado.
+        self._actualizar_teclado()
+        self._posicion_inicial(guardado)
+        if fijar and not guardado.get("fijado"):
+            self._guardar()   # el alias --modo overlay deja fijado como estado: «Yoru» lo reabre así
         preferencias.al_cambiar("escritorio", lambda v: GLib.idle_add(self._aplicar_prefs, v))
-        cargar_con_retry(webview, url_avatar)
+        cargar_con_retry(webview, url_avatar(self.fijado, self._aire()))
         GLib.timeout_add_seconds(20, self._avisar_si_no_hay_region)
         if not self.hypr.disponible:
             _log("AVISO: no es Hyprland (sin HYPRLAND_INSTANCE_SIGNATURE): el avatar no se podrá arrastrar.")
@@ -251,7 +270,20 @@ class AvatarEscritorio:
             GLib.timeout_add(TICK_CURSOR_MS, self._tick_cursor)
 
     def _tamano(self, pct):
+        if self.fijado:
+            ancho = self.cfg_fijo["ancho"] + 2 * self.cfg_fijo["aire_lateral"]
+            return int(round(ancho * pct / 100)), int(round(self.cfg_fijo["alto"] * pct / 100))
         return int(round(self.cfg["ancho"] * pct / 100)), int(round(self.cfg["alto"] * pct / 100))
+
+    def _aire(self):
+        """Aire transparente a cada lado del cuadro de Yoru fijado (px de
+        superficie), para los codos de los clips con los brazos abiertos."""
+        return int(round(self.cfg_fijo["aire_lateral"] * self.prefs["tamano"] / 100)) if self.fijado else 0
+
+    def _margenes_fijo(self):
+        """Fijado: el cuadro de Yoru en los márgenes de [overlay]; la superficie,
+        corrida a la izquierda lo que mide su aire (puede quedar fuera de la pantalla)."""
+        return self.cfg_fijo["margen_izquierdo"] - self._aire(), self.cfg_fijo["margen_inferior"]
 
     def _aplicar_prefs(self, v):
         """Oyente de la sección "escritorio" (en el hilo de GTK): capa, respetar
@@ -264,21 +296,28 @@ class AvatarEscritorio:
             self.ancho, self.alto = self._tamano(v["tamano"])
             self.win.set_size_request(self.ancho, self.alto)
             self.win.resize(self.ancho, self.alto)
-            if self.monitor:
+            if self.monitor and not self.fijado:
                 self.izq, self.inf = self._acotar(self.monitor, self.izq, self.inf)
+                self.libre = (self.izq, self.inf)
                 self._fijar_margenes()
+            elif self.fijado:
+                self.izq, self.inf = self._margenes_fijo()
+                self._fijar_margenes()
+                self._js(f"fijado(true, {self._aire()})")
         _log(f"preferencias: capa {v['capa']}, barras {'respetadas' if v['respetarBarras'] else 'ignoradas'}, "
              f"tamaño {v['tamano']}% ({self.ancho}x{self.alto})")
         return False
 
     # ── posición ────────────────────────────────────────────────────────
-    def _posicion_inicial(self):
-        guardado = {}
+    @staticmethod
+    def _leer_estado():
         try:
             with open(ESTADO_PATH, encoding="utf-8") as f:
-                guardado = json.load(f)
+                return json.load(f)
         except (OSError, ValueError):
-            pass
+            return {}
+
+    def _posicion_inicial(self, guardado):
         if self.hypr.disponible:
             try:
                 mons = self.hypr.monitores()
@@ -288,15 +327,68 @@ class AvatarEscritorio:
             except Exception as e:
                 _log(f"no se pudieron leer los monitores ({e})")
         if self.monitor and guardado.get("monitor") == self.monitor["nombre"]:
+            # Se acota con el tamaño suelto aunque arranque fijado (es la posición suelta).
+            fijado, self.fijado = self.fijado, False
+            ancho, alto = self.ancho, self.alto
+            self.ancho, self.alto = self._tamano(self.prefs["tamano"])
             self.izq, self.inf = self._acotar(self.monitor, guardado.get("izq", self.izq),
                                               guardado.get("inf", self.inf))
+            self.fijado, self.ancho, self.alto = fijado, ancho, alto
+        self.libre = (self.izq, self.inf)
+        if self.fijado:
+            self.izq, self.inf = self._margenes_fijo()
         if self.monitor:
             gm = _gdk_monitor(self.monitor)
             if gm:
                 GtkLayerShell.set_monitor(self.win, gm)
         self._fijar_margenes()
         _log(f"{self.ancho}x{self.alto} en {self.monitor['nombre'] if self.monitor else '?'} "
-             f"(izq={self.izq}, inf={self.inf}), capa {self.prefs['capa']}")
+             f"(izq={self.izq}, inf={self.inf}), capa {self.prefs['capa']}"
+             + (", FIJADO en la esquina" if self.fijado else ""))
+
+    def fijar(self, si):
+        """Fijar en la esquina o soltar, en vivo: tamaño, márgenes, teclado y
+        la página (encuadre, caja de texto, clips aptos). La posición suelta se
+        conserva y se vuelve a ella al soltar."""
+        si = bool(si)
+        if si == self.fijado:
+            self._js(f"fijado({'true' if si else 'false'}, {self._aire()})")
+            return
+        if self.pulsado:
+            self._on_release(None, None)   # un arrastre en curso termina aquí
+        if si:
+            self.libre = (self.izq, self.inf)
+        self.fijado = si
+        self.ancho, self.alto = self._tamano(self.prefs["tamano"])
+        self.win.set_size_request(self.ancho, self.alto)
+        self.win.resize(self.ancho, self.alto)
+        if si:
+            self.izq, self.inf = self._margenes_fijo()
+        else:
+            self.izq, self.inf = self.libre
+            if self.monitor:
+                self.izq, self.inf = self._acotar(self.monitor, self.izq, self.inf)
+            self.caja = {"encima": False, "foco": False}
+        self._fijar_margenes()
+        self._actualizar_teclado()
+        self._js(f"fijado({'true' if si else 'false'}, {self._aire()})")
+        self._guardar()
+        _log(f"{'fijado en la esquina' if si else 'suelto'}: {self.ancho}x{self.alto}, izq={self.izq}, inf={self.inf}")
+
+    def _actualizar_teclado(self):
+        """Medido en vivo con el overlay (CLAUDE.md, "Modo overlay"): con
+        ON_DEMAND fijo, en Hyprland basta pasar el puntero para que la capa se
+        quede el teclado. Así que NONE siempre, salvo fijado con el puntero
+        sobre la caja o escribiendo en ella."""
+        dentro = self.fijado and (self.caja["encima"] or self.caja["foco"])
+        modo = GtkLayerShell.KeyboardMode.ON_DEMAND if dentro else GtkLayerShell.KeyboardMode.NONE
+        if modo == self._modo_teclado:
+            return
+        self._modo_teclado = modo
+        GtkLayerShell.set_keyboard_mode(self.win, modo)
+        self.win.queue_draw()   # el cambio se aplica en el próximo commit
+        _log(f"teclado -> {'ON_DEMAND' if dentro else 'NONE'} (caja: encima={self.caja['encima']}, "
+             f"escribiendo={self.caja['foco']})")
 
     def _area(self, m):
         """Rectángulo utilizable del monitor (sin las zonas reservadas por
@@ -325,10 +417,12 @@ class AvatarEscritorio:
     def _guardar(self):
         if not self.monitor:
             return
+        izq, inf = self.libre if self.fijado else (self.izq, self.inf)
         try:
             tmp = ESTADO_PATH + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"monitor": self.monitor["nombre"], "izq": self.izq, "inf": self.inf}, f)
+                json.dump({"monitor": self.monitor["nombre"], "izq": izq, "inf": inf,
+                           "fijado": self.fijado}, f)
             os.replace(tmp, ESTADO_PATH)
         except OSError as e:
             _log(f"no se pudo guardar la posición ({e})")
@@ -388,6 +482,10 @@ class AvatarEscritorio:
                     self._js(f"clic({p['x']:.0f},{p['y']:.0f})")
         elif tipo == "accion":
             self._accion(str(d.get("accion")), d)
+        elif tipo == "teclado":
+            # La caja de texto (fijado): puntero encima / foco de escritura.
+            self.caja = {"encima": bool(d.get("encima")), "foco": bool(d.get("foco"))}
+            self._actualizar_teclado()
         elif tipo == "sin_frames":
             # La página está viva pero no le llegan frames (avatar/bucle.js).
             # Puede ser que la superficie dejara de recibir frame callbacks del
@@ -478,6 +576,12 @@ class AvatarEscritorio:
         if evento.detail == Gdk.NotifyType.INFERIOR:
             return False
         self._js(f"puntero({'true' if entra else 'false'})")
+        # Saliendo de la superficie directamente desde la caja de texto la
+        # página no recibe mouseleave (visto en el anidado): sin esto el
+        # teclado se quedaba tomado. Escribiendo (foco) sí se conserva.
+        if not entra and self.caja["encima"]:
+            self.caja["encima"] = False
+            self._actualizar_teclado()
         return False
 
     # ── arrastre y clic ─────────────────────────────────────────────────
@@ -514,7 +618,8 @@ class AvatarEscritorio:
         umbral. La posición sale del cursor global, así que empezar tarde no
         pierde nada del recorrido."""
         p = self.pulsado
-        if not p or p["arrastrando"] or not (p["armado"] and p["movido"]) or "agarre" not in p:
+        if (not p or p["arrastrando"] or not (p["armado"] and p["movido"]) or "agarre" not in p
+                or self.fijado):
             return
         p["arrastrando"] = True
         p["t0"] = time.perf_counter()
@@ -566,7 +671,8 @@ class AvatarEscritorio:
         return True
 
     def _on_release(self, _w, e):
-        if e.button != 1:
+        """`e` None: cortar un arrastre en curso (al fijar en la esquina)."""
+        if e is not None and e.button != 1:
             return False
         p, self.pulsado = self.pulsado, None
         if self._tick:
@@ -588,9 +694,12 @@ class AvatarEscritorio:
             except Exception as ex_:
                 _log(f"fin de arrastre sin cursorpos ({ex_})")
             self._js("arrastreFin()")
+            self.libre = (self.izq, self.inf)
             self._guardar()
             _log(f"arrastre: {time.perf_counter() - p['t0']:.2f}s -> {self.monitor['nombre']} "
                  f"izq={self.izq} inf={self.inf}")
+        elif e is None:
+            pass
         elif p["armado"] and not p["movido"]:
             self._js(f"clic({e.x:.0f},{e.y:.0f})")
         elif not p["armado"]:
@@ -607,11 +716,11 @@ class AvatarEscritorio:
             self.pulsado = None
 
 
-def crear_escritorio(url_avatar, url_chat):
+def crear_escritorio(url_avatar, url_chat, fijar=False):
     """Crea las dos ventanas; devuelve (avatar, chat). La del avatar se muestra
-    desde rem_chat.py (show_all) como las otras presentaciones."""
-    import config
+    desde rem_chat.py (show_all) como las otras presentaciones.
+    `url_avatar(fijo, aire) -> str`; `fijar`: arrancar fijado en la esquina."""
     cfg = config.leer_config_escritorio()
     chat = VentanaChat(cfg, url_chat)
-    avatar = AvatarEscritorio(cfg, url_avatar, chat)
+    avatar = AvatarEscritorio(cfg, url_avatar, chat, fijar=fijar)
     return avatar, chat

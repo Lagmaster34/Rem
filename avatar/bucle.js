@@ -150,17 +150,19 @@ function _frame() {
   if (_medirHuesosPendiente) {
     _medirHuesosPendiente = false;
     vrm.scene.updateMatrixWorld(true); // asegurar matrices de mundo frescas para getWorldPosition
-    const medida = ES_OVERLAY ? medirMedioCuerpo() : medirAlturaHuesos();
-    if (medida) {
-      console.log(`[Encuadre] altura Box3=${_modeloAlturaBox3.toFixed(3)}u  `
-                + `altura ${ES_OVERLAY ? 'medio cuerpo' : 'huesos'}=${medida.altura.toFixed(3)}u`);
-      _modeloAlturaLocal = medida.altura;
-      _modeloCentroLocal = medida.centro;
-      _modeloAnchoLocal = medida.ancho ?? 0;
-      recalcularEncuadre(); // vuelve a fijar z/position.y — su propio log muestra el z resultante
+    // Escritorio: también el medio cuerpo, para fijar/soltar en vivo sin
+    // volver a medir (ver aplicarMedidaEncuadre en escena.js).
+    const entera = medirAlturaHuesos();
+    const media = ES_ESCRITORIO ? medirMedioCuerpo() : null;
+    if (entera) _medidaEntera = entera;
+    if (media) _medidaMedia = media;
+    if (entera || media) {
+      console.log(`[Encuadre] altura Box3=${_modeloAlturaBox3.toFixed(3)}u  huesos=${entera?.altura.toFixed(3) ?? '?'}u`
+                + (media ? `  medio cuerpo=${media.altura.toFixed(3)}u` : '') + (FIJADO ? ' (fijado: medio cuerpo)' : ''));
+      aplicarMedidaEncuadre(); // vuelve a fijar z/position.y — su propio log muestra el z resultante
     }
-    // Overlay: recién ahora, con la pose de reposo aplicada y el encuadre
-    // definitivo, se muestra el modelo (nace oculto, ver la carga del VRM).
+    // Recién ahora, con la pose de reposo aplicada y el encuadre definitivo,
+    // se muestra el modelo (nace oculto, ver la carga del VRM).
     vrm.scene.visible = true;
   }
 

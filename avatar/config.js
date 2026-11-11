@@ -1,4 +1,4 @@
-// avatar/config.js — modo (ventana/overlay), CONFIG centralizada y selección de modelo.
+// avatar/config.js — modo (ventana/escritorio, y fijado), CONFIG centralizada y selección de modelo.
 // Parte del script del avatar que antes vivía entero dentro de rem_avatar.html
 // (un solo <script type="module">). Es un script CLÁSICO, no un módulo: todas
 // las partes comparten el ámbito global (los let/const/function de nivel
@@ -12,24 +12,28 @@
 // rem_chat.py --modo), nunca los dos a la vez:
 //   ventana (default): ventana GTK decorada y opaca, avatar de cuerpo entero
 //     sobre el suelo synthwave + panel de chat a la derecha + clips VRMA.
-//   overlay: layer surface transparente y click-through (rem_chat.py --modo
-//     overlay), avatar de medio cuerpo, SIN clips VRMA/gestos de reposo/suelo/
-//     panel — solo lipsync, parpadeo, mirada a cámara con saccades, micro-
-//     movimiento de cabeza/cuello y respiración, con los brazos en una pose de
-//     reposo fija (CONFIG.brazos). Una caja de texto abajo es lo único que
-//     recibe el ratón. Ver CONFIG.overlay y crearOverlayUI().
-//   escritorio: layer surface transparente con el avatar de cuerpo entero, que
-//     se arrastra por el escritorio (rem_chat.py --modo escritorio). Mismo
-//     núcleo que la ventana (clips, director) sin suelo ni panel: el chat va en
-//     una ventana aparte. Ver CONFIG.escritorio y avatar/escritorio_ui.js.
-const MODO = (m => ['overlay', 'escritorio'].includes(m) ? m : 'ventana')(new URLSearchParams(location.search).get('modo'));
-const ES_OVERLAY = MODO === 'overlay';
+//   escritorio: layer surface transparente con el avatar, que se arrastra por
+//     el escritorio (rem_chat.py --modo escritorio). Mismo núcleo que la
+//     ventana (clips, director) sin suelo ni panel: el chat va en una ventana
+//     aparte. Ver CONFIG.escritorio y avatar/escritorio_ui.js.
+//     FIJADO en la esquina (?fijo=1, o «Fijar en la esquina» del menú, en vivo;
+//     es el antiguo modo overlay, fusionado el 2026-11-10): sin arrastre, a
+//     medio cuerpo (CONFIG.fijo), con una caja de texto (avatar/overlay_ui.js)
+//     y solo los clips que caben en ese encuadre (clipAptoFijo). ?modo=overlay
+//     es un alias de escritorio fijado.
+const _PARAMS_URL = new URLSearchParams(location.search);
+const MODO = (m => ['overlay', 'escritorio'].includes(m) ? 'escritorio' : 'ventana')(_PARAMS_URL.get('modo'));
 const ES_ESCRITORIO = MODO === 'escritorio';
-const ES_TRANSPARENTE = ES_OVERLAY || ES_ESCRITORIO;   // canvas con alfa, sin suelo
+const ES_TRANSPARENTE = ES_ESCRITORIO;   // canvas con alfa, sin suelo
+let FIJADO = ES_ESCRITORIO && (_PARAMS_URL.get('fijo') === '1' || _PARAMS_URL.get('modo') === 'overlay');
+// Fijado: px transparentes a cada lado del cuadro de Yoru (config.toml [overlay]
+// aire_lateral, escalado por el tamaño) para los codos de los clips con los
+// brazos abiertos. El encuadre y la caja de texto usan el cuadro sin el aire.
+let AIRE_FIJO = FIJADO ? Math.max(0, Number(_PARAMS_URL.get('aire')) || 0) : 0;
 // Nombre del personaje para los textos de la interfaz: lo manda el backend en la
 // URL (personalidad.NOMBRE_PERSONAJE, vía rem_avatar_server.url_avatar()).
 const NOMBRE_PERSONAJE = new URLSearchParams(location.search).get('personaje') || 'Yoru';
-console.log(`[Modo] ${MODO}`);
+console.log(`[Modo] ${MODO}${FIJADO ? ' (fijado en la esquina)' : ''}`);
 
 // ═══════════════════════════════════════════════════
 // CONFIGURACIÓN CENTRALIZADA
@@ -208,10 +212,11 @@ const CONFIG = {
       velCambioS: 9,
     },
   },
-  // Solo modo overlay (?modo=overlay). La geometría de la SUPERFICIE (ancho,
-  // alto, márgenes, capa) no va acá: es de la ventana GTK y vive en config.toml
-  // [overlay]. Acá, el encuadre del avatar dentro de ella.
-  overlay: {
+  // Solo escritorio FIJADO en la esquina (el antiguo modo overlay). La
+  // geometría de la SUPERFICIE (ancho, alto, márgenes) no va acá: es de la
+  // ventana GTK y vive en config.toml [overlay]. Acá, el encuadre del avatar
+  // dentro de ella y qué clips caben (clipAptoFijo).
+  fijo: {
     encuadre: {
       // Medio cuerpo, medido por huesos (hips y head), en fracciones de la
       // distancia hips->head ("tramo del torso", ~0,6 u en este modelo).
@@ -228,6 +233,20 @@ const CONFIG = {
       // como un hueco entre Rem y la caja de texto.
       baseSobreBordeFrac: 0.0, // fracción del alto visible entre el corte y el borde inferior
       anchorX: 0.5,           // centrada horizontalmente
+    },
+    // Qué clips caben a medio cuerpo (medidas de Animaciones/catalogo.json): se
+    // descartan los que giran, inclinan el torso, abren o suben los brazos, van
+    // sentados o acostados, o bajan la cadera más de caidaMaxFracAltura. La
+    // traslación horizontal de la cadera se anula (los pies no se ven).
+    clips: {
+      giroMaxGrados: 90,
+      inclinacionMaxGrados: 35,
+      brazoMaxGrados: 70,     // 0° colgando, 90° en cruz: más que esto se sale por los lados
+      // Caída máxima de la cadera, en fracción de la ALTURA DEL MODELO (cabeza a
+      // pies por huesos, sin el margen del pelo): 0,078 ≈ 10 cm en LS15 (1,28 m).
+      // Con eso el torso puede hundirse un poco bajo el corte (Cry baja ~6 cm y
+      // se ve entero con las manos en la cara; capturas del 2026-11-10).
+      caidaMaxFracAltura: 0.078,
     },
   },
   // Solo modo escritorio. La geometría de la superficie va en config.toml

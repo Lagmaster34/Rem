@@ -60,10 +60,8 @@ function _cargarVRM(intento = 1, gen = _modeloGen) {
       // nace en T-pose, y con el encuadre provisorio (Box3) ese frame se vería
       // mal — sobre todo en overlay (fondo transparente) y al cambiar de modelo.
       vrm.scene.visible = false;
-      if (!ES_OVERLAY) {
-        inicializarAnimacionClips(); // mixer + lista de huesos normalizados para la mezcla
-        _catalogoListo.then(precargarClipsFijos); // clips de estado/pose base, sin bloquear el render
-      }
+      inicializarAnimacionClips(); // mixer + lista de huesos normalizados para la mezcla
+      _catalogoListo.then(precargarClipsFijos); // clips de estado/pose base, sin bloquear el render
 
       // Medición inicial por Box3 — placeholder para el primer frame o dos, hasta
       // que la remedición por huesos (más abajo, en animate()) la corrija. Se
@@ -242,7 +240,7 @@ function desmontarModelo() {
 // Recién montado (primera carga o cambio): saludo y aviso al chat.
 function _alMontarModelo() {
   console.log(`[Modelo] montado — memoria de render: ${_memoriaRender()}`);
-  _saludoPendiente = !ES_OVERLAY;
+  _saludoPendiente = true;
   // La pose base arranca ya (no espera a un cambio de estado).
   _catalogoListo.then(() => { if (_mixer && vrm) sincronizarClipConEstado(); });
   const titulo = vrm.meta?.name ?? vrm.meta?.title ?? MODELO_ACTIVO.split('/').pop();

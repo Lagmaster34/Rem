@@ -296,7 +296,7 @@ const estado = {
   propias: {},     // {seccion: [claves que vienen del panel]}
   conectado: false,
   mensajes: {},    // `${seccion}.${clave}` -> {texto, tipo}
-  modo: null,      // 'ventana' | 'overlay' (de prefs_estado)
+  modo: null,      // 'ventana' | 'escritorio' (de prefs_estado)
   catalogo: null,  // Animaciones/catalogo.json, o {error} si no se pudo leer
   llm: null,       // {provider, modelo} (de prefs_estado)
   modoChat: null,  // 'ia' | 'eco' (modo_actual)
@@ -587,10 +587,6 @@ function pintarAnimaciones(cuerpo, prefs) {
   const clipActivo = id => prefs.clips[id] ?? defectoClip(id);
   const etiqueta = id => clips[id]?.etiqueta ?? id.split('/').pop();
 
-  if (estado.modo === 'overlay') {
-    cuerpo.appendChild(el('div', 'aviso-modo',
-      'Yoru está en modo overlay: ahí el cuerpo es procedural y no usa clips. Los cambios se guardan igual y se aplican en modo ventana.'));
-  }
   const m = estado.mensajes['animaciones._'];
   const linea = el('div', 'linea-estado' + (m ? ` ${m.tipo}` : ''), m?.texto ?? '');
   linea.setAttribute('aria-live', 'polite');
@@ -786,7 +782,7 @@ function filaClip(id, c, activo, alCambiar) {
   const probar = el('button', 'boton', 'Probar');
   probar.dataset.foco = `probar:${id}`;
   probar.title = 'Reproducir este clip en el avatar ahora';
-  probar.disabled = !estado.conectado || estado.modo === 'overlay' || !!c.falta || !!c.error;
+  probar.disabled = !estado.conectado || !!c.falta || !!c.error;
   probar.addEventListener('click', () => {
     ws.send(JSON.stringify({ tipo: 'debug_clip', nombre: id }));
     ponerMensaje('animaciones', '_', `▶ ${c.etiqueta}: enviado al avatar`, 'ok');
@@ -986,7 +982,7 @@ function pintarBaile(cuerpo) {
   const sw = interruptor(!!estado.baile, 'baile', 'Modo baile', on => {
     ws.send(JSON.stringify({ tipo: 'al_avatar', cmd: { que: 'baile', activo: on } }));
   });
-  sw.disabled = !estado.conectado || estado.baile === null || estado.modo === 'overlay';
+  sw.disabled = !estado.conectado || estado.baile === null;
   t.appendChild(fila(null, 'baile', 'Bailar', estado.baile === null ? 'Esperando al avatar…' : null, sw));
 }
 

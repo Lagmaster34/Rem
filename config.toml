@@ -85,29 +85,36 @@ modelo = "models/vrm/neru.vrm"
 [app]
 # Cómo se presenta Rem. Override: rem_chat.py --modo ventana|overlay.
 #   "ventana" → ventana GTK normal con avatar + panel de chat (el de siempre).
-#   "overlay" → layer surface transparente en una esquina (ver [overlay]).
-#   "escritorio" → avatar de cuerpo entero que se arrastra por el escritorio,
-#                  con el chat en una ventana aparte (ver [escritorio]).
-# Nunca los dos a la vez: es un solo proceso con un solo modo, y un segundo
+#   "escritorio" → avatar que se arrastra por el escritorio, con el chat en una
+#                  ventana aparte (ver [escritorio]); con «Fijar en la esquina»
+#                  (menú del clic derecho) queda quieto abajo a la izquierda, a
+#                  medio cuerpo y con una caja de texto (ver [overlay]).
+#   "overlay" → alias de escritorio fijado en la esquina (el antiguo modo).
+# Nunca dos a la vez: es un solo proceso con un solo modo, y un segundo
 # rem_chat.py aborta con un error claro si ya hay uno corriendo.
 modo = "ventana"
 
 
 [overlay]
-# Superficie del modo overlay (rem_chat.py --modo overlay), anclada
-# IZQUIERDA + ABAJO. Transparente y click-through en todo salvo la caja de
-# texto (su rectángulo lo mide rem_avatar.html y se lo manda a GTK).
+# El escritorio FIJADO en la esquina (antes, el modo overlay; menú del clic
+# derecho → «Fijar en la esquina», o rem_chat.py --modo overlay): superficie
+# anclada IZQUIERDA + ABAJO, a medio cuerpo y con una caja de texto. Click-through
+# salvo el cuerpo, la caja, los botones y el menú. La capa y las barras son las
+# del escritorio (pestaña Escritorio del panel); el tamaño se escala igual.
 ancho = 420
 alto  = 600
-# Separación respecto de los bordes de la pantalla, en px.
+# Separación respecto de los bordes de la pantalla, en px (la del cuadro de
+# Yoru: el aire lateral de abajo no la cambia).
 margen_izquierdo = 0
 margen_inferior  = 0
-# "top" queda sobre las ventanas normales y bajo las fullscreen; "overlay"
-# queda sobre todo, fullscreen incluidas.
-capa = "top"
-# 0 = respeta la zona exclusiva de otros paneles (Rem se apoya sobre la barra);
-# -1 = ignora los paneles y se solapa con ellos.
-zona_exclusiva = 0
+# Aire transparente a CADA lado del cuadro de Yoru, en px (al 100 % de tamaño):
+# la superficie mide ancho + 2 × aire y se corre aire px a la izquierda, así que
+# Yoru no cambia de tamaño ni de sitio y los codos de los clips con los brazos
+# abiertos (hasta 70°, con la manga suelta) caben. Medido en LS15: codo a 70° +
+# manga ≈ 297 px del centro, frente a los 210 de un cuadro de 420. Lo que caiga
+# fuera de la pantalla (el lado izquierdo con margen_izquierdo = 0) no se ve:
+# para el codo izquierdo hay que subir margen_izquierdo. Clics: solo en la silueta.
+aire_lateral = 90
 
 
 [apariencia]

@@ -12,7 +12,7 @@
 // ═══════════════════════════════════════════════════
 // Opaco: la ventana de rem_chat.py no es transparente (a diferencia del
 // overlay eliminado). El color de fondo real lo fija crearSueloSynthwave().
-// En overlay el canvas es transparente (alpha) para que se vea el escritorio
+// En escritorio el canvas es transparente (alpha) para que se vea el escritorio
 // detrás; sin suelo ni fondo de escena (ver crearSueloSynthwave, no se llama).
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: ES_TRANSPARENTE });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -97,7 +97,7 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // coordenadas de mundo en el momento de escribir vrm.scene.position.
 let _anchoVisible = 0, _alturaVisible = 0;
 let _modeloAlturaLocal = 1.5, _modeloCentroLocal = 0.75; // fallback razonable antes de medir
-let _modeloAnchoLocal = 0;        // solo overlay: ancho del cuerpo con brazos (medirMedioCuerpo); 0 = sin medir
+let _modeloAnchoLocal = 0;        // solo fijado: ancho del cuerpo con brazos (medirMedioCuerpo); 0 = sin medir
 let _modeloAlturaBox3 = 0;        // guardada solo para el log comparativo
 let _medirHuesosPendiente = false; // se remide con huesos en el frame siguiente a la carga
 let _modeloPositionY = 0;
@@ -118,13 +118,30 @@ function fraccionAreaVisible3D() {
   return 1 - CONFIG.chat.anchoFrac;
 }
 
-// Anclas de encuadre del modo activo: en ventana CONFIG.pet; en overlay las de
-// CONFIG.overlay.encuadre (mismos nombres, así recalcularEncuadre() no ramifica).
+// Anclas de encuadre del modo activo: en ventana CONFIG.pet; en escritorio las
+// de CONFIG.escritorio.encuadre, o fijado las de CONFIG.fijo.encuadre (mismos
+// nombres, así recalcularEncuadre() no ramifica).
 function _anclasEncuadre() {
-  if (ES_ESCRITORIO) return CONFIG.escritorio.encuadre;
-  if (!ES_OVERLAY) return CONFIG.pet;
-  const E = CONFIG.overlay.encuadre;
+  if (!ES_ESCRITORIO) return CONFIG.pet;
+  if (!FIJADO) return CONFIG.escritorio.encuadre;
+  const E = CONFIG.fijo.encuadre;
   return { alturaPantalla: E.ocupaAltoFrac, anchorX: E.anchorX, anchorY: 0.5 };
+}
+
+// Escritorio: las dos medidas (cuerpo entero y medio cuerpo) se toman a la vez,
+// en la pose de reposo, un frame después de cargar el modelo (ver animate()).
+// Fijar o soltar en vivo solo elige cuál se aplica: medir en mitad de un gesto
+// daría un ancho o un alto falsos.
+let _medidaEntera = null, _medidaMedia = null;
+
+function aplicarMedidaEncuadre() {
+  const medida = (ES_ESCRITORIO && FIJADO) ? _medidaMedia : _medidaEntera;
+  if (!medida) return false;
+  _modeloAlturaLocal = medida.altura;
+  _modeloCentroLocal = medida.centro;
+  _modeloAnchoLocal = medida.ancho ?? 0;
+  recalcularEncuadre();
+  return true;
 }
 
 // Box3.setFromObject() sobre un VRM con SkinnedMesh da la caja de la geometría
@@ -169,10 +186,11 @@ function medirAlturaHuesos() {
   const tope = headPos.y + (altura - alturaCruda);
   const centro = (tope + pieY) / 2;
 
-  return { altura, centro };
+  // alturaCruda: la "altura del modelo" con la que se mide qué clips caben fijado (clipAptoFijo).
+  return { altura, centro, alturaCruda };
 }
 
-// Overlay: encuadre de medio cuerpo. Mismo método que medirAlturaHuesos()
+// Fijado en la esquina: encuadre de medio cuerpo. Mismo método que medirAlturaHuesos()
 // (huesos reales, con vrm.scene.position.y en 0 para no contaminar "centro"
 // con el offset de una pasada anterior) pero el tramo va de la CADERA (hueso
 // hips, más un margen) a la cabeza (hueso head, más margen para pelo/adornos)
@@ -181,7 +199,7 @@ function medirMedioCuerpo() {
   const headB = vrm?.humanoid?.getRawBoneNode('head');
   const hipsB = vrm?.humanoid?.getRawBoneNode('hips');
   if (!headB || !hipsB) {
-    console.warn('[Encuadre] faltan huesos head/hips — overlay sin medio cuerpo medido');
+    console.warn('[Encuadre] faltan huesos head/hips — sin medio cuerpo medido');
     return null;
   }
   const yPrevio = vrm.scene.position.y;
@@ -202,15 +220,16 @@ function medirMedioCuerpo() {
   vrm.scene.position.y = yPrevio;
   vrm.scene.updateMatrixWorld(true);
 
-  const E = CONFIG.overlay.encuadre;
+  const E = CONFIG.fijo.encuadre;
   const tramo = headPos.y - hipsPos.y;
   const base  = hipsPos.y - tramo * E.bajoCaderaFrac;
   const tope  = headPos.y + tramo * E.sobreCabezaFrac;
   const ancho = 2 * semiancho * (1 + E.anchoExtraFrac);
-  console.log(`[Encuadre] overlay medio cuerpo: hips.y=${hipsPos.y.toFixed(3)} head.y=${headPos.y.toFixed(3)} `
+  console.log(`[Encuadre] medio cuerpo: hips.y=${hipsPos.y.toFixed(3)} head.y=${headPos.y.toFixed(3)} `
             + `tramo=${tramo.toFixed(3)}u -> base=${base.toFixed(3)} tope=${tope.toFixed(3)} | `
             + `semiancho huesos=${semiancho.toFixed(3)}u -> ancho con margen=${ancho.toFixed(3)}u`);
-  return { altura: tope - base, centro: (tope + base) / 2, ancho };
+  // hipsY y tramo: para saber qué clips hunden el torso bajo el borde (clipAptoFijo).
+  return { altura: tope - base, centro: (tope + base) / 2, ancho, hipsY: hipsPos.y, tramo };
 }
 
 function recalcularEncuadre() {
@@ -220,10 +239,13 @@ function recalcularEncuadre() {
   // 1) Distancia de cámara tal que el modelo (altura real medida) ocupe
   //    CONFIG.pet.alturaPantalla del alto visible de pantalla.
   let alturaVisibleObjetivo = _modeloAlturaLocal / ANCLAS.alturaPantalla;
-  if (ES_OVERLAY && _modeloAnchoLocal > 0) {
+  if (FIJADO && _modeloAnchoLocal > 0) {
     // Ajuste por ancho: el alto visible mínimo para que el cuerpo con brazos
     // quepa en ocupaAnchoFrac del ancho. Gana el más restrictivo (el mayor).
-    const porAncho = _modeloAnchoLocal / (CONFIG.overlay.encuadre.ocupaAnchoFrac * camera.aspect);
+    // El ancho es el del cuadro de Yoru, sin el aire lateral: así ensanchar la
+    // superficie no la agranda (sigue centrada en el medio de la superficie).
+    const aspectoCuadro = Math.max(1, window.innerWidth - 2 * AIRE_FIJO) / window.innerHeight;
+    const porAncho = _modeloAnchoLocal / (CONFIG.fijo.encuadre.ocupaAnchoFrac * aspectoCuadro);
     alturaVisibleObjetivo = Math.max(alturaVisibleObjetivo, porAncho);
   }
   camera.position.set(0, 0, alturaVisibleObjetivo / (2 * Math.tan(fovRad / 2)));
@@ -236,10 +258,10 @@ function recalcularEncuadre() {
 
   // 3) Y del modelo: el centro de su caja (medida) debe caer en anchorY de
   //    pantalla, con la cámara siempre mirando al origen (paso 1).
-  // Ventana: el centro del cuerpo entero cae en anchorY. Overlay: el corte de
-  // cadera se apoya sobre el borde inferior (más baseSobreBordeFrac).
-  const centroObjetivoMundo = ES_OVERLAY
-    ? -_alturaVisible / 2 + _modeloAlturaLocal / 2 + CONFIG.overlay.encuadre.baseSobreBordeFrac * _alturaVisible
+  // Ventana/escritorio: el centro del cuerpo entero cae en anchorY. Fijado: el
+  // corte de cadera se apoya sobre el borde inferior (más baseSobreBordeFrac).
+  const centroObjetivoMundo = FIJADO
+    ? -_alturaVisible / 2 + _modeloAlturaLocal / 2 + CONFIG.fijo.encuadre.baseSobreBordeFrac * _alturaVisible
     : _alturaVisible * (0.5 - ANCLAS.anchorY);
   _modeloPositionY = centroObjetivoMundo - _modeloCentroLocal;
 
@@ -340,5 +362,5 @@ function posicionarSuelo(posX = 0) {
   if (_horizonte) _horizonte.position.set(posX, pieY, 0);
 }
 
-// Overlay y escritorio son transparentes y sin suelo: nada de cuadrícula, niebla ni fondo.
+// Escritorio es transparente y sin suelo: nada de cuadrícula, niebla ni fondo.
 if (!ES_TRANSPARENTE) crearSueloSynthwave();

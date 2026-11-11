@@ -90,11 +90,9 @@ function applySpringConfig() {
 // ═══════════════════════════════════════════════════
 let surprisedSnap = 0;
 
-// Estado que gobierna el CUERPO y la mirada. En overlay es siempre 'idle': los
-// brazos quedan en la pose de reposo fija (CONFIG.brazos), sin gesticular al
-// hablar ni la pose de 'thinking', y la mirada siempre va a cámara. El resto
-// del avatar (cara, parpadeo, lipsync) sí sigue leyendo `estado`.
-const estadoCorporal = () => ES_OVERLAY ? 'idle' : estado;
+// Estado que gobierna el CUERPO y la mirada. Hoy es `estado` en todos los
+// modos (el overlay lo congelaba en 'idle'; fijado en la esquina ya anima).
+const estadoCorporal = () => estado;
 
 // Canales hX/hY/hZ/bZ/ruZ/luZ/ruX/luX: ruido Perlin, no senos (ver más abajo,
 // "RUIDO PERLIN 1D" — un producto de senos sigue siendo periódico, aunque no

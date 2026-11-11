@@ -289,7 +289,6 @@ _SPEC_BUSCAR_ARCHIVOS = ToolSpec(
 )
 
 TOOLS_QUE_CONFIRMAN = {"apagar_pc"}
-TOOLS_EXCLUIDAS_OVERLAY = {"apagar_pc"}
 
 _DESCRIPCIONES_CONFIRMACION = {
     "apagar_pc": lambda args: "⚠️ Apagar la PC en 1 minuto",
@@ -311,14 +310,12 @@ class ConfirmacionExpirada(Exception):
 
 
 def tools_disponibles(modo: str) -> list[ToolSpec]:
-    """`modo`: 'ventana', 'overlay' o 'escritorio' — apagar_pc no se ofrece en
-    overlay (no hay forma de confirmar una acción destructiva ahí, ver
-    CLAUDE.md). En escritorio sí: la confirmación sale en la ventana de chat,
-    que se abre sola si estaba cerrada (ver rem_chat.py)."""
-    specs = [_SPEC_ABRIR_PROGRAMA, _SPEC_APAGAR_PC, _SPEC_BUSCAR_EN_NAVEGADOR, _SPEC_BUSCAR_ARCHIVOS]
-    if modo == "overlay":
-        specs = [s for s in specs if s.name not in TOOLS_EXCLUIDAS_OVERLAY]
-    return specs
+    """`modo`: 'ventana' o 'escritorio' — las mismas en los dos. apagar_pc se
+    confirma en el panel de chat (ventana) o en la ventana de chat aparte
+    (escritorio, también fijado en la esquina), que se abre sola si estaba
+    cerrada. El antiguo modo overlay no la ofrecía porque no tenía dónde
+    confirmarla; hoy es el escritorio fijado y sí tiene."""
+    return [_SPEC_ABRIR_PROGRAMA, _SPEC_APAGAR_PC, _SPEC_BUSCAR_EN_NAVEGADOR, _SPEC_BUSCAR_ARCHIVOS]
 
 
 async def ejecutar_tool_async(nombre, argumentos, *, memoria_sistema, on_confirmar_accion=None):

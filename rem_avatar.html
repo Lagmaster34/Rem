@@ -2,24 +2,28 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<!-- Marca <html> como overlay ANTES de que pinte nada: el fondo transparente y
-     el ocultar el panel de chat no pueden esperar al script principal
-     (un frame de fondo oscuro sobre el escritorio sería un parpadeo visible). -->
-<script>{ const m = new URLSearchParams(location.search).get('modo');
-  if (m === 'overlay' || m === 'escritorio') document.documentElement.classList.add(m); }</script>
+<!-- Marca <html> como escritorio (y fijado) ANTES de que pinte nada: el fondo
+     transparente y el ocultar el panel de chat no pueden esperar al script
+     principal (un frame de fondo oscuro sobre el escritorio sería un parpadeo
+     visible). ?modo=overlay es un alias de escritorio fijado en la esquina. -->
+<script>{ const q = new URLSearchParams(location.search), m = q.get('modo');
+  if (m === 'overlay' || m === 'escritorio') document.documentElement.classList.add('escritorio');
+  if (m === 'overlay' || (m === 'escritorio' && q.get('fijo') === '1')) {
+    document.documentElement.classList.add('fijado');
+    document.documentElement.style.setProperty('--aire-fijo', `${Number(q.get('aire')) || 0}px`);
+  } }</script>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { background:#05000f; overflow:hidden; width:100vw; height:100vh; }
   canvas { display:block; }
 
-  /* ── Modo overlay (?modo=overlay, rem_chat.py --modo overlay) ── superficie
-     transparente y click-through: SOLO la caja de texto recibe el ratón (la
-     región de entrada real la fija GTK, ver rem_chat.py; el pointer-events de
-     acá es el cinturón de seguridad del lado web). Sin panel de chat. */
-  html.overlay, html.overlay body { background: transparent; pointer-events: none; }
-  html.overlay #chat-panel { display: none; }
-  #ov-root {
-    position: fixed; left: 10px; right: 10px; bottom: 10px;
+  /* ── Caja de texto del escritorio FIJADO en la esquina (el antiguo modo
+     overlay, avatar/overlay_ui.js): solo se ve con <html class="fijado">. Qué
+     recibe el ratón lo decide la región de entrada de GTK (escritorio.py). */
+  #ov-root { display: none; }
+  html.fijado #ov-root {
+    /* Dentro del cuadro de Yoru, no en el aire lateral (ver config.toml [overlay] aire_lateral). */
+    position: fixed; left: calc(var(--aire-fijo, 0px) + 10px); right: calc(var(--aire-fijo, 0px) + 10px); bottom: 10px;
     display: flex; flex-direction: column; align-items: center; gap: 6px;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     pointer-events: none;

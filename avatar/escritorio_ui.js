@@ -153,6 +153,7 @@ function _actualizarRegion(forzar) {
   const cajas = _cajasCuerpo();
   if (_esc.botonesVisibles) { const c = _cajaDe(_ui.botones); if (c) cajas.push(c); }
   if (_esc.menuAbierto) { const c = _cajaDe(_ui.menu); if (c) cajas.push(c); }
+  if (FIJADO && _caja) { const c = _cajaDe(_caja.elemento); if (c) cajas.push(c); }
   const W = window.innerWidth, H = window.innerHeight;
   const rects = [];
   for (const [x, y, w, h] of cajas) {
@@ -428,7 +429,7 @@ function _crearInterfazEscritorio() {
   });
   document.addEventListener('contextmenu', e => {
     e.preventDefault();
-    if (e.target.closest?.('#esc-menu')) return;
+    if (e.target.closest?.('#esc-menu') || e.target.closest?.('#ov-box')) return;
     _abrirMenu(e.clientX, e.clientY);
   });
   document.addEventListener('mousemove', () => _punteroEncima(true));
@@ -437,6 +438,7 @@ function _crearInterfazEscritorio() {
 }
 
 // Iconos propios en SVG de trazo (heredan el color del botón).
+// (ventanas: el submenú «Cambiar de modo»; chincheta: «Fijar en la esquina».)
 const _svg = d => `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 const _ICONOS = {
   chat: _svg('<path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4.5 3.2V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/>'),
@@ -452,6 +454,9 @@ const _ICONOS = {
   mano: _svg('<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11M11 10V4.5a1.5 1.5 0 0 1 3 0V11M14 10.5V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-.5A5.5 5.5 0 0 1 5 15l-1.4-3a1.5 1.5 0 0 1 2.6-1.4L8 13"/>'),
   posicion: _svg('<path d="M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/>'),
   capas: _svg('<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/>'),
+  ventanas: _svg('<rect x="3" y="4" width="13" height="10" rx="1.5"/><rect x="8" y="10" width="13" height="10" rx="1.5"/>'),
+  chincheta: _svg('<path d="M9 3h6l-1 6 4 4H6l4-4-1-6z"/><path d="M12 13v8"/>'),
+  panel: _svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M12 9h6M12 13h6"/>'),
 };
 
 function _punteroEncima(dentro) {
@@ -501,12 +506,14 @@ function _accionEscritorio(acc, arg) {
                 cambios: { capa: _prefsEscritorio.capa === 'overlay' ? 'top' : 'overlay' } });
   } else if (acc === 'ajustes') {
     _aPython({ tipo: 'accion', accion: 'ajustes', pestana: arg });
+  } else if (acc === 'fijar') {
+    _aPython({ tipo: 'accion', accion: 'fijar', si: !FIJADO });   // escritorio.py contesta con fijado()
   } else {
-    _aPython({ tipo: 'accion', accion: acc });   // chat, posicion_inicial, ocultar, salir
+    _aPython({ tipo: 'accion', accion: acc });   // chat, panel, posicion_inicial, ocultar, salir
   }
 }
 
-// El menú: ítems simples y cuatro con submenú desplegable en el sitio (no hay
+// El menú: ítems simples y varios con submenú desplegable en el sitio (no hay
 // sitio para submenús laterales en una superficie de 380 px).
 function _itemsMenu() {
   return [
@@ -516,7 +523,8 @@ function _itemsMenu() {
     { accion: 'bailar', texto: _modoBaile ? 'Dejar de bailar' : 'Bailar', icono: _ICONOS.nota },
     { sub: 'modelos', texto: 'Modelo', icono: _ICONOS.modelo },
     { sub: 'gestos', texto: 'Gesto', icono: _ICONOS.mano },
-    { sub: 'posicion', texto: 'Posición', icono: _ICONOS.posicion },
+    { accion: 'fijar', texto: 'Fijar en la esquina', icono: _ICONOS.chincheta, marcado: FIJADO },
+    ...(FIJADO ? [] : [{ sub: 'posicion', texto: 'Posición', icono: _ICONOS.posicion }]),
     { accion: 'encima', texto: 'Encima de pantalla completa', icono: _ICONOS.capas, marcado: _prefsEscritorio.capa === 'overlay' },
     { sub: 'ajustes', texto: 'Ajustes', icono: _ICONOS.ajustes },
     { sep: true },
@@ -651,8 +659,11 @@ function _actualizarInterfaz() {
 // ═══════════════════════════════════════════════════
 // ENLACES: Python, WebSocket y la ventana de chat
 // ═══════════════════════════════════════════════════
+let _caja = null;   // caja de texto del escritorio fijado (avatar/overlay_ui.js)
+
 function crearEscritorioUI() {
   _crearInterfazEscritorio();
+  _caja = crearCajaTexto(_aPython);
 
   window.__remPrefs = (seccion, v) => {
     if (seccion === 'avatar') _prefsAvatar = { ..._prefsAvatar, ...v };
@@ -689,10 +700,30 @@ function crearEscritorioUI() {
       console.log('[Escritorio] arrastre: fin');
     },
     clic(x, y) { _reaccionarClic(x, y); },
-    puntero(dentro) { _punteroEncima(dentro); },
+    puntero(dentro) { _punteroEncima(dentro); if (!dentro) _caja?.punteroFuera(); },
     cursor(x, y) {
       if (!_esc.cursor || Math.hypot(x - _esc.cursor.x, y - _esc.cursor.y) > 2) _esc.cursorT = performance.now();
       _esc.cursor = { x, y };
+    },
+    // Fijar en la esquina o soltar (en vivo, lo decide escritorio.py, que ya
+    // cambió el tamaño de la superficie): encuadre de medio cuerpo o entero,
+    // la caja de texto, y fuera el clip en curso si no cabe.
+    fijado(si, aire = 0) {
+      si = !!si;
+      const cambia = si !== FIJADO || (si && aire !== AIRE_FIJO);
+      FIJADO = si;
+      AIRE_FIJO = si ? Math.max(0, aire | 0) : 0;
+      document.documentElement.style.setProperty('--aire-fijo', `${AIRE_FIJO}px`);
+      document.documentElement.classList.toggle('fijado', si);
+      if (!si) _caja?.soltar();
+      _cerrarMenu();
+      if (cambia) {
+        aplicarMedidaEncuadre();
+        cortarClipQueNoCabe();
+        _esc.regionClave = '';
+        _actualizarRegion(true);
+        console.log(`[Escritorio] ${si ? 'fijado en la esquina (medio cuerpo, caja de texto)' : 'suelto (cuerpo entero)'}`);
+      }
     },
     // Ocultar sin desmapear la capa (ver escritorio.py): no se dibuja nada.
     ocultar(si) {
@@ -708,10 +739,10 @@ function crearEscritorioUI() {
   // Mensajes del WebSocket que esta página atiende (ver ws.js).
   window.__remChat = {
     onDelta() {},
-    onDone() { _esc.esperando = false; },
+    onDone() { _esc.esperando = false; _caja?.turnoTerminado(); },
     // Con frase (aviso de Yoru, el servidor ya la dice con voz si puede), la
     // burbuja la enseña a ella; el mensaje técnico queda en el chat.
-    onError(mensaje, frase) { _esc.esperando = false; _decir(frase || `⚠ ${mensaje}`, 4000); },
+    onError(mensaje, frase) { _esc.esperando = false; _caja?.turnoTerminado(); _decir(frase || `⚠ ${mensaje}`, 4000); },
     onModoActual(modo) { _esc.modo = modo; if (_esc.menuAbierto) _pintarMenu(_menuSub); },
     onVozActual(activa) { _esc.vozActiva = !!activa; },
     onSistema(texto) { enviarAlChat({ que: 'sistema', texto }); },
@@ -724,13 +755,18 @@ function crearEscritorioUI() {
     onClipLanzado(archivo) { enviarAlChat({ que: 'clip_lanzado', archivo, etiqueta: etiquetaClip(archivo) }); },
     onPttEstado(est, detalle) {
       _esc.ptt = (est === 'escuchando' || est === 'transcribiendo') ? est : 'idle';
+      _caja?.ptt(est);
       if (est === 'ignorado') _decir(`🎙 No te escuché: ${detalle}`, 4000);
     },
     // Veredicto del micrófono: en la burbuja la frase de Yoru (la voz la pone
     // el servidor, con el micrófono ya cerrado) o, sin ella, el mensaje.
     onMicVeredicto(veredicto, mensaje, frase) { if (veredicto !== 'enviar') _decir(frase || mensaje, 4500); },
     onConversacion() {},
-    onTranscripcion(texto, ms) { _esc.esperando = true; _decir(`«${texto}»`, Math.max(1500, ms + 600)); },
+    onTranscripcion(texto, ms) {
+      _esc.esperando = true;
+      _decir(`«${texto}»`, Math.max(1500, ms + 600));
+      if (FIJADO) _caja?.transcripcion(texto, ms);
+    },
     // Una acción espera confirmación: se contesta en la ventana de chat, que
     // se abre si estaba cerrada (el servidor le reenvía el pedido al conectar).
     onAccionConfirmar(_nombre, _descripcion, frase) {

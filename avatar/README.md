@@ -34,7 +34,7 @@ Diferencias con el módulo único que hay que tener presentes al editar:
 | Archivo | Qué tiene |
 |---|---|
 | `dependencias.mjs` | Imports de three, GLTFLoader, three-vrm y three-vrm-animation (vendorizados) |
-| `config.js` | Modo (ventana/overlay), `CONFIG` y selección de modelo |
+| `config.js` | Modo (ventana/escritorio) y `FIJADO` (escritorio fijado en la esquina), `CONFIG` y selección de modelo |
 | `escena.js` | Renderer, escena, estado global, encuadre y suelo synthwave |
 | `modelo.js` | Carga del VRM, cambio de modelo en caliente, helpers de huesos/expresiones |
 | `cara.js` | Expresiones, parpadeo y lipsync |
@@ -45,10 +45,11 @@ Diferencias con el módulo único que hay que tener presentes al editar:
 | `chat_local.js` | Anfitrión del panel de chat en la página del avatar + disparo manual de clips |
 | `panel_chat.js` / `panel_chat.css` | Panel de chat (ventana vieja y `rem_chat_ventana.html`); lo que depende del avatar lo da `anfitrionChat()` |
 | `chat_remoto.js` | Solo `rem_chat_ventana.html`: su WebSocket (rol `chat`) y su anfitrión |
-| `overlay_ui.js` | Caja de texto e indicador del modo overlay |
-| `escritorio_ui.js` / `escritorio.css` | Modo escritorio: inclinación al arrastrar, región de clic, reacciones, botones, menú y burbuja |
+| `overlay_ui.js` | Caja de texto e indicador del escritorio fijado en la esquina (el antiguo modo overlay); en ventana monta el panel de chat |
+| `escritorio_ui.js` / `escritorio.css` | Modo escritorio: inclinación al arrastrar, región de clic, reacciones, botones, menú, burbuja y fijar en la esquina |
 | `temas.css` | Los tres temas (Synthwave, Cristal, Yoru) como tokens `--t-*`; los usan el chat, el escritorio y `rem_panel.html` |
 | `ws.js` | WebSocket con `rem_avatar_server.py` |
 
-El modo escritorio (`?modo=escritorio`) usa esta misma página con
-`escritorio_ui.js` en vez del panel; ver "Modo escritorio" en CLAUDE.md.
+El modo escritorio (`?modo=escritorio`, `&fijo=1` fijado en la esquina; `?modo=overlay` es un
+alias de fijado) usa esta misma página con `escritorio_ui.js` en vez del panel; ver "Modo
+escritorio" y "Lanzador Yoru y escritorio fijado" en CLAUDE.md.

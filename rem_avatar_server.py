@@ -6,7 +6,7 @@ Servidor para el avatar 3D de Rem.
                        estado, ver _ws_handler/chat_sesion.py)
 
 La ventana que muestra el avatar es rem_chat.py (GTK3 + WebKit2): normal y decorada
-(--modo ventana) o layer surface transparente (--modo overlay). Este módulo solo
+(--modo ventana) o layer surface transparente (--modo escritorio). Este módulo solo
 levanta el servidor — no lanza ninguna ventana. También orquesta el push-to-talk
 (ptt_start/ptt_stop -> micrófono -> STT -> turno de chat), ver "Push-to-talk" abajo. rem_chat.py llama a
 iniciar_servidor_avatar(); bench_chat.py se conecta al servidor ya levantado como
@@ -75,10 +75,9 @@ _ws_ready   = threading.Event()   # se activa cuando el loop WS está listo
 # sin spamear una línea por cada enviar_estado() de cada turno.
 _ultimo_aviso_sin_clientes = 0.0
 
-# Modo activo (ventana|overlay) — lo fija rem_chat.py una sola vez al
-# arrancar, ANTES de iniciar_servidor_avatar(). Decide qué tools ofrece
-# _procesar_mensaje_chat() (ver acciones.tools_disponibles(): apagar_pc no
-# se ofrece en overlay, no hay forma de confirmar una acción ahí).
+# Modo activo (ventana|escritorio) — lo fija rem_chat.py una sola vez al
+# arrancar, ANTES de iniciar_servidor_avatar(). Se lo pasa a
+# acciones.tools_disponibles() y al panel (prefs_estado).
 _modo_actual = "ventana"
 
 
@@ -257,7 +256,7 @@ def url_chat_ventana() -> str:
     return f"http://localhost:{HTTP_PORT}/rem_chat_ventana.html?{qs}"
 
 
-def url_avatar(modo: str = "ventana") -> str:
+def url_avatar(modo: str = "ventana", fijo: bool = False, aire: int = 0) -> str:
     """URL de rem_avatar.html con el modelo VRM activo (config.toml ->
     [avatar].modelo) como query param — único punto que arma esta URL, para
     que rem_chat.py y bench_chat.py no dupliquen la lectura de config.toml.
@@ -267,8 +266,11 @@ def url_avatar(modo: str = "ventana") -> str:
     import urllib.parse
     import personalidad as _personalidad
     modelo = _config.leer_modelo_avatar()
-    qs = urllib.parse.urlencode({"modo": modo, "modelo": modelo,
-                                 "personaje": _personalidad.NOMBRE_PERSONAJE})
+    params = {"modo": modo, "modelo": modelo, "personaje": _personalidad.NOMBRE_PERSONAJE}
+    if fijo:
+        params["fijo"] = "1"   # escritorio fijado en la esquina (ver escritorio.py)
+        params["aire"] = str(int(aire))   # px transparentes a cada lado del cuadro de Yoru
+    qs = urllib.parse.urlencode(params)
     return f"http://localhost:{HTTP_PORT}/rem_avatar.html?{qs}"
 
 
@@ -1214,7 +1216,7 @@ async def _mic_toque():
 # burbuja, y un parche rechazado es asunto del panel de control que lo mandó.
 async def _enviar_prefs_estado(websocket):
     import preferencias
-    # modo (ventana|overlay): el panel avisa que en overlay no hay clips VRMA.
+    # modo (ventana|escritorio): el panel avisa de lo que solo se nota en escritorio.
     await websocket.send(json.dumps({"tipo": "prefs_estado", "prefs": preferencias.todas(),
                                      "propias": preferencias.propias(), "modo": _modo_actual,
                                      "llm": _info_llm()}))

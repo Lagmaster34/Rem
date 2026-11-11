@@ -64,6 +64,7 @@ let _idleAmpMult = 1;          // multiplicador del ruido de getStatePose('idle'
 const _qClipTmp = new THREE.Quaternion();
 const _vClipTmp = new THREE.Vector3();
 const _hipsPosProc = new THREE.Vector3();
+let _hipsReposo = null;   // posición normalizada de hips en reposo (inicializarAnimacionClips)
 let _tokenClip = 0;            // invalida cargas async pendientes si el estado/gesto cambió mientras tanto
 
 // Fundido procedural<->clip (ver CONFIG.animaciones.fadeIn/fadeOut/
@@ -109,6 +110,9 @@ function inicializarAnimacionClips() {
                                  qPrev: new THREE.Quaternion(), qPuente: new THREE.Quaternion() });
   }
   _hipsNode = vrm.humanoid.getNormalizedBoneNode('hips');
+  // Posición de reposo de la cadera: fijado se le anula la traslación
+  // horizontal a los clips (ver el final de actualizarAnimacionClips).
+  _hipsReposo = _hipsNode ? _hipsNode.position.clone() : null;
   console.log(`[Anim] mixer listo — ${_huesosNorm.length} huesos normalizados para la mezcla`);
 }
 
@@ -196,7 +200,7 @@ function clipDeVrma(va) {
 }
 
 // ── CATÁLOGO (Animaciones/catalogo.json) ─────────────────────────────────
-// Se descarga una vez al arrancar (no en overlay: ahí no hay mixer). Si no
+// Se descarga una vez al arrancar. Si no
 // llega, no hay clips y todo sigue procedural — nada se rompe.
 
 function aplicarPrefsAnim(prefs) {
@@ -241,8 +245,8 @@ async function cargarCatalogo() {
 }
 
 // Arranca ya: el VRM tarda más en cargar, así que para precargarClipsFijos()
-// el catálogo suele estar listo. Overlay no lo necesita (sin mixer).
-const _catalogoListo = ES_OVERLAY ? Promise.resolve() : cargarCatalogo();
+// el catálogo suele estar listo.
+const _catalogoListo = cargarCatalogo();
 
 function infoClip(id) { return _catalogo?.clips?.[id] ?? null; }
 function clipUsable(id) {
@@ -264,6 +268,27 @@ function clipActivo(id) {
   const c = infoClip(id);
   if (!c) return false;
   return _prefsAnim.clips?.[id] ?? (categoriaActiva(c.categoria) && c.activoPorDefecto === true);
+}
+// Escritorio FIJADO en la esquina (medio cuerpo): ¿cabe este clip? Medidas del
+// catálogo (catalogo_animaciones.py) contra CONFIG.fijo.clips; la caída de la
+// cadera, pasada a unidades del modelo (caidaCaderaFrac × su altura de cadera),
+// contra caidaMaxFracAltura × la altura del modelo. Suelto, todos caben.
+// Los automáticos (gestos, baile, saludo, emociones y estados) lo respetan; un
+// clip pedido a mano (paleta, /animaciones) no.
+function clipAptoFijo(id) {
+  if (!FIJADO) return true;
+  const c = infoClip(id), m = c?.medido;
+  if (!m) return false;
+  const L = CONFIG.fijo.clips;
+  if (c.categoria === 'sit' || c.categoria === 'lying') return false;
+  if (c.giraCuerpo || m.giroGrados > L.giroMaxGrados) return false;
+  if (m.inclinacionMaxGrados > L.inclinacionMaxGrados) return false;
+  if (Math.max(m.brazoIzq?.max ?? 0, m.brazoDer?.max ?? 0) > L.brazoMaxGrados) return false;
+  const mm = _medidaMedia, alto = _medidaEntera?.alturaCruda;
+  if (m.caidaCaderaFrac == null) return false;
+  // Sin medidas del modelo todavía: cadera a ~0,72 de la altura (LS15: 0,92/1,28).
+  const caidaRel = (mm?.hipsY > 0 && alto > 0) ? m.caidaCaderaFrac * mm.hipsY / alto : m.caidaCaderaFrac * 0.72;
+  return caidaRel <= L.caidaMaxFracAltura;
 }
 function poseBaseArchivo() { return _catalogo?.poseBase?.archivo ?? null; }
 function poseBaseModo() { return _catalogo?.poseBase?.modo ?? CONFIG.animaciones.idle.modo; }
@@ -457,6 +482,7 @@ function reproducirClip(entry, { modo, duracionS, esGesto, esManual, esEmocion, 
   const marcar = a => {
     a._esGesto = !!esGesto; a._esManual = !!esManual; a._esEmocion = !!esEmocion; a._esBaile = !!esBaile;
     a._esIdle = false;
+    a._archivo = entry.archivo;   // para cortar un clip que no cabe al fijar en la esquina
   };
   // Ya es el clip activo y a pleno peso (p.ej. thinking re-entrado en el mismo
   // turno): no reiniciar el loop desde t=0, solo refrescar el tope.
@@ -568,6 +594,18 @@ async function reproducirIdle() {
 
 // Fin de un gesto, o su interrupción: volver a la BASE — al clip de idle si
 // está configurado y seguimos elegibles, o a lo procedural.
+// Al fijar en la esquina: si lo que suena no cabe a medio cuerpo, se corta (un
+// baile pasa al siguiente que quepa; lo demás vuelve al reposo). Un clip pedido
+// a mano se respeta.
+function cortarClipQueNoCabe() {
+  const a = _accionActual;
+  if (!a || a._esIdle || a._esManual || !a._archivo || clipAptoFijo(a._archivo)) return;
+  console.log(`[Anim] "${a._archivo}" no cabe fijado en la esquina: se corta`);
+  ++_tokenClip;
+  if (a._esBaile) { _siguienteBaile = true; return; }
+  volverABaseIdle(true);
+}
+
 function volverABaseIdle(interrumpido = false) {
   // Un estado con clip propio (thinking, listening...) vuelve a ese clip.
   if (_mixer && porEstadoEfectivo(estado) && !_esEstadoUnaVez()) { sincronizarClipConEstado(); return; }
@@ -614,7 +652,7 @@ const _ultimoClipEstado = new Map();   // estado -> id del último clip que sali
 const _ultimoUsoClipEstado = new Map(); // id -> performance.now() de su último disparo
 
 function _elegirClipDeEstado(est, m) {
-  let ids = (m.clips ?? []).filter(clipUsable);
+  let ids = (m.clips ?? []).filter(id => clipUsable(id) && clipAptoFijo(id));
   if (m.enfriamiento) {
     const minutos = ajusteAnim('enfriamientoMin', 5);
     const ahora = performance.now();
@@ -635,7 +673,6 @@ function _elegirClipDeEstado(est, m) {
 // los gestos de reposo, pero NO un baile, un clip de emoción ni uno manual:
 // esos los maneja el director (thinking -> talking pasa en cada turno).
 function sincronizarClipConEstado() {
-  if (ES_OVERLAY) return; // overlay: sin clips VRMA (no hay mixer)
   const m = porEstadoEfectivo(estado);
   const id = m ? _elegirClipDeEstado(estado, m) : null;
   if (id) {

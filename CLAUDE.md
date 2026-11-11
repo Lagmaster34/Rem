@@ -1756,6 +1756,11 @@ Whisper (A/B 2026-11-06: 1,70-1,79 s en los tres casos), así que esa CPU no es 
 
 ## Modo overlay: arranque, superficie y exclusión mutua con el modo ventana
 
+> **Histórico (2026-11-10)**: el modo overlay ya no existe aparte: es el escritorio fijado en la
+> esquina y `--modo overlay` es su alias (ver "Lanzador Yoru y escritorio fijado"). `_crear_overlay`
+> y `_EntradaOverlay` se borraron de `rem_chat.py`; lo medido aquí (teclado dinámico, `queue_draw()`
+> tras la región, instancia única) se trasladó a `escritorio.py` o sigue valiendo.
+
 `rem_chat.py --modo overlay` (o `config.toml` -> `[app].modo = "overlay"`) abre, en el MISMO
 proceso y con el MISMO servidor que el modo ventana, una layer surface (`gtk-layer-shell`)
 transparente anclada IZQUIERDA+ABAJO, tamaño configurable en `config.toml` -> `[overlay]`
@@ -1789,6 +1794,10 @@ en silencio y el llamador creía que había levantado. Ahora usa el mismo mecani
 (`_http_ready`/`_http_bind_error`) que `_ws_ready`/`_ws_bind_error`.
 
 ## Modo overlay: click-through y la caja de texto (la región interactiva la mide la PÁGINA)
+
+> **Histórico (2026-11-10)**: fijado en la esquina, la región es la del escritorio (cuerpo + caja +
+> botones + menú, por el WebSocket, no por `messageHandlers`) y el teclado lo lleva `escritorio.py`
+> (`_actualizar_teclado`). La lección del teclado (ON_DEMAND fijo secuestra el teclado) sigue valiendo.
 
 El overlay es click-through en TODA la superficie salvo el rectángulo de la caja de texto — pero,
 a diferencia de un overlay estático, ese rectángulo se mueve (la caja puede reposicionarse/cambiar
@@ -1855,6 +1864,10 @@ la sesión real) con dos ventanas `foot` de prueba a los lados:
 
 ## Modo overlay: encuadre de medio cuerpo
 
+> **Sigue valiendo para el escritorio fijado** (2026-11-10), con `CONFIG.fijo` en vez de
+> `CONFIG.overlay` y medido una vez al cargar junto al de cuerpo entero (`aplicarMedidaEncuadre`). Lo
+> de "sin clips VRMA" es historia: fijado anima, con los clips que caben (ver "Lanzador Yoru…").
+
 `CONFIG.overlay.encuadre` (en `rem_avatar.html`) controla el recorte — medido por huesos, mismo
 criterio que el encuadre de cuerpo entero del modo ventana (`medirAlturaHuesos()`, ver "Encuadre
 del avatar" más arriba), no por `Box3` (que da la mitad de la altura real en un `SkinnedMesh`, ver
@@ -1912,6 +1925,8 @@ sin esperar al módulo — un frame de fondo oscuro sobre el escritorio real ser
 visible).
 
 ## Modo overlay: push-to-talk (voz de entrada, `stt/`)
+
+> El push-to-talk vale en todos los modos; el título es de cuando se hizo para el overlay.
 
 Paquete `stt/` (mismo patrón que `llm/`): `base.py` (`STTProvider`, ABC — `transcribir(audio:
 np.ndarray) -> str`, sincrónico a propósito, ver su docstring), `local.py`
@@ -2728,8 +2743,9 @@ herramientas de prueba.
    quedaba suspendido sin gesto del usuario, ver "Reproducción de audio") o reproducir desde Python
    (toca la cola de voz y el aviso `voz_estado`).
 
-Después: 5) quitar el modo ventana (cuando `notas_fase2/tabla_equivalencias.md` esté completa);
-6) animaciones en el overlay. **Medir VRAM con `nvidia-smi` en cada etapa** (con Ollama cargado;
+Después: 5) quitar el modo ventana (cuando `notas_fase2/tabla_equivalencias.md` esté completa).
+(El 6, animaciones en el overlay, quedó hecho el 2026-11-10 con la fusión: ver "Lanzador Yoru y
+escritorio fijado".) **Medir VRAM con `nvidia-smi` en cada etapa** (con Ollama cargado;
 `num_gpu = 99`; hoy 3577 de 4096 MiB).
 
 **Reglas de trabajo**:
@@ -3145,3 +3161,45 @@ Gesto ▸ del menú). Probado: 5 Saludar seguidos cada 0,5 s, uno a mitad de un 
 pulsado y otro justo al soltar, sin errores y con los gestos de reposo volviendo después.
 Aparte: al abrir el menú con el clic derecho el puntero cuenta como dentro (con el ratón quieto, un
 "salir" de GTK al cambiar la región lo cerraba a los 1,2 s).
+
+
+## Lanzador Yoru y escritorio fijado (2026-11-10)
+
+**El overlay se fusionó con el escritorio: «Fijar en la esquina»**, en vivo (sin reiniciar), desde el
+menú o con `--modo overlay` (alias, que además lo deja guardado). `escritorio.py`: `fijar(si)` cambia el
+tamaño (`config.toml [overlay]` ancho/alto × el tamaño del panel), ancla abajo a la izquierda con los
+márgenes de `[overlay]`, quita el arrastre y guarda `fijado` en `escritorio_estado.json` junto a la
+posición SUELTA (se vuelve a ella al soltar). Capa y barras: las del escritorio. Teclado: NONE salvo
+con el puntero sobre la caja o escribiendo (`{tipo:'teclado', encima, foco}` por el WS); al salir de la
+superficie desde la caja la página no recibe `mouseleave` (visto en el anidado, el teclado se quedaba
+tomado), así que `_on_cruce` lo suelta y la caja olvida su "encima". La página (`FIJADO`, `?fijo=1`):
+encuadre de medio cuerpo (las dos medidas se toman al cargar, en reposo, y fijar solo elige una),
+caja de texto (`avatar/overlay_ui.js`, `crearCajaTexto`, dentro de la región de clic; el menú y los
+botones van por encima, `z-index`), botones, menú, reacciones, mirada al cursor, y clips. `apagar_pc`
+se ofrece también fijado (la confirmación abre la ventana de chat). Se fue el canal `messageHandlers`
+del overlay (el que colgaba la app en escritorio).
+
+**Qué clips caben a medio cuerpo** (`clipAptoFijo`, con `CONFIG.fijo.clips`): fuera los que giran
+(>90°), inclinan el torso (>35°), abren o suben los brazos (>70°), van sentados o acostados, o bajan la
+cadera más de `caidaMaxFracAltura` (0,078) de la altura del modelo (cabeza-pies por huesos, sin el
+margen del pelo; `caidaCaderaFrac` × su altura de cadera): ≈10 cm en LS15 (1,28 m). Lo respetan gestos, baile, saludo, emociones y estados; un clip
+pedido a mano no. Al fijar, el clip en curso que no cabe se corta (`cortarClipQueNoCabe`). Fijado se
+anula la traslación horizontal de la cadera (`_hipsReposo`). `catalogo_animaciones.py` mide ahora
+`caidaCaderaM`/`caidaCaderaFrac` (respecto de la cadera en reposo del rig del clip) y conserva el
+orden de claves del catálogo. Elegido con capturas fijado (2026-11-10): con el margen estricto bajo
+el corte (~5 cm en LS15) quedaban 1 de 50 bailes y sin clip triste/sorprendida; `Cry` (baja ~6 cm) en
+su punto más bajo se ve entero, con el lazo de la cintura bajo el borde. Con 10 cm: 3 bailes
+(`Dance5-popular`, `Dance32-brooklinbloodpop`, `Dance33-yoshi`, alternando en el modo baile), 31
+idles, y triste/sorprendida/feliz/pensando con clip; enfadada (`Shout`, 12 cm) y escuchando
+(`LeaningForward`, inclina) solo la cara. **Codos**: el ancho del cuadro se mide con los brazos en
+reposo, y `Dance9-helltaker` (brazos a 55-62°, manos en la cintura) sacaba los codos por los lados. En
+vez de bajar el tope de 70°, la superficie fijada lleva **aire lateral** (`config.toml [overlay]
+aire_lateral = 90` px a cada lado, × el tamaño): mide 600 en vez de 420, se corre 90 px a la izquierda
+(margen negativo: esa parte queda fuera de la pantalla con `margen_izquierdo = 0`) y la página encuadra
+y pone la caja con el ancho del cuadro sin el aire (`AIRE_FIJO`, `?aire=`), así que Yoru no cambia de
+tamaño (alto visible 0,878 frente a 0,876) ni de sitio. Cálculo (LS15): codo a 70° a 0,324 u del eje,
++34 % de manga = 0,434 u ≈ 297 px del centro frente a 210. Capturas (2026-11-10): el codo derecho de
+Helltaker y el brazo derecho de `Sneeze3` (61°) ya caben; **el lado izquierdo lo sigue cortando el
+borde de la pantalla** (Yoru está a 210 px de él): para eso hay que subir `margen_izquierdo` (~90), que
+mueve a Yoru. Los clics siguen solo en la silueta, la caja y los botones.
+
