@@ -129,6 +129,8 @@
     "giroGrados": 38.7,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 97.5,
+    "caidaCaderaM": 0.802,
+    "caidaCaderaFrac": 0.895,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 134.1,
@@ -173,6 +175,8 @@
     "giroGrados": 1.5,
     "desplazamientoM": 0.15,
     "inclinacionMaxGrados": 14.5,
+    "caidaCaderaM": 0.414,
+    "caidaCaderaFrac": 0.45,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 9.9,
@@ -217,6 +221,8 @@
     "giroGrados": 12.1,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 13.5,
+    "caidaCaderaM": 0.402,
+    "caidaCaderaFrac": 0.437,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 9.9,
@@ -261,6 +267,8 @@
     "giroGrados": 44.0,
     "desplazamientoM": 0.01,
     "inclinacionMaxGrados": 28.4,
+    "caidaCaderaM": 0.412,
+    "caidaCaderaFrac": 0.448,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 9.9,
@@ -305,6 +313,8 @@
     "giroGrados": 24.9,
     "desplazamientoM": 0.13,
     "inclinacionMaxGrados": 2.2,
+    "caidaCaderaM": 0.401,
+    "caidaCaderaFrac": 0.436,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 9.9,
@@ -349,6 +359,8 @@
     "giroGrados": 1.5,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 0.2,
+    "caidaCaderaM": 0.399,
+    "caidaCaderaFrac": 0.434,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 9.9,
@@ -393,6 +405,8 @@
     "giroGrados": 1.3,
     "desplazamientoM": 0.08,
     "inclinacionMaxGrados": 11.1,
+    "caidaCaderaM": 0.4,
+    "caidaCaderaFrac": 0.435,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 9.9,
@@ -437,6 +451,8 @@
     "giroGrados": 3.9,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 4.7,
+    "caidaCaderaM": 0.409,
+    "caidaCaderaFrac": 0.444,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 9.9,
@@ -481,6 +497,8 @@
     "giroGrados": 3.7,
     "desplazamientoM": 0.13,
     "inclinacionMaxGrados": 14.9,
+    "caidaCaderaM": 0.402,
+    "caidaCaderaFrac": 0.437,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 9.9,
@@ -525,6 +543,8 @@
     "giroGrados": 3.9,
     "desplazamientoM": 0.17,
     "inclinacionMaxGrados": 15.8,
+    "caidaCaderaM": 0.402,
+    "caidaCaderaFrac": 0.437,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 9.9,
@@ -568,6 +588,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 3.3,
+    "caidaCaderaM": 0.345,
+    "caidaCaderaFrac": 0.375,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 25.1,
@@ -611,6 +633,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 1.9,
+    "caidaCaderaM": 0.345,
+    "caidaCaderaFrac": 0.375,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 25.1,
@@ -654,6 +678,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 2.3,
+    "caidaCaderaM": 0.345,
+    "caidaCaderaFrac": 0.375,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 25.1,
@@ -697,6 +723,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 2.7,
+    "caidaCaderaM": 0.345,
+    "caidaCaderaFrac": 0.375,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 25.1,
@@ -740,6 +768,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 3.0,
+    "caidaCaderaM": 0.345,
+    "caidaCaderaFrac": 0.375,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 25.1,
@@ -783,6 +813,8 @@
     "giroGrados": 6.0,
     "desplazamientoM": 0.41,
     "inclinacionMaxGrados": 49.7,
+    "caidaCaderaM": 0.451,
+    "caidaCaderaFrac": 0.503,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 28.7,
@@ -826,6 +858,8 @@
     "giroGrados": 0.7,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 13.0,
+    "caidaCaderaM": 0.344,
+    "caidaCaderaFrac": 0.384,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 14.9,
@@ -869,6 +903,8 @@
     "giroGrados": 3.3,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 35.9,
+    "caidaCaderaM": 0.161,
+    "caidaCaderaFrac": 0.18,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 50.3,
@@ -912,6 +948,8 @@
     "giroGrados": 48.6,
     "desplazamientoM": 0.42,
     "inclinacionMaxGrados": 30.4,
+    "caidaCaderaM": 0.434,
+    "caidaCaderaFrac": 0.484,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 8.9,
@@ -955,6 +993,8 @@
     "giroGrados": 4.1,
     "desplazamientoM": 0.01,
     "inclinacionMaxGrados": 2.6,
+    "caidaCaderaM": 0.079,
+    "caidaCaderaFrac": 0.086,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 23.3,
@@ -1001,6 +1041,8 @@
     "giroGrados": 232.7,
     "desplazamientoM": 1.97,
     "inclinacionMaxGrados": 85.1,
+    "caidaCaderaM": 0.385,
+    "caidaCaderaFrac": 0.419,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 24.6,
@@ -1048,6 +1090,8 @@
     "giroGrados": 432.5,
     "desplazamientoM": 0.64,
     "inclinacionMaxGrados": 27.4,
+    "caidaCaderaM": 0.172,
+    "caidaCaderaFrac": 0.192,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 35.8,
@@ -1091,6 +1135,8 @@
     "giroGrados": 44.4,
     "desplazamientoM": 0.23,
     "inclinacionMaxGrados": 19.7,
+    "caidaCaderaM": 0.192,
+    "caidaCaderaFrac": 0.215,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 9.1,
@@ -1137,6 +1183,8 @@
     "giroGrados": 56.7,
     "desplazamientoM": 0.28,
     "inclinacionMaxGrados": 37.3,
+    "caidaCaderaM": 0.084,
+    "caidaCaderaFrac": 0.094,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 94.9,
@@ -1180,6 +1228,8 @@
     "giroGrados": 44.9,
     "desplazamientoM": 0.1,
     "inclinacionMaxGrados": 20.5,
+    "caidaCaderaM": 0.194,
+    "caidaCaderaFrac": 0.217,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 26.9,
@@ -1226,6 +1276,8 @@
     "giroGrados": 65.5,
     "desplazamientoM": 0.22,
     "inclinacionMaxGrados": 34.3,
+    "caidaCaderaM": 0.157,
+    "caidaCaderaFrac": 0.175,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 67.6,
@@ -1271,6 +1323,8 @@
     "giroGrados": 37.1,
     "desplazamientoM": 0.49,
     "inclinacionMaxGrados": 40.1,
+    "caidaCaderaM": 0.156,
+    "caidaCaderaFrac": 0.174,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 47.3,
@@ -1318,6 +1372,8 @@
     "giroGrados": 100.1,
     "desplazamientoM": 0.33,
     "inclinacionMaxGrados": 28.3,
+    "caidaCaderaM": 0.228,
+    "caidaCaderaFrac": 0.254,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 81.9,
@@ -1366,6 +1422,8 @@
     "giroGrados": 808.2,
     "desplazamientoM": 0.21,
     "inclinacionMaxGrados": 27.3,
+    "caidaCaderaM": 0.19,
+    "caidaCaderaFrac": 0.213,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 139.4,
@@ -1409,6 +1467,8 @@
     "giroGrados": 59.6,
     "desplazamientoM": 0.17,
     "inclinacionMaxGrados": 31.2,
+    "caidaCaderaM": 0.209,
+    "caidaCaderaFrac": 0.233,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 22.6,
@@ -1455,6 +1515,8 @@
     "giroGrados": 369.4,
     "desplazamientoM": 0.38,
     "inclinacionMaxGrados": 30.5,
+    "caidaCaderaM": 0.139,
+    "caidaCaderaFrac": 0.155,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 18.6,
@@ -1502,6 +1564,8 @@
     "giroGrados": 63.6,
     "desplazamientoM": 0.03,
     "inclinacionMaxGrados": 17.9,
+    "caidaCaderaM": 0.122,
+    "caidaCaderaFrac": 0.136,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 86.0,
@@ -1545,6 +1609,8 @@
     "giroGrados": 32.0,
     "desplazamientoM": 0.16,
     "inclinacionMaxGrados": 28.1,
+    "caidaCaderaM": 0.135,
+    "caidaCaderaFrac": 0.147,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 33.3,
@@ -1592,6 +1658,8 @@
     "giroGrados": 62.1,
     "desplazamientoM": 0.1,
     "inclinacionMaxGrados": 42.8,
+    "caidaCaderaM": 0.407,
+    "caidaCaderaFrac": 0.454,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 4.7,
@@ -1639,6 +1707,8 @@
     "giroGrados": 67.4,
     "desplazamientoM": 0.32,
     "inclinacionMaxGrados": 50.3,
+    "caidaCaderaM": 0.216,
+    "caidaCaderaFrac": 0.241,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 48.3,
@@ -1684,6 +1754,8 @@
     "giroGrados": 395.2,
     "desplazamientoM": 0.18,
     "inclinacionMaxGrados": 41.4,
+    "caidaCaderaM": 0.19,
+    "caidaCaderaFrac": 0.212,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 55.1,
@@ -1729,6 +1801,8 @@
     "giroGrados": 125.7,
     "desplazamientoM": 0.1,
     "inclinacionMaxGrados": 34.9,
+    "caidaCaderaM": 0.149,
+    "caidaCaderaFrac": 0.166,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 45.1,
@@ -1774,6 +1848,8 @@
     "giroGrados": 397.6,
     "desplazamientoM": 0.3,
     "inclinacionMaxGrados": 27.3,
+    "caidaCaderaM": 0.152,
+    "caidaCaderaFrac": 0.17,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.3,
@@ -1820,6 +1896,8 @@
     "giroGrados": 85.8,
     "desplazamientoM": 0.24,
     "inclinacionMaxGrados": 20.1,
+    "caidaCaderaM": 0.112,
+    "caidaCaderaFrac": 0.125,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 102.9,
@@ -1863,6 +1941,8 @@
     "giroGrados": 34.2,
     "desplazamientoM": 0.17,
     "inclinacionMaxGrados": 49.3,
+    "caidaCaderaM": 0.146,
+    "caidaCaderaFrac": 0.163,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 21.3,
@@ -1908,6 +1988,8 @@
     "giroGrados": 74.1,
     "desplazamientoM": 0.17,
     "inclinacionMaxGrados": 37.5,
+    "caidaCaderaM": 0.178,
+    "caidaCaderaFrac": 0.199,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 60.6,
@@ -1953,6 +2035,8 @@
     "giroGrados": 486.5,
     "desplazamientoM": 0.13,
     "inclinacionMaxGrados": 35.0,
+    "caidaCaderaM": 0.128,
+    "caidaCaderaFrac": 0.143,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 25.6,
@@ -2001,6 +2085,8 @@
     "giroGrados": 133.1,
     "desplazamientoM": 0.13,
     "inclinacionMaxGrados": 57.3,
+    "caidaCaderaM": 0.122,
+    "caidaCaderaFrac": 0.136,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 73.6,
@@ -2044,6 +2130,8 @@
     "giroGrados": 21.9,
     "desplazamientoM": 0.04,
     "inclinacionMaxGrados": 9.5,
+    "caidaCaderaM": 0.086,
+    "caidaCaderaFrac": 0.096,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 5.1,
@@ -2087,6 +2175,8 @@
     "giroGrados": 60.0,
     "desplazamientoM": 0.09,
     "inclinacionMaxGrados": 20.1,
+    "caidaCaderaM": 0.085,
+    "caidaCaderaFrac": 0.094,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 17.6,
@@ -2130,6 +2220,8 @@
     "giroGrados": 31.3,
     "desplazamientoM": 0.12,
     "inclinacionMaxGrados": 9.9,
+    "caidaCaderaM": 0.122,
+    "caidaCaderaFrac": 0.136,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 39.7,
@@ -2173,6 +2265,8 @@
     "giroGrados": 5.8,
     "desplazamientoM": 0.05,
     "inclinacionMaxGrados": 11.5,
+    "caidaCaderaM": 0.048,
+    "caidaCaderaFrac": 0.054,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 10.8,
@@ -2216,6 +2310,8 @@
     "giroGrados": 32.6,
     "desplazamientoM": 0.01,
     "inclinacionMaxGrados": 8.5,
+    "caidaCaderaM": 0.061,
+    "caidaCaderaFrac": 0.068,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 16.6,
@@ -2263,6 +2359,8 @@
     "giroGrados": 3.1,
     "desplazamientoM": 0.16,
     "inclinacionMaxGrados": 12.3,
+    "caidaCaderaM": 0.084,
+    "caidaCaderaFrac": 0.093,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 67.5,
@@ -2310,6 +2408,8 @@
     "giroGrados": 46.3,
     "desplazamientoM": 0.19,
     "inclinacionMaxGrados": 30.9,
+    "caidaCaderaM": 0.075,
+    "caidaCaderaFrac": 0.084,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 96.8,
@@ -2357,6 +2457,8 @@
     "giroGrados": 2.2,
     "desplazamientoM": 0.11,
     "inclinacionMaxGrados": 8.6,
+    "caidaCaderaM": 0.078,
+    "caidaCaderaFrac": 0.087,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 82.2,
@@ -2402,6 +2504,8 @@
     "giroGrados": 49.0,
     "desplazamientoM": 0.19,
     "inclinacionMaxGrados": 21.7,
+    "caidaCaderaM": 0.117,
+    "caidaCaderaFrac": 0.13,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 55.0,
@@ -2449,6 +2553,8 @@
     "giroGrados": 0.5,
     "desplazamientoM": 0.02,
     "inclinacionMaxGrados": 11.3,
+    "caidaCaderaM": 0.06,
+    "caidaCaderaFrac": 0.067,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 83.6,
@@ -2496,6 +2602,8 @@
     "giroGrados": 60.2,
     "desplazamientoM": 0.08,
     "inclinacionMaxGrados": 38.8,
+    "caidaCaderaM": 0.373,
+    "caidaCaderaFrac": 0.417,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 65.4,
@@ -2541,6 +2649,8 @@
     "giroGrados": 117.5,
     "desplazamientoM": 0.4,
     "inclinacionMaxGrados": 36.0,
+    "caidaCaderaM": 0.197,
+    "caidaCaderaFrac": 0.22,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 19.4,
@@ -2586,6 +2696,8 @@
     "giroGrados": 103.8,
     "desplazamientoM": 0.2,
     "inclinacionMaxGrados": 37.4,
+    "caidaCaderaM": 0.116,
+    "caidaCaderaFrac": 0.129,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 14.5,
@@ -2632,6 +2744,8 @@
     "giroGrados": 59.0,
     "desplazamientoM": 0.12,
     "inclinacionMaxGrados": 22.4,
+    "caidaCaderaM": 0.238,
+    "caidaCaderaFrac": 0.266,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 50.0,
@@ -2678,6 +2792,8 @@
     "giroGrados": 189.6,
     "desplazamientoM": 0.21,
     "inclinacionMaxGrados": 34.0,
+    "caidaCaderaM": 0.126,
+    "caidaCaderaFrac": 0.141,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 31.2,
@@ -2723,6 +2839,8 @@
     "giroGrados": 81.8,
     "desplazamientoM": 0.21,
     "inclinacionMaxGrados": 41.7,
+    "caidaCaderaM": 0.175,
+    "caidaCaderaFrac": 0.191,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 35.2,
@@ -2769,6 +2887,8 @@
     "giroGrados": 82.0,
     "desplazamientoM": 0.34,
     "inclinacionMaxGrados": 41.7,
+    "caidaCaderaM": 0.175,
+    "caidaCaderaFrac": 0.19,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 37.3,
@@ -2816,6 +2936,8 @@
     "giroGrados": 94.7,
     "desplazamientoM": 0.2,
     "inclinacionMaxGrados": 21.4,
+    "caidaCaderaM": 0.172,
+    "caidaCaderaFrac": 0.187,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 64.6,
@@ -2861,6 +2983,8 @@
     "giroGrados": 387.7,
     "desplazamientoM": 0.39,
     "inclinacionMaxGrados": 23.8,
+    "caidaCaderaM": 0.134,
+    "caidaCaderaFrac": 0.145,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 45.0,
@@ -2907,6 +3031,8 @@
     "giroGrados": 48.9,
     "desplazamientoM": 0.05,
     "inclinacionMaxGrados": 10.8,
+    "caidaCaderaM": 0.025,
+    "caidaCaderaFrac": 0.027,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 76.2,
@@ -2953,6 +3079,8 @@
     "giroGrados": 16.4,
     "desplazamientoM": 0.13,
     "inclinacionMaxGrados": 15.7,
+    "caidaCaderaM": 0.123,
+    "caidaCaderaFrac": 0.133,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 15.9,
@@ -2996,6 +3124,8 @@
     "giroGrados": 13.9,
     "desplazamientoM": 0.08,
     "inclinacionMaxGrados": 6.4,
+    "caidaCaderaM": 0.037,
+    "caidaCaderaFrac": 0.041,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 31.0,
@@ -3039,6 +3169,8 @@
     "giroGrados": 31.6,
     "desplazamientoM": 0.11,
     "inclinacionMaxGrados": 12.3,
+    "caidaCaderaM": 0.123,
+    "caidaCaderaFrac": 0.137,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 18.5,
@@ -3085,6 +3217,8 @@
     "giroGrados": 51.5,
     "desplazamientoM": 0.12,
     "inclinacionMaxGrados": 53.4,
+    "caidaCaderaM": 0.1,
+    "caidaCaderaFrac": 0.111,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 96.3,
@@ -3132,6 +3266,8 @@
     "giroGrados": 393.8,
     "desplazamientoM": 0.16,
     "inclinacionMaxGrados": 21.9,
+    "caidaCaderaM": 0.142,
+    "caidaCaderaFrac": 0.159,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 81.8,
@@ -3177,6 +3313,8 @@
     "giroGrados": 3.7,
     "desplazamientoM": 0.09,
     "inclinacionMaxGrados": 18.5,
+    "caidaCaderaM": 0.104,
+    "caidaCaderaFrac": 0.116,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 51.7,
@@ -3224,6 +3362,8 @@
     "giroGrados": 0.2,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 9.5,
+    "caidaCaderaM": 0.032,
+    "caidaCaderaFrac": 0.036,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 73.3,
@@ -3270,6 +3410,8 @@
     "giroGrados": 924.8,
     "desplazamientoM": 0.49,
     "inclinacionMaxGrados": 57.8,
+    "caidaCaderaM": 0.118,
+    "caidaCaderaFrac": 0.131,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 31.2,
@@ -3318,6 +3460,8 @@
     "giroGrados": 381.4,
     "desplazamientoM": 0.38,
     "inclinacionMaxGrados": 77.2,
+    "caidaCaderaM": 0.228,
+    "caidaCaderaFrac": 0.255,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 158.5,
@@ -3366,6 +3510,8 @@
     "giroGrados": 101.0,
     "desplazamientoM": 0.29,
     "inclinacionMaxGrados": 31.1,
+    "caidaCaderaM": 0.237,
+    "caidaCaderaFrac": 0.264,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 67.5,
@@ -3413,6 +3559,8 @@
     "giroGrados": 473.1,
     "desplazamientoM": 0.56,
     "inclinacionMaxGrados": 34.1,
+    "caidaCaderaM": 0.119,
+    "caidaCaderaFrac": 0.133,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 74.5,
@@ -3462,6 +3610,8 @@
     "giroGrados": 134.0,
     "desplazamientoM": 0.24,
     "inclinacionMaxGrados": 44.3,
+    "caidaCaderaM": 0.214,
+    "caidaCaderaFrac": 0.239,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 59.5,
@@ -3505,6 +3655,8 @@
     "giroGrados": 88.7,
     "desplazamientoM": 0.22,
     "inclinacionMaxGrados": 63.2,
+    "caidaCaderaM": 0.296,
+    "caidaCaderaFrac": 0.331,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 18.6,
@@ -3553,6 +3705,8 @@
     "giroGrados": 198.1,
     "desplazamientoM": 0.53,
     "inclinacionMaxGrados": 47.8,
+    "caidaCaderaM": 0.404,
+    "caidaCaderaFrac": 0.45,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 65.3,
@@ -3601,6 +3755,8 @@
     "giroGrados": 101.0,
     "desplazamientoM": 0.25,
     "inclinacionMaxGrados": 35.5,
+    "caidaCaderaM": 0.415,
+    "caidaCaderaFrac": 0.463,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 69.9,
@@ -3648,6 +3804,8 @@
     "giroGrados": 460.9,
     "desplazamientoM": 0.34,
     "inclinacionMaxGrados": 43.7,
+    "caidaCaderaM": 0.791,
+    "caidaCaderaFrac": 0.883,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 37.4,
@@ -3696,6 +3854,8 @@
     "giroGrados": 156.5,
     "desplazamientoM": 0.78,
     "inclinacionMaxGrados": 120.1,
+    "caidaCaderaM": 0.797,
+    "caidaCaderaFrac": 0.867,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -3743,6 +3903,8 @@
     "giroGrados": 158.0,
     "desplazamientoM": 2.77,
     "inclinacionMaxGrados": 86.3,
+    "caidaCaderaM": 0.175,
+    "caidaCaderaFrac": 0.19,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 29.8,
@@ -3792,6 +3954,8 @@
     "giroGrados": 216.4,
     "desplazamientoM": 6.89,
     "inclinacionMaxGrados": 80.6,
+    "caidaCaderaM": 0.3,
+    "caidaCaderaFrac": 0.327,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 73.2,
@@ -3840,6 +4004,8 @@
     "giroGrados": 161.7,
     "desplazamientoM": 3.32,
     "inclinacionMaxGrados": 89.8,
+    "caidaCaderaM": 0.18,
+    "caidaCaderaFrac": 0.195,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 29.8,
@@ -3888,6 +4054,8 @@
     "giroGrados": 29.4,
     "desplazamientoM": 0.03,
     "inclinacionMaxGrados": 4.9,
+    "caidaCaderaM": 0.07,
+    "caidaCaderaFrac": 0.076,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 73.2,
@@ -3931,6 +4099,8 @@
     "giroGrados": 24.6,
     "desplazamientoM": 0.06,
     "inclinacionMaxGrados": 4.0,
+    "caidaCaderaM": 0.057,
+    "caidaCaderaFrac": 0.063,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 13.5,
@@ -3974,6 +4144,8 @@
     "giroGrados": 2.9,
     "desplazamientoM": 0.17,
     "inclinacionMaxGrados": 15.4,
+    "caidaCaderaM": 0.038,
+    "caidaCaderaFrac": 0.041,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -4017,6 +4189,8 @@
     "giroGrados": 10.6,
     "desplazamientoM": 0.08,
     "inclinacionMaxGrados": 58.7,
+    "caidaCaderaM": 0.005,
+    "caidaCaderaFrac": 0.005,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -4060,6 +4234,8 @@
     "giroGrados": 21.1,
     "desplazamientoM": 0.05,
     "inclinacionMaxGrados": 2.5,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -4103,6 +4279,8 @@
     "giroGrados": 15.2,
     "desplazamientoM": 0.05,
     "inclinacionMaxGrados": 24.8,
+    "caidaCaderaM": 0.076,
+    "caidaCaderaFrac": 0.083,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 18.8,
@@ -4146,6 +4324,8 @@
     "giroGrados": 3.5,
     "desplazamientoM": 0.07,
     "inclinacionMaxGrados": 8.6,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 31.1,
@@ -4195,6 +4375,8 @@
     "giroGrados": 3426.0,
     "desplazamientoM": 0.4,
     "inclinacionMaxGrados": 178.6,
+    "caidaCaderaM": 0.865,
+    "caidaCaderaFrac": 0.966,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 66.9,
@@ -4238,6 +4420,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 2.0,
+    "caidaCaderaM": 0.022,
+    "caidaCaderaFrac": 0.025,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 25.8,
@@ -4281,6 +4465,8 @@
     "giroGrados": 3.4,
     "desplazamientoM": 0.03,
     "inclinacionMaxGrados": 25.2,
+    "caidaCaderaM": 0.003,
+    "caidaCaderaFrac": 0.003,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 6.1,
@@ -4327,6 +4513,8 @@
     "giroGrados": 7.9,
     "desplazamientoM": 0.06,
     "inclinacionMaxGrados": 34.7,
+    "caidaCaderaM": 0.263,
+    "caidaCaderaFrac": 0.293,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 89.1,
@@ -4375,6 +4563,8 @@
     "giroGrados": 9358.1,
     "desplazamientoM": 0.65,
     "inclinacionMaxGrados": 178.8,
+    "caidaCaderaM": 0.497,
+    "caidaCaderaFrac": 0.554,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 13.4,
@@ -4422,6 +4612,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 15.4,
+    "caidaCaderaM": 0.005,
+    "caidaCaderaFrac": 0.005,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 85.3,
@@ -4465,6 +4657,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 7.6,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 38.2,
@@ -4508,6 +4702,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 9.6,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 25.6,
@@ -4551,6 +4747,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.01,
     "inclinacionMaxGrados": 11.3,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 37.6,
@@ -4594,6 +4792,8 @@
     "giroGrados": 87.9,
     "desplazamientoM": 0.21,
     "inclinacionMaxGrados": 59.1,
+    "caidaCaderaM": 0.212,
+    "caidaCaderaFrac": 0.236,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 2.1,
@@ -4637,6 +4837,8 @@
     "giroGrados": 60.2,
     "desplazamientoM": 0.08,
     "inclinacionMaxGrados": 7.1,
+    "caidaCaderaM": 0.174,
+    "caidaCaderaFrac": 0.194,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 19.3,
@@ -4680,6 +4882,8 @@
     "giroGrados": 31.5,
     "desplazamientoM": 0.21,
     "inclinacionMaxGrados": 24.4,
+    "caidaCaderaM": 0.13,
+    "caidaCaderaFrac": 0.145,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 28.3,
@@ -4723,6 +4927,8 @@
     "giroGrados": 0.2,
     "desplazamientoM": 0.01,
     "inclinacionMaxGrados": 7.1,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 20.2,
@@ -4766,6 +4972,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 7.7,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 33.9,
@@ -4809,6 +5017,8 @@
     "giroGrados": 0.1,
     "desplazamientoM": 0.01,
     "inclinacionMaxGrados": 7.0,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 55.9,
@@ -4856,6 +5066,8 @@
     "giroGrados": 3805.7,
     "desplazamientoM": 0.49,
     "inclinacionMaxGrados": 179.4,
+    "caidaCaderaM": 0.729,
+    "caidaCaderaFrac": 0.813,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 33.7,
@@ -4899,6 +5111,8 @@
     "giroGrados": 43.9,
     "desplazamientoM": 0.2,
     "inclinacionMaxGrados": 9.1,
+    "caidaCaderaM": 0.05,
+    "caidaCaderaFrac": 0.055,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 13.0,
@@ -4944,6 +5158,8 @@
     "giroGrados": 450.0,
     "desplazamientoM": 0.04,
     "inclinacionMaxGrados": 50.7,
+    "caidaCaderaM": 0.644,
+    "caidaCaderaFrac": 0.718,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 8.6,
@@ -4992,6 +5208,8 @@
     "giroGrados": 882.1,
     "desplazamientoM": 0.59,
     "inclinacionMaxGrados": 168.3,
+    "caidaCaderaM": 0.771,
+    "caidaCaderaFrac": 0.86,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 34.7,
@@ -5039,6 +5257,8 @@
     "giroGrados": 88.8,
     "desplazamientoM": 0.27,
     "inclinacionMaxGrados": 51.3,
+    "caidaCaderaM": 0.141,
+    "caidaCaderaFrac": 0.158,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 92.7,
@@ -5084,6 +5304,8 @@
     "giroGrados": 377.4,
     "desplazamientoM": 0.15,
     "inclinacionMaxGrados": 88.1,
+    "caidaCaderaM": 0.212,
+    "caidaCaderaFrac": 0.237,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 29.1,
@@ -5127,6 +5349,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.06,
     "inclinacionMaxGrados": 2.0,
+    "caidaCaderaM": 0.008,
+    "caidaCaderaFrac": 0.009,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5170,6 +5394,8 @@
     "giroGrados": 9.4,
     "desplazamientoM": 0.08,
     "inclinacionMaxGrados": 3.3,
+    "caidaCaderaM": 0.009,
+    "caidaCaderaFrac": 0.01,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5213,6 +5439,8 @@
     "giroGrados": 25.3,
     "desplazamientoM": 0.06,
     "inclinacionMaxGrados": 1.8,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5256,6 +5484,8 @@
     "giroGrados": 20.8,
     "desplazamientoM": 0.15,
     "inclinacionMaxGrados": 15.1,
+    "caidaCaderaM": 0.026,
+    "caidaCaderaFrac": 0.028,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5299,6 +5529,8 @@
     "giroGrados": 8.3,
     "desplazamientoM": 0.25,
     "inclinacionMaxGrados": 13.6,
+    "caidaCaderaM": 0.035,
+    "caidaCaderaFrac": 0.038,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5342,6 +5574,8 @@
     "giroGrados": 33.1,
     "desplazamientoM": 0.17,
     "inclinacionMaxGrados": 7.8,
+    "caidaCaderaM": 0.08,
+    "caidaCaderaFrac": 0.087,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5385,6 +5619,8 @@
     "giroGrados": 17.4,
     "desplazamientoM": 0.11,
     "inclinacionMaxGrados": 5.9,
+    "caidaCaderaM": 0.012,
+    "caidaCaderaFrac": 0.013,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5428,6 +5664,8 @@
     "giroGrados": 4.1,
     "desplazamientoM": 0.19,
     "inclinacionMaxGrados": 6.2,
+    "caidaCaderaM": 0.015,
+    "caidaCaderaFrac": 0.017,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5473,6 +5711,8 @@
     "giroGrados": 376.1,
     "desplazamientoM": 0.32,
     "inclinacionMaxGrados": 2.7,
+    "caidaCaderaM": 0.026,
+    "caidaCaderaFrac": 0.029,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5516,6 +5756,8 @@
     "giroGrados": 6.2,
     "desplazamientoM": 0.27,
     "inclinacionMaxGrados": 55.8,
+    "caidaCaderaM": 0.058,
+    "caidaCaderaFrac": 0.063,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5559,6 +5801,8 @@
     "giroGrados": 9.1,
     "desplazamientoM": 0.27,
     "inclinacionMaxGrados": 26.9,
+    "caidaCaderaM": 0.612,
+    "caidaCaderaFrac": 0.665,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5602,6 +5846,8 @@
     "giroGrados": 6.1,
     "desplazamientoM": 0.06,
     "inclinacionMaxGrados": 3.7,
+    "caidaCaderaM": 0.05,
+    "caidaCaderaFrac": 0.054,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5647,6 +5893,8 @@
     "giroGrados": 95.3,
     "desplazamientoM": 0.2,
     "inclinacionMaxGrados": 5.8,
+    "caidaCaderaM": 0.021,
+    "caidaCaderaFrac": 0.023,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5692,6 +5940,8 @@
     "giroGrados": 126.8,
     "desplazamientoM": 0.16,
     "inclinacionMaxGrados": 7.4,
+    "caidaCaderaM": 0.009,
+    "caidaCaderaFrac": 0.01,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5735,6 +5985,8 @@
     "giroGrados": 14.8,
     "desplazamientoM": 0.07,
     "inclinacionMaxGrados": 2.6,
+    "caidaCaderaM": 0.01,
+    "caidaCaderaFrac": 0.011,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5778,6 +6030,8 @@
     "giroGrados": 1.2,
     "desplazamientoM": 0.19,
     "inclinacionMaxGrados": 21.8,
+    "caidaCaderaM": 0.119,
+    "caidaCaderaFrac": 0.129,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5824,6 +6078,8 @@
     "giroGrados": 182.0,
     "desplazamientoM": 0.25,
     "inclinacionMaxGrados": 94.1,
+    "caidaCaderaM": 0.113,
+    "caidaCaderaFrac": 0.123,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5867,6 +6123,8 @@
     "giroGrados": 5.0,
     "desplazamientoM": 0.06,
     "inclinacionMaxGrados": 36.5,
+    "caidaCaderaM": 0.606,
+    "caidaCaderaFrac": 0.659,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5910,6 +6168,8 @@
     "giroGrados": 12.1,
     "desplazamientoM": 0.33,
     "inclinacionMaxGrados": 12.2,
+    "caidaCaderaM": 0.023,
+    "caidaCaderaFrac": 0.025,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5953,6 +6213,8 @@
     "giroGrados": 31.9,
     "desplazamientoM": 0.17,
     "inclinacionMaxGrados": 2.1,
+    "caidaCaderaM": 0.026,
+    "caidaCaderaFrac": 0.028,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -5996,6 +6258,8 @@
     "giroGrados": 9.7,
     "desplazamientoM": 0.03,
     "inclinacionMaxGrados": 16.7,
+    "caidaCaderaM": 0.059,
+    "caidaCaderaFrac": 0.064,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6039,6 +6303,8 @@
     "giroGrados": 12.9,
     "desplazamientoM": 0.16,
     "inclinacionMaxGrados": 4.1,
+    "caidaCaderaM": 0.027,
+    "caidaCaderaFrac": 0.029,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6082,6 +6348,8 @@
     "giroGrados": 21.9,
     "desplazamientoM": 0.14,
     "inclinacionMaxGrados": 2.2,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6125,6 +6393,8 @@
     "giroGrados": 66.9,
     "desplazamientoM": 0.21,
     "inclinacionMaxGrados": 15.5,
+    "caidaCaderaM": 0.049,
+    "caidaCaderaFrac": 0.054,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6170,6 +6440,8 @@
     "giroGrados": 14.4,
     "desplazamientoM": 0.27,
     "inclinacionMaxGrados": 8.5,
+    "caidaCaderaM": 0.004,
+    "caidaCaderaFrac": 0.005,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6213,6 +6485,8 @@
     "giroGrados": 22.2,
     "desplazamientoM": 0.27,
     "inclinacionMaxGrados": 9.1,
+    "caidaCaderaM": 0.019,
+    "caidaCaderaFrac": 0.02,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6256,6 +6530,8 @@
     "giroGrados": 27.3,
     "desplazamientoM": 0.1,
     "inclinacionMaxGrados": 50.4,
+    "caidaCaderaM": 0.279,
+    "caidaCaderaFrac": 0.303,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6302,6 +6578,8 @@
     "giroGrados": 180.5,
     "desplazamientoM": 0.34,
     "inclinacionMaxGrados": 171.3,
+    "caidaCaderaM": 0.323,
+    "caidaCaderaFrac": 0.351,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6350,6 +6628,8 @@
     "giroGrados": 368.6,
     "desplazamientoM": 0.72,
     "inclinacionMaxGrados": 179.9,
+    "caidaCaderaM": 0.121,
+    "caidaCaderaFrac": 0.132,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6393,6 +6673,8 @@
     "giroGrados": 8.9,
     "desplazamientoM": 0.02,
     "inclinacionMaxGrados": 4.8,
+    "caidaCaderaM": 0.016,
+    "caidaCaderaFrac": 0.017,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6436,6 +6718,8 @@
     "giroGrados": 6.0,
     "desplazamientoM": 0.05,
     "inclinacionMaxGrados": 35.1,
+    "caidaCaderaM": 0.313,
+    "caidaCaderaFrac": 0.341,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6482,6 +6766,8 @@
     "giroGrados": 374.3,
     "desplazamientoM": 0.32,
     "inclinacionMaxGrados": 91.5,
+    "caidaCaderaM": 0.629,
+    "caidaCaderaFrac": 0.684,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6525,6 +6811,8 @@
     "giroGrados": 7.7,
     "desplazamientoM": 0.03,
     "inclinacionMaxGrados": 7.9,
+    "caidaCaderaM": 0.057,
+    "caidaCaderaFrac": 0.062,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6568,6 +6856,8 @@
     "giroGrados": 7.4,
     "desplazamientoM": 0.14,
     "inclinacionMaxGrados": 7.9,
+    "caidaCaderaM": 0.085,
+    "caidaCaderaFrac": 0.092,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6613,6 +6903,8 @@
     "giroGrados": 362.6,
     "desplazamientoM": 0.15,
     "inclinacionMaxGrados": 17.8,
+    "caidaCaderaM": 0.126,
+    "caidaCaderaFrac": 0.137,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6658,6 +6950,8 @@
     "giroGrados": 71.4,
     "desplazamientoM": 0.02,
     "inclinacionMaxGrados": 13.4,
+    "caidaCaderaM": 0.057,
+    "caidaCaderaFrac": 0.062,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6701,6 +6995,8 @@
     "giroGrados": 24.4,
     "desplazamientoM": 0.17,
     "inclinacionMaxGrados": 44.5,
+    "caidaCaderaM": 0.07,
+    "caidaCaderaFrac": 0.077,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6746,6 +7042,8 @@
     "giroGrados": 64.2,
     "desplazamientoM": 0.12,
     "inclinacionMaxGrados": 29.5,
+    "caidaCaderaM": 0.054,
+    "caidaCaderaFrac": 0.058,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6789,6 +7087,8 @@
     "giroGrados": 19.1,
     "desplazamientoM": 0.15,
     "inclinacionMaxGrados": 32.4,
+    "caidaCaderaM": 0.069,
+    "caidaCaderaFrac": 0.075,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6834,6 +7134,8 @@
     "giroGrados": 74.1,
     "desplazamientoM": 0.1,
     "inclinacionMaxGrados": 7.8,
+    "caidaCaderaM": 0.073,
+    "caidaCaderaFrac": 0.079,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6877,6 +7179,8 @@
     "giroGrados": 22.9,
     "desplazamientoM": 0.08,
     "inclinacionMaxGrados": 7.9,
+    "caidaCaderaM": 0.068,
+    "caidaCaderaFrac": 0.073,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6922,6 +7226,8 @@
     "giroGrados": 366.1,
     "desplazamientoM": 0.15,
     "inclinacionMaxGrados": 18.0,
+    "caidaCaderaM": 0.126,
+    "caidaCaderaFrac": 0.137,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -6965,6 +7271,8 @@
     "giroGrados": 5.3,
     "desplazamientoM": 0.05,
     "inclinacionMaxGrados": 36.5,
+    "caidaCaderaM": 0.607,
+    "caidaCaderaFrac": 0.659,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7008,6 +7316,8 @@
     "giroGrados": 4.2,
     "desplazamientoM": 0.07,
     "inclinacionMaxGrados": 7.7,
+    "caidaCaderaM": 0.006,
+    "caidaCaderaFrac": 0.006,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7051,6 +7361,8 @@
     "giroGrados": 5.2,
     "desplazamientoM": 0.07,
     "inclinacionMaxGrados": 17.4,
+    "caidaCaderaM": 0.053,
+    "caidaCaderaFrac": 0.058,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7094,6 +7406,8 @@
     "giroGrados": 5.7,
     "desplazamientoM": 0.15,
     "inclinacionMaxGrados": 17.3,
+    "caidaCaderaM": 0.058,
+    "caidaCaderaFrac": 0.063,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7139,6 +7453,8 @@
     "giroGrados": 3.7,
     "desplazamientoM": 0.16,
     "inclinacionMaxGrados": 38.4,
+    "caidaCaderaM": 0.141,
+    "caidaCaderaFrac": 0.153,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7184,6 +7500,8 @@
     "giroGrados": 3.9,
     "desplazamientoM": 0.09,
     "inclinacionMaxGrados": 14.3,
+    "caidaCaderaM": 0.021,
+    "caidaCaderaFrac": 0.023,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7229,6 +7547,8 @@
     "giroGrados": 62.8,
     "desplazamientoM": 0.2,
     "inclinacionMaxGrados": 6.9,
+    "caidaCaderaM": 0.038,
+    "caidaCaderaFrac": 0.041,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7274,6 +7594,8 @@
     "giroGrados": 60.4,
     "desplazamientoM": 0.33,
     "inclinacionMaxGrados": 8.0,
+    "caidaCaderaM": 0.019,
+    "caidaCaderaFrac": 0.021,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7317,6 +7639,8 @@
     "giroGrados": 7.0,
     "desplazamientoM": 0.13,
     "inclinacionMaxGrados": 22.1,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7360,6 +7684,8 @@
     "giroGrados": 23.4,
     "desplazamientoM": 0.09,
     "inclinacionMaxGrados": 6.1,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7403,6 +7729,8 @@
     "giroGrados": 63.9,
     "desplazamientoM": 0.15,
     "inclinacionMaxGrados": 3.7,
+    "caidaCaderaM": 0.025,
+    "caidaCaderaFrac": 0.027,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7446,6 +7774,8 @@
     "giroGrados": 4.5,
     "desplazamientoM": 0.03,
     "inclinacionMaxGrados": 5.5,
+    "caidaCaderaM": 0.038,
+    "caidaCaderaFrac": 0.042,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7489,6 +7819,8 @@
     "giroGrados": 6.5,
     "desplazamientoM": 0.19,
     "inclinacionMaxGrados": 36.4,
+    "caidaCaderaM": 0.227,
+    "caidaCaderaFrac": 0.246,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7532,6 +7864,8 @@
     "giroGrados": 5.5,
     "desplazamientoM": 0.02,
     "inclinacionMaxGrados": 6.2,
+    "caidaCaderaM": 0.038,
+    "caidaCaderaFrac": 0.042,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7575,6 +7909,8 @@
     "giroGrados": 5.4,
     "desplazamientoM": 0.18,
     "inclinacionMaxGrados": 48.4,
+    "caidaCaderaM": 0.223,
+    "caidaCaderaFrac": 0.243,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7621,6 +7957,8 @@
     "giroGrados": 3.9,
     "desplazamientoM": 0.03,
     "inclinacionMaxGrados": 7.9,
+    "caidaCaderaM": 0.092,
+    "caidaCaderaFrac": 0.1,
     "specVersion": false,
     "brazoIzq": {
      "inicio": 12.5,
@@ -7664,6 +8002,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 0.0,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 54.5,
@@ -7707,6 +8047,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 0.0,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 22.4,
@@ -7750,6 +8092,8 @@
     "giroGrados": 0.0,
     "desplazamientoM": 0.0,
     "inclinacionMaxGrados": 0.0,
+    "caidaCaderaM": 0.0,
+    "caidaCaderaFrac": 0.0,
     "specVersion": true,
     "brazoIzq": {
      "inicio": 54.7,

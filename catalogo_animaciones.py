@@ -141,12 +141,13 @@ def medir(ruta):
     rest_t = [np.array(n.get("translation", [0, 0, 0]), float) for n in nodos]
 
     def pose(t):
+        """t=None: la pose de reposo del rig del clip (sin pistas)."""
         cache = {}
 
         def mundo(i):
             if i not in cache:
-                r = _muestrear(*pistas[(i, "rotation")], t) if (i, "rotation") in pistas else rest_r[i]
-                p = _muestrear(*pistas[(i, "translation")], t) if (i, "translation") in pistas else rest_t[i]
+                r = _muestrear(*pistas[(i, "rotation")], t) if t is not None and (i, "rotation") in pistas else rest_r[i]
+                p = _muestrear(*pistas[(i, "translation")], t) if t is not None and (i, "translation") in pistas else rest_t[i]
                 if i in padre:
                     pr, pp = mundo(padre[i])
                     cache[i] = (_qmul(pr, r), pp + _qrot(pr, p))
@@ -176,11 +177,22 @@ def medir(ruta):
                 brazos[lado].append(math.degrees(math.acos(np.clip(np.dot(v, -arriba), -1, 1))))
     y = np.unwrap(np.array(yaws))
     pos = np.array(posiciones)
+    # Caída vertical de la cadera respecto de su altura en reposo (la del rig
+    # del clip; si el rig no la trae, la del primer frame). En fracción de esa
+    # altura no depende del modelo: three-vrm-animation escala la traslación de
+    # hips por la proporción de alturas de cadera. El encuadre de medio cuerpo
+    # (escritorio fijado) descarta los que hunden el torso bajo el borde.
+    alto_reposo = float(pose(None)(huesos["hips"])[1][1])
+    if alto_reposo < 0.3:
+        alto_reposo = float(pos[0][1])
+    caida = max(0.0, alto_reposo - float(pos[:, 1].min()))
     medido = {
         "durS": round(dur, 2),
         "giroGrados": round(math.degrees(y.max() - y.min()), 1),
         "desplazamientoM": round(float(np.max(np.linalg.norm((pos - pos[0])[:, [0, 2]], axis=1))), 2),
         "inclinacionMaxGrados": round(max(inclin), 1),
+        "caidaCaderaM": round(caida, 3),
+        "caidaCaderaFrac": round(caida / alto_reposo, 3) if alto_reposo > 0 else 0.0,
         "specVersion": "specVersion" in ext,
     }
     for lado, angulos in brazos.items():
@@ -319,13 +331,17 @@ def main():
                 curado = {k: previo.get(k) for k in
                           ("etiqueta", "categoria", "origen", "peso", "horas", "nota", "activoPorDefecto",
                            "raro", "expresion", "saludo")}
+            # Orden de claves estable (el del catálogo versionado): lo curado de
+            # siempre, lo medido y al final los campos curados añadidos después.
+            tardios = ("raro", "expresion", "saludo")
             entrada = {
-                **curado,
+                **{k: v for k, v in curado.items() if k not in tardios},
                 "giraCuerpo": "gira" in avisos,
                 "fundidoEntradaS": FUNDIDO_LARGO_S if "empieza-brazos-alto" in avisos else None,
                 "avisos": avisos,
                 "medido": medido,
                 "sha256": sha,
+                **{k: curado[k] for k in tardios},
             }
             if rel in provs:
                 ok = provs[rel][0].get("sha256") == sha
