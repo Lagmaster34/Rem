@@ -101,6 +101,8 @@ html.escritorio, html.escritorio body { background: transparent; }
 .esc-sub { padding: 2px 0 4px 26px; color: var(--esc-tenue); font-size: 12px; }
 .esc-sub .esc-item { padding: 5px 8px; font-size: 12.5px; }
 .esc-subitem.actual { color: var(--esc-cian); }
+.esc-item:disabled { cursor: default; }
+.esc-item:disabled:hover { background: transparent; }
 /* Casilla de los ítems con estado (Encima de pantalla completa). */
 .esc-marca {
   width: 14px; height: 14px; flex: 0 0 auto; border-radius: 4px;

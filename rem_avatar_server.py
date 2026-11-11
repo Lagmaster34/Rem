@@ -22,6 +22,8 @@ import logging
 import glob
 import shutil
 import uuid
+
+import config
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
@@ -104,6 +106,83 @@ ultimo_latido_pagina = None
 def establecer_oyente_escritorio(fn) -> None:
     global _oyente_escritorio
     _oyente_escritorio = fn
+
+
+# Acciones de la aplicación que valen en cualquier modo (menú del clic derecho
+# de la ventana y del escritorio): {accion: "modo", modo} | {accion: "panel"} |
+# {accion: "cerrar"}. Las ejecuta rem_chat.py en el hilo de GTK.
+_oyente_app = None
+
+
+def establecer_oyente_app(fn) -> None:
+    global _oyente_app
+    _oyente_app = fn
+
+
+def abrir_panel(pestana: str = "") -> None:
+    """Abre el panel de control (proceso aparte; rem_panel.py es instancia
+    única: si ya está abierto solo se trae al frente y la pestaña le llega por
+    el WebSocket)."""
+    import subprocess
+    import sys
+    orden = [sys.executable, os.path.join(BASE_DIR, "rem_panel.py")]
+    if pestana:
+        orden += ["--pestana", pestana]
+        _broadcast_ws({"tipo": "panel_pestana", "id": pestana}, destino=("panel",), avisar=False)
+    subprocess.Popen(orden, cwd=BASE_DIR, start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+# ── Conversación al cambiar de modo ──────────────────────────────────────
+# Cambiar entre ventana y escritorio reinicia el proceso (el tipo de ventana se
+# decide al arrancar), y la conversación vive en memoria. Solo en ese caso se
+# guarda en CONVERSACION_PATH y el proceso nuevo (--recuperar-conversacion) la
+# carga y borra el archivo; un arranque normal empieza de cero como siempre.
+CONVERSACION_PATH = config.ruta_datos("conversacion_cambio_modo.json")
+_historial_recuperado = None   # [{rol, texto}] para pintarla en los chats que conecten
+
+
+def guardar_conversacion_para_cambio() -> int:
+    """Escribe el historial y el modo (ia/eco) de la sesión. Devuelve cuántos
+    mensajes guardó (0 si no había sesión o estaba vacía: no se escribe nada)."""
+    sesion = _chat_sesion
+    if sesion is None or not sesion.historial:
+        return 0
+    datos = {"modo": sesion.modo,
+             "mensajes": [{"rol": m.role, "texto": m.content} for m in sesion.historial
+                          if m.role in ("user", "assistant") and isinstance(m.content, str)]}
+    tmp = CONVERSACION_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(datos, f, ensure_ascii=False)
+    os.replace(tmp, CONVERSACION_PATH)
+    return len(datos["mensajes"])
+
+
+def recuperar_conversacion() -> int:
+    """La carga en la sesión compartida y borra el archivo. Devuelve cuántos
+    mensajes recuperó (0 si no había archivo o no se pudo leer)."""
+    global _historial_recuperado
+    try:
+        with open(CONVERSACION_PATH, encoding="utf-8") as f:
+            datos = json.load(f)
+    except (OSError, ValueError):
+        return 0
+    finally:
+        try:
+            os.remove(CONVERSACION_PATH)
+        except OSError:
+            pass
+    from llm.base import Message
+    mensajes = [m for m in datos.get("mensajes") or []
+                if isinstance(m, dict) and m.get("rol") in ("user", "assistant") and isinstance(m.get("texto"), str)]
+    if not mensajes:
+        return 0
+    sesion, _, _ = obtener_sesion_chat()
+    if datos.get("modo") in ("ia", "eco") and datos["modo"] != sesion.modo:
+        sesion.cambiar_modo(datos["modo"])
+    sesion.historial = [Message(role=m["rol"], content=m["texto"]) for m in mensajes]
+    _historial_recuperado = mensajes
+    return len(mensajes)
 
 def _avisar_sin_destinatarios(que: str):
     global _ultimo_aviso_sin_clientes
@@ -631,6 +710,8 @@ async def _saludar_chat(websocket):
     await websocket.send(json.dumps({"tipo": "voz_actual", "activa": _chat_voz_activa}))
     if _confirmacion_payload is not None:
         await websocket.send(json.dumps(_confirmacion_payload))
+    if _historial_recuperado:
+        await websocket.send(json.dumps({"tipo": "historial", "mensajes": _historial_recuperado}))
 
 
 def _registrar_voz_sonando():
@@ -1378,6 +1459,12 @@ async def _ws_handler(websocket):
                 datos = data.get("datos")
                 if _oyente_escritorio is not None and isinstance(datos, dict):
                     _oyente_escritorio(datos)
+
+            elif tipo == "app":
+                # Menú del clic derecho (ventana o escritorio): cambiar de
+                # modo, abrir el panel, cerrar. Ver establecer_oyente_app.
+                if _oyente_app is not None and data.get("accion") in ("modo", "panel", "cerrar"):
+                    _oyente_app(data)
 
             elif tipo == "panel_pestana":
                 # Abrir el panel de control en una pestaña (menú del avatar): se

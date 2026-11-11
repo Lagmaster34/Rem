@@ -61,6 +61,7 @@ function _conectarChat() {
       case 'chat_delta': chat.onDelta(d.texto ?? ''); break;
       case 'chat_done': chat.onDone(); break;
       case 'modo_actual': chat.onModoActual(d.modo); break;
+      case 'historial': chat.onHistorial?.(Array.isArray(d.mensajes) ? d.mensajes : []); break;
       case 'voz_actual': chat.onVozActual?.(d.activa); break;
       case 'error': chat.onError(d.mensaje ?? 'error desconocido'); break;
       case 'ptt_estado': chat.onPttEstado?.(d.estado, d.motivo || d.nota || ''); break;

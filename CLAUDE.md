@@ -2509,7 +2509,8 @@ código. `config.toml` sigue siendo la base versionada.
 Ventana GTK3+WebKit2 aparte (`Rem — Panel de control`, 900×640), **solo cliente**: no levanta
 servidor ni abre puertos. Carga `http://localhost:18765/rem_panel.html` del servidor de `rem_chat.py`
 y habla por el WS de siempre con los mensajes `prefs_*` (ver "Preferencias del panel de control").
-Lanzador: `lanzadores/rem-panel.sh` / **Rem Panel** (no cierra ni reinicia `rem_chat.py`).
+Se abre desde el menú del clic derecho (Abrir panel, o Ajustes ▸ en escritorio) o con
+`lanzadores/rem-panel.sh` (sin entrada en el lanzador desde 2026-11-10; no cierra ni reinicia `rem_chat.py`).
 
 - **Necesita Rem abierto** (ventana u overlay): si el HTTP `:18765` no responde, diálogo de error +
   mensaje a la terminal y sale con 1. Solo se sondea el HTTP: un connect/close crudo al WS deja un
@@ -2934,9 +2935,11 @@ a un reinicio (verificado). `escritorio.py` aplica `escritorio` en vivo (`set_la
 2→3, 380×620→456×744 y vuelta). La página del avatar recibe `avatar`/`escritorio`/`voz` por
 `window.__remPrefs` (ws.js → `aplicarPrefsGenerales`) y el volumen va al `<audio>`.
 
-**Menú del clic derecho**: Chat · Modo IA/Eco · Voz · Bailar · Modelo ▸ · Gesto ▸ (saludar, uno al
-azar) · Posición ▸ (esquina inicial) · Encima de pantalla completa (casilla = capa `overlay`) ·
-Ajustes ▸ (las 7 pestañas) · Ocultar · Salir. Submenús desplegados en el sitio (`_menuSub`).
+**Menú del clic derecho** (2026-11-10): Chat · Modo IA/Eco · Voz · Bailar · Modelo ▸ · Gesto ▸
+(saludar, uno al azar) · Fijar en la esquina (casilla) · Posición ▸ (esquina inicial; oculto fijado) ·
+Encima de pantalla completa (casilla = capa `overlay`) · Cambiar de modo ▸ (Ventana / Escritorio, el
+actual desactivado) · Abrir panel · Ajustes ▸ (las pestañas) · Ocultar · Cerrar. Submenús
+desplegados en el sitio (`_menuSub`).
 
 **Temas** (`avatar/temas.css`, `<html data-tema>`): Synthwave (los colores de siempre), Cristal (gris
 carbón translúcido, acento azul hielo) y Yoru (#232027 con #9458C3/#7044A3). Tokens `--t-*`; los tintes
@@ -3164,6 +3167,21 @@ Aparte: al abrir el menú con el clic derecho el puntero cuenta como dentro (con
 
 
 ## Lanzador Yoru y escritorio fijado (2026-11-10)
+
+**Menú del clic derecho en todos los modos**: en escritorio, el de siempre más Fijar en la esquina,
+Cambiar de modo ▸, Abrir panel y Cerrar (antes «Salir»); en la ventana, `avatar/menu_ventana.js` (solo
+sobre la zona 3D: en el panel de chat queda el menú de WebKit para copiar/pegar). Las acciones de la
+app van por el WebSocket (`{tipo:'app', accion: modo|panel|cerrar}` → `rem_avatar_server.
+establecer_oyente_app` → `rem_chat._accion_app` en el hilo de GTK).
+
+**Cambiar de modo reinicia la app** (el tipo de ventana se decide al arrancar): `_cambiar_modo_app`
+guarda la conversación (`rem_avatar_server.guardar_conversacion_para_cambio()` →
+`conversacion_cambio_modo.json` en los datos de ejecución, en `.gitignore`), deja un `sh` que espera a
+que el proceso termine (un zombi cuenta como terminado; tope 20 s) y arranca `rem_chat.py --modo X
+--recuperar-conversacion` con el `GDK_BACKEND` original; el nuevo la carga en la sesión (también el
+modo IA/Eco), borra el archivo y la manda a cada chat que conecte (`{tipo:'historial'}`, el panel de
+chat la pinta). Solo al cambiar de modo: un arranque normal empieza de cero. Log del relanzamiento:
+`lanzadores/logs/rem-cambio-modo.log`.
 
 **El overlay se fusionó con el escritorio: «Fijar en la esquina»**, en vivo (sin reiniciar), desde el
 menú o con `--modo overlay` (alias, que además lo deja guardado). `escritorio.py`: `fijar(si)` cambia el

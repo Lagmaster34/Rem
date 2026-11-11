@@ -47,6 +47,7 @@ Diferencias con el módulo único que hay que tener presentes al editar:
 | `chat_remoto.js` | Solo `rem_chat_ventana.html`: su WebSocket (rol `chat`) y su anfitrión |
 | `overlay_ui.js` | Caja de texto e indicador del escritorio fijado en la esquina (el antiguo modo overlay); en ventana monta el panel de chat |
 | `escritorio_ui.js` / `escritorio.css` | Modo escritorio: inclinación al arrastrar, región de clic, reacciones, botones, menú, burbuja y fijar en la esquina |
+| `menu_ventana.js` | Menú del clic derecho de la ventana (cambiar de modo, abrir panel, cerrar) |
 | `temas.css` | Los tres temas (Synthwave, Cristal, Yoru) como tokens `--t-*`; los usan el chat, el escritorio y `rem_panel.html` |
 | `ws.js` | WebSocket con `rem_avatar_server.py` |
 

@@ -143,6 +143,7 @@ function crearPanelChat(anf = anfitrionChat()) {
   let vozActiva = true;
 
   function alFondo() { $mensajes.scrollTop = $mensajes.scrollHeight; }
+  let historialPintado = false;
 
   function agregarBurbuja(texto, clase) {
     const div = document.createElement('div');
@@ -480,6 +481,14 @@ function crearPanelChat(anf = anfitrionChat()) {
       actualizarInputHabilitado();
       setEstadoUI('', '');
       agregarSistema(`⚠ ${mensaje}`);
+    },
+    // La conversación que traía el modo anterior (cambio ventana <-> escritorio,
+    // ver rem_avatar_server.recuperar_conversacion): una vez, al conectar.
+    onHistorial(mensajes) {
+      if (historialPintado || !mensajes.length) return;
+      historialPintado = true;
+      agregarSistema(`Conversación del modo anterior (${mensajes.length} mensajes)`);
+      for (const m of mensajes) agregarBurbuja(m.texto, m.rol === 'user' ? 'user' : 'rem');
     },
     onModoActual(modo) {
       const cambioReal = modo !== modoActivo;

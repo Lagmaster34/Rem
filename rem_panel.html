@@ -885,7 +885,7 @@ function tarjeta(cuerpo, titulo, ayuda) {
 function avisoSoloEscritorio(cuerpo) {
   if (estado.modo !== 'escritorio') {
     cuerpo.appendChild(el('div', 'aviso-modo',
-      `Rem está abierto en modo ${estado.modo ?? '?'}: esto solo se nota en el modo escritorio (lanzador «Rem Escritorio»). Se guarda igual.`));
+      `Rem está abierto en modo ${estado.modo ?? '?'}: esto solo se nota en el modo escritorio (menú del clic derecho → Cambiar de modo). Se guarda igual.`));
   }
 }
 

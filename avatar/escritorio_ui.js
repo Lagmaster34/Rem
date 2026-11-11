@@ -508,6 +508,9 @@ function _accionEscritorio(acc, arg) {
     _aPython({ tipo: 'accion', accion: 'ajustes', pestana: arg });
   } else if (acc === 'fijar') {
     _aPython({ tipo: 'accion', accion: 'fijar', si: !FIJADO });   // escritorio.py contesta con fijado()
+  } else if (acc === 'modo_app') {
+    // Ventana <-> escritorio: reinicia la app (rem_chat.py) con la conversación.
+    if (arg && arg !== MODO) _enviarWS({ tipo: 'app', accion: 'modo', modo: arg });
   } else {
     _aPython({ tipo: 'accion', accion: acc });   // chat, panel, posicion_inicial, ocultar, salir
   }
@@ -526,10 +529,12 @@ function _itemsMenu() {
     { accion: 'fijar', texto: 'Fijar en la esquina', icono: _ICONOS.chincheta, marcado: FIJADO },
     ...(FIJADO ? [] : [{ sub: 'posicion', texto: 'Posición', icono: _ICONOS.posicion }]),
     { accion: 'encima', texto: 'Encima de pantalla completa', icono: _ICONOS.capas, marcado: _prefsEscritorio.capa === 'overlay' },
+    { sub: 'modoApp', texto: 'Cambiar de modo', icono: _ICONOS.ventanas },
+    { accion: 'panel', texto: 'Abrir panel', icono: _ICONOS.panel },
     { sub: 'ajustes', texto: 'Ajustes', icono: _ICONOS.ajustes },
     { sep: true },
     { accion: 'ocultar', texto: 'Ocultar', icono: _ICONOS.ocultar },
-    { accion: 'salir', texto: 'Salir', icono: _ICONOS.salir, peligro: true },
+    { accion: 'salir', texto: 'Cerrar', icono: _ICONOS.salir, peligro: true },
   ];
 }
 
@@ -541,6 +546,8 @@ function _itemsSubmenu(sub) {
   }
   if (sub === 'gestos') return [{ accion: 'saludar', texto: 'Saludar' }, { accion: 'gesto', texto: 'Un gesto al azar' }];
   if (sub === 'posicion') return [{ accion: 'posicion_inicial', texto: 'Volver a la esquina inicial' }];
+  if (sub === 'modoApp') return [['ventana', 'Ventana'], ['escritorio', 'Escritorio']].map(([m, t]) =>
+    ({ accion: 'modo_app', arg: m, texto: m === MODO ? `${t} (actual)` : t, actual: m === MODO, desactivado: m === MODO }));
   if (sub === 'ajustes') return PESTANAS_AJUSTES.map(([id, t]) => ({ accion: 'ajustes', arg: id, texto: t }));
   return [];
 }
@@ -581,6 +588,7 @@ function _pintarMenu(sub = null) {
         const sb = boton('esc-item esc-subitem' + (s.actual ? ' actual' : ''), '');
         sb.textContent = s.texto;
         if (s.title) sb.title = s.title;
+        if (s.desactivado) sb.disabled = true;
         sb.onclick = () => _accionEscritorio(s.accion, s.arg);
         lista.appendChild(sb);
       }

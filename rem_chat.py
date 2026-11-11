@@ -15,7 +15,9 @@ proceso) y abre UNA de estas presentaciones, nunca dos a la vez:
   --modo overlay   Alias de escritorio fijado en la esquina (el modo overlay se
                    fusionó con el de escritorio el 2026-11-10).
 
-Sin --modo se usa config.toml -> [app].modo. Si ya hay una instancia corriendo (puertos
+Sin --modo se usa config.toml -> [app].modo. Cambiar de modo desde el menú reinicia el proceso (el tipo de
+ventana se decide al arrancar) y la conversación pasa al nuevo
+(--recuperar-conversacion). Si ya hay una instancia corriendo (puertos
 :18765/:18766 ocupados) sale con un error claro en vez de abrir una segunda
 presentación pegada a un servidor ajeno.
 
@@ -27,11 +29,12 @@ instalaron ahí sin problema, construidos contra las libs GTK3/WebKit2GTK ya
 instaladas en el sistema (ver requirements.txt y CLAUDE.md). El modo escritorio
 además necesita el paquete de sistema gtk-layer-shell.
 
-    venv/bin/python rem_chat.py [--modo ventana|escritorio|overlay]
+    venv/bin/python rem_chat.py [--modo ventana|escritorio|overlay] [--recuperar-conversacion]
 """
 import argparse
 import os
 import re
+import shlex
 import subprocess
 import sys
 import threading
@@ -50,6 +53,8 @@ def _parsear_args():
         description="Rem: asistente virtual de escritorio (ventana o escritorio).")
     ap.add_argument("--modo", choices=("ventana", "escritorio", "overlay"), default=None,
                     help="presentación (default: config.toml [app].modo; overlay = escritorio fijado en la esquina)")
+    ap.add_argument("--recuperar-conversacion", action="store_true",
+                    help="cargar la conversación que dejó el modo anterior (lo usa el cambio de modo)")
     return ap.parse_args()
 
 
@@ -64,6 +69,8 @@ os.environ.setdefault('WEBKIT_INSPECTOR_SERVER', '127.0.0.1:9222')
 # gtk-layer-shell solo funciona con GDK sobre Wayland nativo (con XWayland
 # init_for_window falla) — se fuerza ANTES de que GDK se inicialice.
 CAPA = MODO == "escritorio"   # layer surface (gtk-layer-shell)
+# El valor de antes de forzarlo: un cambio de modo relanza con el entorno original.
+_GDK_BACKEND_ORIGINAL = os.environ.get('GDK_BACKEND')
 if CAPA:
     os.environ['GDK_BACKEND'] = 'wayland'
 
@@ -175,6 +182,62 @@ def _crear_ventana():
     return win, webview
 
 
+# ── Acciones de la app (menú del clic derecho, cualquier modo) ───────────
+def _log_lanzador():
+    """Log para lo que el proceso relanzado diga antes de abrir rem_chat.log
+    (mismo sitio que los lanzadores: lanzadores/logs, o REM_DATOS/lanzadores_logs)."""
+    d = (os.path.join(config.DATOS_DIR, "lanzadores_logs") if config.ENTORNO_AISLADO
+         else os.path.join(BASE_DIR, "lanzadores", "logs"))
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, "rem-cambio-modo.log")
+
+
+def _cambiar_modo_app(nuevo):
+    """Reinicia en otro modo: guarda la conversación, deja lanzado un proceso
+    que espera a que este termine (y suelte los puertos) y arranca el modo
+    nuevo con --recuperar-conversacion, y cierra este."""
+    import rem_avatar_server
+    nuevo, _ = config.resolver_modo(nuevo)
+    if nuevo == MODO:
+        print(f"[Chat] cambio de modo ignorado: ya está en {MODO}", flush=True)
+        return
+    n = rem_avatar_server.guardar_conversacion_para_cambio()
+    env = dict(os.environ)
+    if _GDK_BACKEND_ORIGINAL is None:
+        env.pop("GDK_BACKEND", None)
+    else:
+        env["GDK_BACKEND"] = _GDK_BACKEND_ORIGINAL
+    pid = os.getpid()
+    # Espera a que este proceso deje de existir (un zombi cuenta como muerto:
+    # ya soltó los puertos), con un tope de 20 s.
+    espera = (f'i=0; while [ -e /proc/{pid} ] && [ "$(cut -d" " -f3 /proc/{pid}/stat 2>/dev/null)" != Z ] '
+              f'&& [ $i -lt 200 ]; do sleep 0.1; i=$((i+1)); done; ')
+    orden = espera + (f"exec {shlex.quote(sys.executable)} {shlex.quote(os.path.join(BASE_DIR, 'rem_chat.py'))} "
+                      f"--modo {nuevo} --recuperar-conversacion")
+    log = _log_lanzador()
+    with open(log, "a") as f:
+        f.write(f"===== cambio de modo {MODO} -> {nuevo} (pid {pid}) =====\n")
+    with open(log, "a") as salida:
+        subprocess.Popen(["sh", "-c", orden], cwd=BASE_DIR, env=env, start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=salida, stderr=subprocess.STDOUT)
+    print(f"[Chat] cambio de modo {MODO} -> {nuevo}: {n} mensajes guardados; se cierra este proceso", flush=True)
+    Gtk.main_quit()
+
+
+def _accion_app(d):
+    """En el hilo de GTK (GLib.idle_add desde el WS): ver establecer_oyente_app."""
+    accion = d.get("accion")
+    print(f"[Chat] acción del menú: {accion}{' -> ' + str(d.get('modo')) if accion == 'modo' else ''}", flush=True)
+    if accion == "panel":
+        import rem_avatar_server
+        rem_avatar_server.abrir_panel(str(d.get("pestana") or ""))
+    elif accion == "cerrar":
+        Gtk.main_quit()
+    elif accion == "modo":
+        _cambiar_modo_app(str(d.get("modo") or ""))
+    return False
+
+
 def _iniciar_vigilante():
     """Diagnóstico de congelamientos: el bucle de GTK escribe "[GTK] vivo" cada
     10 s, y un hilo aparte avisa (una vez por episodio) si ese latido o el de
@@ -276,6 +339,12 @@ def main():
         _fatal(f"{e}. Solo puede haber una instancia de Rem.")
     _escribir_pidfile()
 
+
+    if _ARGS.recuperar_conversacion:
+        n = rem_avatar_server.recuperar_conversacion()
+        print(f"[Chat] conversación del modo anterior: {n} mensajes recuperados" if n
+              else "[Chat] no había conversación que recuperar del modo anterior")
+    rem_avatar_server.establecer_oyente_app(lambda d: GLib.idle_add(_accion_app, d))
 
     if MODO == "escritorio":
         import escritorio

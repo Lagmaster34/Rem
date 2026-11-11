@@ -42,6 +42,9 @@ let _modelosLista = [];   // modelos_lista del servidor (models/vrm/)
         window.__remChat?.onDone();
       } else if (d.tipo === 'modo_actual') {
         window.__remChat?.onModoActual(d.modo);
+      } else if (d.tipo === 'historial') {
+        // La conversación del modo anterior (cambio ventana <-> escritorio).
+        window.__remChat?.onHistorial?.(Array.isArray(d.mensajes) ? d.mensajes : []);
       } else if (d.tipo === 'error') {
         window.__remChat?.onError(d.mensaje ?? 'error desconocido', String(d.frase ?? ''));
       } else if (d.tipo === 'prefs_estado') {

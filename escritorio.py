@@ -28,8 +28,6 @@ import json
 import math
 import os
 import socket
-import subprocess
-import sys
 import time
 
 import gi
@@ -505,18 +503,11 @@ class AvatarEscritorio:
         elif accion == "chat_abrir":
             self.chat.mostrar(mon, self.hypr)
         elif accion in ("panel", "ajustes"):
-            # Proceso aparte (rem_panel.py ya es instancia única: si está abierto
-            # solo se trae al frente, y la pestaña le llega por el WebSocket).
-            pestana = str(d.get("pestana") or "") if accion == "ajustes" else ""
-            orden = [sys.executable, os.path.join(BASE_DIR, "rem_panel.py")]
-            if pestana:
-                orden += ["--pestana", pestana]
-                import rem_avatar_server
-                rem_avatar_server._broadcast_ws({"tipo": "panel_pestana", "id": pestana},
-                                                destino=("panel",), avisar=False)
-            subprocess.Popen(orden, cwd=BASE_DIR, start_new_session=True,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        elif accion == "posicion_inicial":
+            import rem_avatar_server
+            rem_avatar_server.abrir_panel(str(d.get("pestana") or "") if accion == "ajustes" else "")
+        elif accion == "fijar":
+            self.fijar(bool(d.get("si")))
+        elif accion == "posicion_inicial" and not self.fijado:
             izq, inf = self.cfg["margen_izquierdo"], self.cfg["margen_inferior"]
             self.izq, self.inf = self._acotar(self.monitor, izq, inf) if self.monitor else (izq, inf)
             self._fijar_margenes()
