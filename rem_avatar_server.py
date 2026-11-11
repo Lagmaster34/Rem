@@ -480,6 +480,7 @@ async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None, por_voz
     enviar_estado("thinking")
     primer_fragmento = True
     respuesta = None
+    frase_error = ""
 
     def _on_delta(fragmento):
         nonlocal primer_fragmento
@@ -507,12 +508,15 @@ async def _procesar_mensaje_chat(texto: str, t_ref: float | None = None, por_voz
         _broadcast_ws({"tipo": "chat_done"})
     except Exception as e:
         logger.exception("[Chat] error procesando turno")
-        _broadcast_ws({"tipo": "error", "mensaje": str(e)})
+        frase_error = _elegir_aviso("avisoErrorTurno")
+        _broadcast_ws({"tipo": "error", "mensaje": str(e), "frase": frase_error})
     finally:
         enviar_estado("idle")
         with _chat_lock:
             _chat_turno_activo = False
         _marcar_fin_habla()
+    if frase_error:
+        _decir_aviso(frase_error)   # ya sin el turno activo
     return respuesta
 
 
@@ -600,8 +604,12 @@ async def _pedir_confirmacion_accion(nombre: str, argumentos: dict, descripcion:
     # En modo escritorio la ventana de chat puede estar cerrada: el avatar le
     # pide a rem_chat.py que la abra, y al conectarse (hola rol chat) recibe
     # este mismo pedido (ver _saludar_chat).
-    _confirmacion_payload = {"tipo": "accion_confirmar", "nombre": nombre, "descripcion": descripcion}
+    frase = _elegir_aviso("confirmar")
+    _confirmacion_payload = {"tipo": "accion_confirmar", "nombre": nombre, "descripcion": descripcion,
+                             "frase": frase}
     _broadcast_ws(_confirmacion_payload)
+    # El turno está parado esperando la respuesta: se dice aunque siga activo.
+    _decir_aviso(frase, en_turno=True)
     try:
         return await asyncio.wait_for(_confirmacion_pendiente, timeout=_CONFIRMACION_TIMEOUT_S)
     except asyncio.TimeoutError:
@@ -686,15 +694,18 @@ def _ptt_motivo_ocupada():
     return None
 
 
-def _motivo_no_decir_frase():
-    """Por qué una frase fija del avatar (frases_voz.py) NO se dice ahora, o
-    None. Nunca encima de otra voz ni cortando una respuesta del chat, ni con el
-    micrófono abierto (se grabaría a sí misma), ni con la voz apagada."""
+def _motivo_no_decir_frase(en_turno: bool = False):
+    """Por qué una frase fija (frases_voz.py) NO se dice ahora, o None. Nunca
+    encima de otra voz ni cortando una respuesta del chat, ni con el micrófono
+    abierto (se grabaría a sí misma), ni con la voz apagada. `en_turno`: la
+    dice el propio turno en curso (la confirmación de apagar la PC, con el
+    turno parado esperando la respuesta): el turno activo no la frena, la voz
+    en cola o sonando sí."""
     if not _chat_voz_activa:
         return "voz apagada"
     if _ptt_estado != "idle":
         return "micrófono abierto"
-    if _chat_turno_activo:
+    if _chat_turno_activo and not en_turno:
         return "respondiendo"
     cola = _chat_cola_habla
     if cola is not None and getattr(cola, "_unfinished_tasks", 0) > 0:
@@ -704,23 +715,95 @@ def _motivo_no_decir_frase():
     return None
 
 
-async def _decir_frase(texto: str):
-    """Mensaje decir_frase de la página del avatar: una frase fija con voz,
-    desde la caché de frases_voz (sintetizada al arrancar)."""
+async def _hablar_frase(texto: str, retraso_s: float = 0.0, en_turno: bool = False):
+    """Dice una frase fija desde la caché de frases_voz (sintetizada al
+    arrancar), si se puede (_motivo_no_decir_frase). Si no, queda solo en
+    texto (el que la pidió ya la enseña)."""
     import frases_voz
-    if texto not in frases_voz.textos():
-        logger.warning("[Frases] decir_frase con un texto que no está en frases_escritorio.json: %r", texto)
-        return
-    motivo = _motivo_no_decir_frase()
+    if retraso_s:
+        await asyncio.sleep(retraso_s)
+    motivo = _motivo_no_decir_frase(en_turno)
     if motivo:
         print(f"  [Frases] \"{texto}\" solo en texto ({motivo})", flush=True)
         return
     r = await asyncio.to_thread(frases_voz.obtener, texto)
     # Se vuelve a mirar: la síntesis (si no estaba en caché) da tiempo a que
     # haya empezado una respuesta.
-    if r and _motivo_no_decir_frase() is None:
+    if r and _motivo_no_decir_frase(en_turno) is None:
         enviar_audio(*r)
         print(f"  [Frases] \"{texto}\" con voz", flush=True)
+
+
+async def _decir_frase(texto: str):
+    """Mensaje decir_frase de la página del avatar: una reacción fija con voz."""
+    import frases_voz
+    if texto not in frases_voz.textos():
+        logger.warning("[Frases] decir_frase con un texto que no está en frases_escritorio.json: %r", texto)
+        return
+    await _hablar_frase(texto)
+
+
+# Avisos con voz: lo que antes solo salía escrito en el chat (micrófono sin
+# audio o sin voz, frase inventada por Whisper, errores, confirmar apagar la
+# PC) lo dice además Yoru con una frase fija de su grupo en
+# frases_escritorio.json. El chat sigue enseñando el mensaje técnico; la
+# frase va también en el mensaje WS (`frase`) para la burbuja del escritorio.
+# Fuera a propósito: escribir con la tecla de voz pulsada (el micrófono está
+# abierto: se grabaría a sí misma) y "ya está respondiendo" (está hablando).
+_ultimo_aviso: dict[str, str] = {}
+
+
+def _elegir_aviso(grupo: str) -> str:
+    """Una frase del grupo al azar, sin repetir la última de ese grupo."""
+    import random
+    import frases_voz
+    lista = frases_voz.grupo(grupo)
+    if not lista:
+        logger.warning("[Frases] grupo de avisos vacío o inexistente: %r", grupo)
+        return ""
+    otras = [t for t in lista if t != _ultimo_aviso.get(grupo)] or lista
+    texto = random.choice(otras)
+    _ultimo_aviso[grupo] = texto
+    return texto
+
+
+def _decir_aviso(texto: str, retraso_s: float = 0.0, en_turno: bool = False):
+    """Lanza _hablar_frase sin esperarla. Solo desde _ws_loop."""
+    if texto:
+        asyncio.create_task(_hablar_frase(texto, retraso_s, en_turno))
+
+
+# Sonidos cortos del modo conversación (los genera y toca la página, en un
+# <audio> aparte de la voz: no pasan por la cola ni por voz_estado). El de
+# abrir suena ANTES de abrir el micrófono y se espera a que la página diga que
+# terminó (sonido_fin), para que no se grabe; el de cerrar, al cerrarlo.
+_SONIDO_ESPERA_MAX_S = 0.5    # normal: termina a los 0,35-0,37 s (255 ms + arranque)
+_RETRASO_TRAS_SONIDO_S = 0.3   # un aviso con voz justo después del de cerrar
+_sonidos_pendientes: dict[str, asyncio.Future] = {}
+
+
+def _sonido(nombre: str) -> tuple[str, int]:
+    sid = uuid.uuid4().hex[:8]
+    n = _emitir_ws({"tipo": "sonido", "nombre": nombre, "id": sid}, f"sonido {nombre!r}", avisar=False)
+    return sid, n
+
+
+async def _sonido_y_esperar(nombre: str):
+    """Toca `nombre` en los avatares y espera a que termine (sonido_fin), con
+    un tope por si la página no contesta."""
+    sid, n = _sonido(nombre)
+    if not n:
+        return
+    fut = asyncio.get_running_loop().create_future()
+    _sonidos_pendientes[sid] = fut
+    t0 = time.perf_counter()
+    try:
+        await asyncio.wait_for(fut, timeout=_SONIDO_ESPERA_MAX_S)
+        print(f"  [Mic] sonido {nombre!r}: terminó en {time.perf_counter() - t0:.2f}s", flush=True)
+    except asyncio.TimeoutError:
+        print(f"  [Mic] sonido {nombre!r}: la página no avisó del final en {_SONIDO_ESPERA_MAX_S:.1f}s", flush=True)
+    finally:
+        _sonidos_pendientes.pop(sid, None)
 
 
 def _ptt_estado_ws(estado: str, **extra):
@@ -749,13 +832,24 @@ _MENSAJES_VEREDICTO = {
 }
 
 
-def _emitir_veredicto(tipo: str, v=None, texto: str = ""):
+# Grupo de frases_escritorio.json que dice Yoru con cada veredicto (los que no
+# están, sin voz: "enviar" sigue al turno y "espera" ya tiene su sonido).
+_AVISO_VEREDICTO = {"sin_voz": "avisoSinVoz", "silencio": "avisoMicMuerto",
+                    "muerto": "avisoMicMuerto", "inventada": "avisoInventada"}
+
+
+def _emitir_veredicto(tipo: str, v=None, texto: str = "") -> str:
+    """Manda mic_veredicto y devuelve la frase de aviso elegida ("" si no
+    lleva): quien llama la dice con _decir_aviso cuando el micrófono ya está
+    cerrado."""
     voz = f"{v.voz_ms / 1000:.1f} s de voz".replace(".", ",") if v and tipo == "enviar" else \
           (f"{v.voz_ms:.0f} ms" if v else "")
     mensaje = _MENSAJES_VEREDICTO[tipo].format(voz=voz, texto=texto)
-    _broadcast_ws({"tipo": "mic_veredicto", "veredicto": tipo, "mensaje": mensaje,
+    frase = _elegir_aviso(_AVISO_VEREDICTO[tipo]) if tipo in _AVISO_VEREDICTO else ""
+    _broadcast_ws({"tipo": "mic_veredicto", "veredicto": tipo, "mensaje": mensaje, "frase": frase,
                    "voz_ms": round(v.voz_ms) if v else 0, "dur_s": round(v.dur_s, 2) if v else 0},
                   avisar=False)
+    return frase
 
 
 # Modo conversación: tras un turno POR VOZ cuya respuesta termina en "?", el
@@ -797,6 +891,9 @@ async def _reabrir_conversacion():
         else:
             _conversacion(False, "Yoru no terminó de hablar")
             return
+        # Sonido de "te escucho" antes de abrir: si se tocara con el micrófono
+        # abierto, el detector lo tomaría por voz.
+        await _sonido_y_esperar("mic_abre")
         await _ptt_iniciar(auto=True, espera_voz_s=cfg["cierre_inactividad_s"], origen="conversacion")
     except asyncio.CancelledError:
         pass
@@ -859,9 +956,11 @@ async def _ptt_iniciar(auto: bool = False, espera_voz_s: float | None = None, or
     except Exception as e:
         _ptt_estado = "idle"
         logger.exception("[PTT] no se pudo abrir el micrófono")
-        _broadcast_ws({"tipo": "error", "mensaje": f"No se pudo abrir el micrófono: {e}"})
+        frase = _elegir_aviso("avisoMicNoAbre")
+        _broadcast_ws({"tipo": "error", "mensaje": f"No se pudo abrir el micrófono: {e}", "frase": frase})
         _ptt_estado_ws("idle")
         _conversacion(False, "no se pudo abrir el micrófono")
+        _decir_aviso(frase)
         return
     _ptt_grabador, _ptt_estado = grabador, "grabando"
     _ptt_tope_handle = asyncio.get_running_loop().call_later(
@@ -958,6 +1057,11 @@ async def _ptt_detener(por_tope: bool = False, motivo_auto: str | None = None):
         _ptt_tope_handle = None
     grabador, _ptt_grabador = _ptt_grabador, None
     audio = await asyncio.to_thread(grabador.detener)
+    # Modo conversación: sonido de "micrófono cerrado"; un aviso con voz que
+    # venga detrás espera a que acabe.
+    retraso_aviso = 0.0
+    if origen == "conversacion" and _sonido("mic_cierra")[1]:
+        retraso_aviso = _RETRASO_TRAS_SONIDO_S
 
     import stt
     from stt import SAMPLE_RATE
@@ -989,9 +1093,10 @@ async def _ptt_detener(por_tope: bool = False, motivo_auto: str | None = None):
     v = await asyncio.to_thread(veredicto, audio, SAMPLE_RATE, cfg_voz)
     print(f"  [Mic] veredicto {v.resumen()}", flush=True)
     if v.tipo != "enviar":
-        _emitir_veredicto(v.tipo, v)
+        frase = _emitir_veredicto(v.tipo, v)
         _terminar()
         _conversacion(False, "sin voz")
+        _decir_aviso(frase, retraso_aviso)
         return
 
     _ptt_estado = "transcribiendo"
@@ -1004,9 +1109,11 @@ async def _ptt_detener(por_tope: bool = False, motivo_auto: str | None = None):
         t_stt = time.perf_counter() - t0   # lo que se espera DESPUÉS de cortar
     except Exception as e:
         logger.exception("[PTT] falló la transcripción")
-        _broadcast_ws({"tipo": "error", "mensaje": f"Falló la transcripción: {e}"})
+        frase = _elegir_aviso("avisoSttFalla")
+        _broadcast_ws({"tipo": "error", "mensaje": f"Falló la transcripción: {e}", "frase": frase})
         _terminar()
         _conversacion(False, "falló la transcripción")
+        _decir_aviso(frase, retraso_aviso)
         return
     from llm._energia import estado_alimentacion, perfil_cpu
     energia = f"{estado_alimentacion()}; {perfil_cpu()}"
@@ -1016,15 +1123,17 @@ async def _ptt_detener(por_tope: bool = False, motivo_auto: str | None = None):
           f"| energía: {energia} | {texto!r}", flush=True)
 
     if not texto:
-        _emitir_veredicto("sin_voz", v)
+        frase = _emitir_veredicto("sin_voz", v)
         _terminar("no se entendió nada")
         _conversacion(False, "no se entendió nada")
+        _decir_aviso(frase, retraso_aviso)
         return
     if es_inventada(texto, v.voz_ms, cfg_voz):
         print(f"  [Mic] descartada por inventada: {texto!r} con {v.voz_ms:.0f} ms de voz", flush=True)
-        _emitir_veredicto("inventada", v, texto=texto.strip())
+        frase = _emitir_veredicto("inventada", v, texto=texto.strip())
         _terminar()
         _conversacion(False, "frase inventada")
+        _decir_aviso(frase, retraso_aviso)
         return
     _emitir_veredicto("enviar", v)
 
@@ -1181,6 +1290,12 @@ async def _ws_handler(websocket):
                 # El frontend avisa cuándo su cola de audio empieza a sonar / se
                 # vacía — el push-to-talk lo necesita para no grabar a Rem.
                 _registrar_voz_estado(websocket, bool(data.get("reproduciendo")))
+
+            elif tipo == "sonido_fin":
+                # La página terminó un sonido del modo conversación (_sonido_y_esperar).
+                fut = _sonidos_pendientes.get(str(data.get("id", "")))
+                if fut is not None and not fut.done():
+                    fut.set_result(True)
 
             elif tipo == "voz_sonando":
                 # El <audio> empezó a sonar de verdad ('playing'): cierra la

@@ -1,5 +1,5 @@
 {
-  "_nota": "Frases fijas del avatar de escritorio (sin LLM). Las lee avatar/escritorio_ui.js y las pregenera con voz frases_voz.py (cache_frases/). Las que no tienen letras no se dicen en voz alta.",
+  "_nota": "Frases fijas con voz (sin LLM), sintetizadas al arrancar por frases_voz.py (cache_frases/). Las reacciones del avatar de escritorio las lee avatar/escritorio_ui.js; los avisos (aviso*) y confirmar los dice rem_avatar_server.py en cualquier modo. Las que no tienen letras no se dicen en voz alta.",
   "leve": [
     "¿Qué quieres, sirviente?",
     "No soy un botón.",
@@ -28,13 +28,41 @@
     "Más despacio. Me mareo."
   ],
   "vozOn": [
-    "…Vale. Vuelvo a hablar."
+    "…Bueno. Vuelvo a hablar."
   ],
   "vozOff": [
     "Me callo. Por ahora."
   ],
   "confirmar": [
-    "Confírmalo en el chat, sirviente.",
-    "Confírmalo en el chat."
+    "¿Apago la PC, sirviente? Dime sí o no en el chat.",
+    "¿Seguro que apago la PC? Confírmalo en el chat."
+  ],
+  "avisoMicMuerto": [
+    "No me llega nada del micro, sirviente. ¿Lo tienes silenciado?",
+    "…Silencio total. Revisa el micro.",
+    "Tu micro está muerto. O mudo. Revísalo."
+  ],
+  "avisoSinVoz": [
+    "No oí nada. Repite.",
+    "…¿Dijiste algo? Más alto, sirviente.",
+    "Solo oí ruido. Otra vez."
+  ],
+  "avisoInventada": [
+    "Eso no lo dijiste tú, ¿verdad? Repite.",
+    "…Creo que oí fantasmas. Dilo de nuevo.",
+    "Mi oído se inventó algo. Otra vez, sirviente."
+  ],
+  "avisoErrorTurno": [
+    "Se me trabó la cabeza. Dímelo otra vez.",
+    "…Lag mental. Repite, sirviente.",
+    "Algo falló de mi lado. Por esta vez no es skill issue tuyo."
+  ],
+  "avisoMicNoAbre": [
+    "No puedo abrir el micro. Revisa que esté conectado.",
+    "El micro no me deja entrar, sirviente. Revísalo."
+  ],
+  "avisoSttFalla": [
+    "No te entendí. Repite.",
+    "…Se me perdió lo que dijiste. Otra vez."
   ]
 }

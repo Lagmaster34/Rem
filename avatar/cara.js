@@ -161,6 +161,64 @@ _audioEl.addEventListener('error', () => {
     '| readyState:', _audioEl.readyState, '| networkState:', _audioEl.networkState);
   _avanzarCola();
 });
+// Sonidos cortos del modo conversación (el servidor manda {tipo:'sonido'}):
+// dos notas que suben al abrir el micrófono y las mismas al revés al cerrarlo.
+// Se generan aquí (WAV en un blob) y suenan en un <audio> aparte: no son voz,
+// no pasan por la cola ni por voz_estado. Al acabar se avisa con sonido_fin
+// (el servidor espera al de abrir antes de abrir el micrófono).
+// Cada nota: seno + 25 % de 2.º armónico, ataque 8 ms, caída exponencial
+// (constante = duración/2,2) y 3 ms de cierre para que no chasquee; pico
+// −16 dBFS, 22050 Hz. mi5 = 659,3 Hz, si5 = 987,8 Hz.
+const _sonidoEl = new Audio();
+const _SONIDOS_NOTAS = {
+  mic_abre:   [[659.3, 90], [0, 25], [987.8, 140]],
+  mic_cierra: [[987.8, 90], [0, 25], [659.3, 140]],
+};
+const _sonidosUrl = {};
+function _wavDeNotas(notas, sr = 22050) {
+  const muestras = [];
+  for (const [f, ms] of notas) {
+    const n = Math.round(sr * ms / 1000), tau = ms / 1000 / 2.2;
+    const ataque = 0.008 * sr, cierre = 0.003 * sr;
+    for (let i = 0; i < n; i++) {
+      if (!f) { muestras.push(0); continue; }
+      const t = i / sr;
+      let env = i < ataque ? i / ataque : Math.exp(-(t - 0.008) / tau);
+      if (n - i < cierre) env *= (n - i) / cierre;
+      muestras.push(env * (Math.sin(2 * Math.PI * f * t) + 0.25 * Math.sin(4 * Math.PI * f * t)));
+    }
+  }
+  const pico = Math.max(...muestras.map(Math.abs)) || 1;
+  const k = Math.pow(10, -16 / 20) / pico;
+  const buf = new ArrayBuffer(44 + muestras.length * 2), v = new DataView(buf);
+  const txt = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  txt(0, 'RIFF'); v.setUint32(4, 36 + muestras.length * 2, true); txt(8, 'WAVE');
+  txt(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  txt(36, 'data'); v.setUint32(40, muestras.length * 2, true);
+  muestras.forEach((m, i) => v.setInt16(44 + i * 2, Math.round(clamp(m * k, -1, 1) * 32767), true));
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+let _sonidoId = null;
+function _sonidoTerminado() {
+  if (_sonidoId === null) return;
+  const id = _sonidoId;
+  _sonidoId = null;
+  if (_ws && _ws.readyState === WebSocket.OPEN) _ws.send(JSON.stringify({ tipo: 'sonido_fin', id }));
+}
+_sonidoEl.addEventListener('ended', _sonidoTerminado);
+_sonidoEl.addEventListener('error', _sonidoTerminado);
+function tocarSonido(nombre, id) {
+  const notas = _SONIDOS_NOTAS[nombre];
+  if (!notas) { console.warn('[Sonido] desconocido:', nombre); _sonidoId = id; _sonidoTerminado(); return; }
+  _sonidoTerminado();   // uno anterior a medias: ya no se espera
+  _sonidosUrl[nombre] ??= _wavDeNotas(notas);
+  _sonidoId = id;
+  console.log('[Sonido]', nombre);
+  _sonidoEl.src = _sonidosUrl[nombre];
+  _sonidoEl.play().catch(e => { console.warn('[Sonido] play() rechazado:', e?.name, e?.message); _sonidoTerminado(); });
+}
+
 _audioEl.addEventListener('stalled', () => {
   console.warn('[Lipsync] evento "stalled" para', _audioEl.src,
     '| readyState:', _audioEl.readyState, '| networkState:', _audioEl.networkState);

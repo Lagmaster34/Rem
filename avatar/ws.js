@@ -43,7 +43,7 @@ let _modelosLista = [];   // modelos_lista del servidor (models/vrm/)
       } else if (d.tipo === 'modo_actual') {
         window.__remChat?.onModoActual(d.modo);
       } else if (d.tipo === 'error') {
-        window.__remChat?.onError(d.mensaje ?? 'error desconocido');
+        window.__remChat?.onError(d.mensaje ?? 'error desconocido', String(d.frase ?? ''));
       } else if (d.tipo === 'prefs_estado') {
         for (const [sec, v] of Object.entries(d.prefs ?? {})) aplicarPrefsGenerales(sec, v);
         aplicarPrefsAnim(d.prefs?.animaciones);
@@ -67,13 +67,15 @@ let _modelosLista = [];   // modelos_lista del servidor (models/vrm/)
         else if (estado === 'listening') estado = 'idle';
         window.__remChat?.onPttEstado?.(d.estado, d.motivo || d.nota || '');
       } else if (d.tipo === 'mic_veredicto') {
-        window.__remChat?.onMicVeredicto?.(String(d.veredicto ?? ''), String(d.mensaje ?? ''));
+        window.__remChat?.onMicVeredicto?.(String(d.veredicto ?? ''), String(d.mensaje ?? ''), String(d.frase ?? ''));
       } else if (d.tipo === 'conversacion') {
         window.__remChat?.onConversacion?.(!!d.activa, String(d.motivo ?? ''));
       } else if (d.tipo === 'ptt_transcripcion') {
         window.__remChat?.onTranscripcion?.(String(d.texto ?? ''), d.ms ?? 1000);
       } else if (d.tipo === 'accion_confirmar') {
-        window.__remChat?.onAccionConfirmar?.(String(d.nombre ?? ''), String(d.descripcion ?? ''));
+        window.__remChat?.onAccionConfirmar?.(String(d.nombre ?? ''), String(d.descripcion ?? ''), String(d.frase ?? ''));
+      } else if (d.tipo === 'sonido') {
+        tocarSonido(String(d.nombre ?? ''), String(d.id ?? ''));
       } else if (d.tipo === 'voz_actual') {
         window.__remChat?.onVozActual?.(d.activa);
       } else if (d.tipo === 'cmd_avatar') {
@@ -102,7 +104,7 @@ window.setEstado = s => { estado = s; };
 function aplicarPrefsGenerales(seccion, valores) {
   if (!valores) return;
   if (seccion === 'apariencia' && valores.tema) document.documentElement.dataset.tema = valores.tema;
-  if (seccion === 'voz' && typeof valores.volumen === 'number') _audioEl.volume = clamp(valores.volumen, 0, 1);
+  if (seccion === 'voz' && typeof valores.volumen === 'number') _audioEl.volume = _sonidoEl.volume = clamp(valores.volumen, 0, 1);
   window.__remPrefs?.(seccion, valores);
 }
 

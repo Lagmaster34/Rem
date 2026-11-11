@@ -2,7 +2,7 @@
 
 ## ⚠ Fase 2 en curso: ver "Nota de traspaso — fase 2" al final (estado y PENDIENTES en orden) y `notas_fase2/README.md`
 Etapas 2, 4 y 5 hechas y commiteadas (2026-11-06): modo escritorio, ajustes y temas, micrófono.
-Pendiente 1 de la nota hecho el 2026-11-07; el 2 queda sin decidir (falta grabar con la voz de Esteban); lo siguiente es el 3.
+Pendientes 1 y 3 de la nota hechos (2026-11-07 y 2026-11-10); el 2 queda sin decidir (falta grabar con la voz de Esteban); lo siguiente es el 4 (opcional) o el 5.
 **Regla: enseñar siempre el diff antes de cada commit y esperar el ok de Esteban.**
 
 ## ⚠ Cambio 2026-11-04: avatar multimodelo y director de animación (leer antes que lo de abajo)
@@ -2692,35 +2692,36 @@ herramientas de prueba.
      ¿cómo estás?» y «Ayer estuve jugando videojuegos, [pausa] ¿y tú?», y pasarlas por las cinco
      variantes.
    - Los WAV con la voz de Esteban van fuera del repo (es público), nunca en git.
-3. **Avisos con voz** (lo que hoy sale en el chat sin voz). Frases aprobadas por Esteban, en el
-   registro de Yoru de `personalidad.py` (tú, «sirviente», sin exclamaciones, sin español de España),
-   para sintetizar con la caché de `frases_voz.py` como las reacciones del escritorio:
-   - Micrófono silenciado o sin audio (`muerto`/`silencio`): «No me llega nada del micro, sirviente.
-     ¿Lo tienes silenciado?» · «…Silencio total. Revisa el micro.» · «Tu micro está muerto. O mudo.
-     Revísalo.»
-   - Llega audio pero no voz (`sin_voz`): «No oí nada. Repite.» · «…¿Dijiste algo? Más alto,
-     sirviente.» · «Solo oí ruido. Otra vez.»
-   - Frase inventada por Whisper: «Eso no lo dijiste tú, ¿verdad? Repite.» · «…Creo que oí
-     fantasmas. Dilo de nuevo.» · «Mi oído se inventó algo. Otra vez, sirviente.»
-   - Error de un turno: «Se me trabó la cabeza. Dímelo otra vez.» · «…Lag mental. Repite,
-     sirviente.» · «Algo falló de mi lado. Por esta vez no es skill issue tuyo.»
-   - No se pudo abrir el micrófono: «No puedo abrir el micro. Revisa que esté conectado.» · «El micro
-     no me deja entrar, sirviente. Revísalo.»
-   - Falló la transcripción: «No te entendí. Repite.» · «…Se me perdió lo que dijiste. Otra vez.»
-   - Escribir con la tecla de voz pulsada: «Suelta la tecla primero, sirviente.» · «O hablas o
-     escribes. Suelta la tecla.»
-   - Confirmación de apagar la PC: «¿Apago la PC, sirviente? Dime sí o no en el chat.» · «¿Seguro que
-     apago la PC? Confírmalo en el chat.» — **unificarlas con el grupo `confirmar` de
-     `frases_escritorio.json`** (hoy «Confírmalo en el chat, sirviente.» / «Confírmalo en el chat.»).
-   - En `frases_escritorio.json`, «…Vale. Vuelvo a hablar.» → «…Bueno. Vuelvo a hablar.».
-   - **Se quedan solo escritos**: «No te escuché: Yoru está hablando» (y «Yoru ya está respondiendo»:
-     ella está hablando), los fallos de la propia voz, «Voz detectada», la depuración y los avisos de
-     la interfaz (modo, modelo, clips, comandos, conexión).
-   - **Modo conversación: un sonido corto en vez de frase** (aprobados): al abrir el micrófono dos
-     notas que suben, mi5 (659,3 Hz, 90 ms) → silencio 25 ms → si5 (987,8 Hz, 140 ms); al cerrar,
-     las mismas al revés (si5 → mi5). Seno + 25 % de 2.º armónico, ataque 8 ms, caída exponencial
-     (constante = duración/2,2), pico −16 dBFS, 22050 Hz, 255 ms en total. El cierre por «nadie
-     habló» usa el de cerrar, sin frase.
+3. ~~**Avisos con voz**~~ — hecho (2026-11-10). Las frases aprobadas están en `frases_escritorio.json`
+   (grupos `aviso*` y `confirmar`, ya unificado; `vozOn` → «…Bueno. Vuelvo a hablar.»). Las dice el
+   **servidor**, que sabe cuándo pasan (`_elegir_aviso` sin repetir la última del grupo +
+   `_decir_aviso` → `_hablar_frase`, la misma vía y caché que `decir_frase`), así que valen en ventana,
+   overlay y escritorio; `frases_voz.precargar()` corre ya en todos los modos (36 frases con voz, en
+   `cache_frases/`, ignorada por git). El chat
+   sigue enseñando el mensaje técnico; la frase va además en el mensaje WS (`frase` en `mic_veredicto`,
+   `error` y `accion_confirmar`) y la burbuja del escritorio enseña esa. Solo se dicen con la voz
+   activa, el micrófono cerrado y sin otra voz en cola o sonando (`_motivo_no_decir_frase`); la
+   confirmación se dice con su turno activo (`en_turno=True`: el turno está parado esperando).
+   **Escribir con la tecla pulsada se queda solo escrito**: el micrófono está abierto y se grabaría a
+   sí misma. Sonidos del modo conversación: los genera la página (`avatar/cara.js`, `tocarSonido`,
+   WAV en un blob, el volumen de la voz) y suenan en un `<audio>` aparte, fuera de la cola y de
+   `voz_estado`; se añadieron 3 ms de cierre por nota para que no chasquee. El de abrir suena ANTES de
+   abrir el micrófono y el servidor espera `sonido_fin` (tope 0,5 s) para no grabarlo; el de cerrar, al
+   cerrar una grabación del modo conversación, y un aviso que venga detrás espera 0,3 s. Suenan aunque
+   la voz esté apagada (no son voz). Verificado (anidado, micrófono simulado): muerto, solo ruido,
+   conversación (pregunta en Eco → sonido → reabre 0,5 s después → muerto → sonido + aviso) y la
+   confirmación de apagar en modo IA. Los otros cuatro (error de turno, micrófono que no abre, fallo de
+   transcripción, frase inventada) con fallos inyectados en memoria (un lanzador fuera del repo que
+   parchea `Grabador.iniciar`, `LocalSTTProvider.transcribir*`, `es_inventada` y `EchoProvider`), en
+   reposo, con voz sonando (el aviso se queda en texto: «ya está hablando») y al cerrar el micrófono
+   del modo conversación (sonido + aviso 0,3 s después). Ahí salieron los huecos del micrófono con
+   audio despachado sin confirmar (ver "Audio despachado sin confirmar" en "Modo overlay:
+   push-to-talk"); tras el arreglo, con ráfagas de `ptt_start` tras cada aviso (9 aperturas) el
+   micrófono se abre 0,67-0,81 s después de que termina, nunca durante. La espera de `sonido_fin`
+   antes de abrir tiene tope de 0,5 s (`_SONIDO_ESPERA_MAX_S`): lo normal es 0,34-0,37 s, y con el WS
+   cerrado mientras suena (el aviso se pierde: `cara.js` solo lo manda con el WS abierto) el micrófono
+   se abre 0,64 s después del sonido (antes, con 1 s, 1,11-1,14 s). Cada espera queda en el log
+   (`[Mic] sonido 'mic_abre': terminó en 0.35s`).
 4. **MPRIS / «localhost» en la barra de música**: opcional, para el final, sin cambiar cómo se
    reproduce el audio. WebKitGTK 2.52 publica por MPRIS los `<audio>` y no tiene un ajuste para
    apagarlo; las salidas vistas son reproducir con la Web Audio API (riesgo: el `AudioContext` se
@@ -2737,6 +2738,10 @@ Después: 5) quitar el modo ventana (cuando `notas_fase2/tabla_equivalencias.md`
   el Hyprland anidado ya arriba (si no, se abre en su escritorio real: pasó el 2026-11-06). Mientras
   una prueba ocupa los puertos 18765/18766 su Rem no puede arrancar (también pasó): cerrar siempre la
   prueba al terminar.
+- `notas_fase2/prueba_arrastre/anidado.conf` es sintaxis vieja de Hyprland: 0.57 lee la config como
+  Lua y lo arranca en **modo de emergencia** (sin binds, reglas, monitor 1280×800 ni animaciones). Las
+  pruebas del 2026-11-10 no dependían de nada de eso (solo WS, la layer surface y el micrófono
+  simulado). Antes de una prueba que use binds, reglas de ventana o el tamaño de salida, pasarlo a Lua.
 - **Enseñar el diff antes de cada commit y esperar el ok de Esteban**; sin líneas de
   Claude/Anthropic en el mensaje.
 

@@ -709,7 +709,9 @@ function crearEscritorioUI() {
   window.__remChat = {
     onDelta() {},
     onDone() { _esc.esperando = false; },
-    onError(mensaje) { _esc.esperando = false; _decir(`⚠ ${mensaje}`, 4000); },
+    // Con frase (aviso de Yoru, el servidor ya la dice con voz si puede), la
+    // burbuja la enseña a ella; el mensaje técnico queda en el chat.
+    onError(mensaje, frase) { _esc.esperando = false; _decir(frase || `⚠ ${mensaje}`, 4000); },
     onModoActual(modo) { _esc.modo = modo; if (_esc.menuAbierto) _pintarMenu(_menuSub); },
     onVozActual(activa) { _esc.vozActiva = !!activa; },
     onSistema(texto) { enviarAlChat({ que: 'sistema', texto }); },
@@ -724,16 +726,16 @@ function crearEscritorioUI() {
       _esc.ptt = (est === 'escuchando' || est === 'transcribiendo') ? est : 'idle';
       if (est === 'ignorado') _decir(`🎙 No te escuché: ${detalle}`, 4000);
     },
-    // Veredicto del micrófono: en la burbuja, solo texto (nunca con voz: el
-    // micrófono acaba de cerrarse o va a reabrirse).
-    onMicVeredicto(veredicto, mensaje) { if (veredicto !== 'enviar') _decir(mensaje, 4500); },
+    // Veredicto del micrófono: en la burbuja la frase de Yoru (la voz la pone
+    // el servidor, con el micrófono ya cerrado) o, sin ella, el mensaje.
+    onMicVeredicto(veredicto, mensaje, frase) { if (veredicto !== 'enviar') _decir(frase || mensaje, 4500); },
     onConversacion() {},
     onTranscripcion(texto, ms) { _esc.esperando = true; _decir(`«${texto}»`, Math.max(1500, ms + 600)); },
     // Una acción espera confirmación: se contesta en la ventana de chat, que
     // se abre si estaba cerrada (el servidor le reenvía el pedido al conectar).
-    onAccionConfirmar() {
+    onAccionConfirmar(_nombre, _descripcion, frase) {
       _aPython({ tipo: 'accion', accion: 'chat_abrir' });
-      _decir(_frase('confirmar'), 4000, true);
+      _decir(frase || _frase('confirmar'), 4000);   // la voz la pone el servidor
     },
   };
 

@@ -411,6 +411,10 @@ def main():
     import chat_sesion
     threading.Thread(target=chat_sesion.precargar_prefijo,
                      args=(acciones.tools_disponibles(MODO),), daemon=True).start()
+    # Frases fijas con voz (frases_voz.py): las reacciones del escritorio y los
+    # avisos (micrófono, errores, confirmar), que valen en cualquier modo.
+    import frases_voz
+    threading.Thread(target=frases_voz.precargar, daemon=True).start()
 
     import rem_avatar_server
     rem_avatar_server.establecer_modo(MODO)
@@ -431,8 +435,6 @@ def main():
         except RuntimeError as e:
             _fatal(str(e))
         win = avatar.win
-        import frases_voz
-        threading.Thread(target=frases_voz.precargar, daemon=True).start()
         # El lanzador «Rem Escritorio» con una instancia ya abierta manda
         # SIGUSR1: vuelve a mostrar el avatar si se ocultó desde su menú.
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, 10, avatar.mostrar)

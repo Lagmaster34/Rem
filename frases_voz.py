@@ -1,5 +1,7 @@
-"""frases_voz.py — las frases fijas del avatar de escritorio (reacciones al
-clic, al agarrarlo, al cambiar la voz...) dichas con la voz de Piper.
+"""frases_voz.py — las frases fijas dichas con la voz de Piper: las
+reacciones del avatar de escritorio (al clic, al agarrarlo, al cambiar la
+voz...) y los avisos del servidor en cualquier modo (micrófono, errores,
+confirmación de apagar la PC).
 
 Los textos viven en frases_escritorio.json (versionado; la página los lee de
 ahí también). Cada frase se sintetiza UNA vez y se guarda en cache_frases/
@@ -33,15 +35,24 @@ def _log(msg):
     print(f"[Frases] {msg}", flush=True)
 
 
-def textos() -> set[str]:
-    """Todas las frases del JSON (las que se pueden pedir con voz)."""
+def _grupos() -> dict[str, list[str]]:
     try:
         with open(FRASES_PATH, encoding="utf-8") as f:
             datos = json.load(f)
     except (OSError, ValueError) as e:
         _log(f"no se pudo leer {FRASES_PATH} ({e})")
-        return set()
-    return {t for lista in datos.values() if isinstance(lista, list) for t in lista if isinstance(t, str)}
+        return {}
+    return {k: [t for t in v if isinstance(t, str)] for k, v in datos.items() if isinstance(v, list)}
+
+
+def textos() -> set[str]:
+    """Todas las frases del JSON (las que se pueden pedir con voz)."""
+    return {t for lista in _grupos().values() for t in lista}
+
+
+def grupo(nombre: str) -> list[str]:
+    """Las frases de un grupo del JSON ([] si no existe)."""
+    return _grupos().get(nombre, [])
 
 
 def _texto_voz(texto: str) -> str:
