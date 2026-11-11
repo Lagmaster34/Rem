@@ -530,7 +530,7 @@ class AvatarEscritorio:
         self.oculto = si
         self._js(f"ocultar({'true' if si else 'false'})")
         self.aplicar_region()
-        _log("oculto — vuelve con el lanzador «Rem Escritorio» o el atajo" if si else "visible otra vez")
+        _log("oculto — vuelve con el lanzador «Yoru» o el atajo" if si else "visible otra vez")
 
     def mostrar(self):
         """SIGUSR1 (respaldo del lanzador si el WebSocket no responde)."""

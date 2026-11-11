@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Yoru
+Comment=Asistente de escritorio: abre el último modo usado (ventana o escritorio)
+Exec=@LANZADORES@/rem.sh
+Icon=@ICONO@
+Terminal=false
+Categories=Utility;
+StartupNotify=false

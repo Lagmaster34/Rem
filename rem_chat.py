@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Rem de escritorio — GTK3 + WebKit2. ES LA APLICACIÓN: levanta el servidor
+Yoru de escritorio — GTK3 + WebKit2. ES LA APLICACIÓN: levanta el servidor
 HTTP/WS del avatar (mismo servidor, mismo pipeline de voz y LLM, un solo
 proceso) y abre UNA de estas presentaciones, nunca dos a la vez:
 
@@ -15,7 +15,9 @@ proceso) y abre UNA de estas presentaciones, nunca dos a la vez:
   --modo overlay   Alias de escritorio fijado en la esquina (el modo overlay se
                    fusionó con el de escritorio el 2026-11-10).
 
-Sin --modo se usa config.toml -> [app].modo. Cambiar de modo desde el menú reinicia el proceso (el tipo de
+Sin --modo se usa el último modo usado (preferencias.json -> app.modo; lo
+guarda este programa al arrancar), si no config.toml -> [app].modo, si no
+escritorio. Cambiar de modo desde el menú reinicia el proceso (el tipo de
 ventana se decide al arrancar) y la conversación pasa al nuevo
 (--recuperar-conversacion). Si ya hay una instancia corriendo (puertos
 :18765/:18766 ocupados) sale con un error claro en vez de abrir una segunda
@@ -50,9 +52,9 @@ LOG_PATH = config.ruta_datos("rem_chat.log")
 
 def _parsear_args():
     ap = argparse.ArgumentParser(
-        description="Rem: asistente virtual de escritorio (ventana o escritorio).")
+        description="Yoru: asistente virtual de escritorio (ventana o escritorio).")
     ap.add_argument("--modo", choices=("ventana", "escritorio", "overlay"), default=None,
-                    help="presentación (default: config.toml [app].modo; overlay = escritorio fijado en la esquina)")
+                    help="presentación (default: el último usado; overlay = escritorio fijado en la esquina)")
     ap.add_argument("--recuperar-conversacion", action="store_true",
                     help="cargar la conversación que dejó el modo anterior (lo usa el cambio de modo)")
     return ap.parse_args()
@@ -170,8 +172,9 @@ def _precargar_stt():
 
 # ── Modo ventana ──────────────────────────────────────────────────────────
 def _crear_ventana():
+    import personalidad
     win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
-    win.set_title("Rem")
+    win.set_title(personalidad.NOMBRE_PERSONAJE)
     win.set_default_size(ANCHO_DEFAULT, ALTO_DEFAULT)
     win.set_resizable(True)
     # Decorada, opaca, con foco (set_decorated/accept_focus ya son True por
@@ -339,7 +342,12 @@ def main():
         _fatal(f"{e}. Solo puede haber una instancia de Rem.")
     _escribir_pidfile()
 
-
+    # El último modo: el lanzador «Yoru» (sin --modo) abre este la próxima vez.
+    import preferencias
+    try:
+        preferencias.aplicar("app", {"modo": MODO})
+    except preferencias.PreferenciaInvalida as e:
+        print(f"[Chat] no se pudo guardar el último modo ({e})")
     if _ARGS.recuperar_conversacion:
         n = rem_avatar_server.recuperar_conversacion()
         print(f"[Chat] conversación del modo anterior: {n} mensajes recuperados" if n
@@ -355,8 +363,8 @@ def main():
         except RuntimeError as e:
             _fatal(str(e))
         win = avatar.win
-        # El lanzador «Rem Escritorio» con una instancia ya abierta manda
-        # SIGUSR1: vuelve a mostrar el avatar si se ocultó desde su menú.
+        # El lanzador «Yoru» con una instancia ya abierta en escritorio manda
+        # SIGUSR1 si el WebSocket no responde: vuelve a mostrar el avatar.
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, 10, avatar.mostrar)
     else:
         win, webview = _crear_ventana()

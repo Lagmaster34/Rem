@@ -94,9 +94,11 @@ def resolver_modo(valor: str) -> tuple[str, bool]:
 
 
 def leer_modo_app() -> tuple[str, bool]:
-    """Modo con el que arranca rem_chat.py sin --modo: config.toml [app].modo.
-    Devuelve (modo, fijado-por-alias)."""
-    return resolver_modo(modo_de_toml())
+    """Modo con el que arranca rem_chat.py sin --modo: el último usado
+    (preferencias.json -> app.modo, lo guarda rem_chat.py al arrancar), o
+    config.toml [app].modo, o escritorio. Devuelve (modo, fijado-por-alias)."""
+    import preferencias
+    return resolver_modo(preferencias.obtener("app")["modo"])
 
 
 def leer_config_overlay() -> dict:

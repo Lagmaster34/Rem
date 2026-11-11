@@ -2,7 +2,8 @@
 # Abre Rem en modo escritorio (avatar que se arrastra + chat en ventana aparte).
 # Si ya está abierto en modo escritorio, no arranca otro: lo vuelve a mostrar
 # (por si se ocultó) con rem_escritorio.py, y si el WebSocket no responde, con
-# SIGUSR1. Si hay otra instancia (ventana u overlay), la cierra: nunca quedan dos.
+# SIGUSR1. Si hay otra instancia (ventana), la cierra: nunca quedan dos.
+# Sin entrada en el lanzador (lo cubre «Yoru», rem.sh): para atajos o la terminal.
 set -euo pipefail
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_comun.sh"
 abrir_log rem-escritorio

@@ -7,3 +7,4 @@ Icon=@ICONO@
 Terminal=false
 Categories=Utility;
 StartupNotify=false
+NoDisplay=true

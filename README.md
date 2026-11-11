@@ -212,35 +212,42 @@ tmp_audio/
 
 ```bash
 venv/bin/python rem_chat.py     # LA APLICACIÓN — abre la ventana del avatar con panel de chat
-venv/bin/python rem_chat.py --modo overlay   # avatar sobre el escritorio + caja de texto
+venv/bin/python rem_chat.py --modo overlay   # alias: escritorio fijado en la esquina, con caja de texto
 venv/bin/python bench_chat.py   # REPL de depuración — se conecta a rem_chat.py si está corriendo,
                                 # o levanta el servidor él mismo. 'modo eco' = voz sin LLM
 ```
 
 ### Lanzadores (sin escribir comandos)
 
-La carpeta `lanzadores/` abre cada modo con doble clic o desde el lanzador de apps:
+En el lanzador de apps hay una sola entrada, **Yoru** (`lanzadores/rem.sh`): abre el último modo
+usado (ventana o escritorio; la primera vez, escritorio). Si ya está abierta no abre otra: en
+escritorio la vuelve a mostrar. Lo demás se hace desde el **menú del clic derecho** sobre Yoru, en
+cualquier modo: *Cambiar de modo* (reinicia la app y la conversación pasa al modo nuevo), *Abrir
+panel* y *Cerrar*. En escritorio, además, *Fijar en la esquina* (el antiguo modo overlay: quieta
+abajo a la izquierda, a medio cuerpo y con una caja de texto; se activa y se quita en vivo).
 
-| Script | Entrada en el lanzador | Qué abre |
-|---|---|---|
-| `lanzadores/rem-ventana.sh` | **Rem Ventana** | `rem_chat.py --modo ventana` |
-| `lanzadores/rem-overlay.sh` | **Rem Overlay** | `rem_chat.py --modo overlay` (avatar sobre el escritorio + caja de texto) |
-| `lanzadores/rem-debug.sh` | **Rem Debug** | `bench_chat.py` en una terminal (`$TERMINAL`, o foot/kitty/alacritty) |
-| `lanzadores/rem-panel.sh` | **Rem Panel** | `rem_panel.py`: panel de control (necesita Rem abierto; no lo cierra ni lo reinicia) |
-| `lanzadores/rem-cerrar.sh` | **Rem Cerrar** | Cierra cualquier `rem_chat.py` abierto, ventana u overlay (SIGTERM, y SIGKILL a los 5 s) |
+Los demás scripts siguen en `lanzadores/` para atajos o la terminal, sin entrada visible:
 
-Para que aparezcan en el lanzador de apps (Hyprland, rofi, wofi, etc.):
+| Script | Qué hace |
+|---|---|
+| `lanzadores/rem.sh` | **Yoru**: `rem_chat.py` sin `--modo` (el último usado) |
+| `lanzadores/rem-ventana.sh` / `rem-escritorio.sh` | `rem_chat.py --modo ventana` / `--modo escritorio` |
+| `lanzadores/rem-overlay.sh` | `rem_chat.py --modo overlay`: alias de escritorio fijado en la esquina |
+| `lanzadores/rem-debug.sh` | **Rem Debug** (instalado con `NoDisplay=true`, no se ve): `bench_chat.py` en una terminal |
+| `lanzadores/rem-panel.sh` | `rem_panel.py`: panel de control (necesita Yoru abierta) |
+| `lanzadores/rem-cerrar.sh` | Cierra cualquier `rem_chat.py` abierto (SIGTERM, y SIGKILL a los 5 s) |
+
+Para instalar la entrada en el lanzador de apps (Hyprland, rofi, wofi, etc.):
 
 ```bash
-lanzadores/instalar.sh    # escribe los .desktop en ~/.local/share/applications/
+lanzadores/instalar.sh    # escribe los .desktop en ~/.local/share/applications/ y borra los que ya no existen
 ```
 
-- **Dos instancias nunca compiten por el puerto.** `rem-ventana.sh` y `rem-overlay.sh` cierran
-  cualquier `rem_chat.py` que ya esté corriendo, en el modo que sea, antes de abrir el nuevo. Así
-  nunca quedan la ventana y el overlay abiertos a la vez. Primero piden un cierre limpio (SIGTERM) y solo
-  fuerzan (SIGKILL) si no se cerró en 5 s. `rem-debug.sh` **no** lo cierra, porque `bench_chat.py`
-  no ocupa el puerto: si hay una ventana abierta se conecta a ella como cliente, y si no, levanta
-  su propio servidor.
+- **Dos instancias nunca compiten por el puerto.** `rem-ventana.sh`, `rem-escritorio.sh` y
+  `rem-overlay.sh` cierran cualquier `rem_chat.py` que ya esté corriendo antes de abrir el nuevo
+  (cierre limpio con SIGTERM; SIGKILL si no se cerró en 5 s). `rem-debug.sh` **no** lo cierra, porque
+  `bench_chat.py` no ocupa el puerto: si hay una instancia abierta se conecta a ella como cliente, y
+  si no, levanta su propio servidor.
 - **Logs** en `lanzadores/logs/<script>.log`: cada arranque se agrega con fecha y hora, sin borrar
   los anteriores. La consola de WebKit sigue yendo a `rem_chat.log`, en la raíz. El log de debug
   guarda la sesión completa del REPL.
@@ -249,12 +256,11 @@ lanzadores/instalar.sh    # escribe los .desktop en ~/.local/share/applications/
   `Exec=`, así que se instala como copia con la ruta real y no como symlink.
 - **Ícono**: el proyecto no trae uno propio, así que se usa `avatar-default` del tema. Si dejás un
   `lanzadores/rem.png` o `rem.svg` y volvés a correr `instalar.sh`, se usa ese.
-- **Cerrar con una tecla** (útil en el overlay, que no tiene botón de cerrar): agregar a
-  `hyprland.conf`
+- **Cerrar con una tecla** (además del menú del clic derecho): agregar a `hyprland.conf`
   ```
   bind = SUPER SHIFT, H, exec, /mnt/extra/rem/Rem/lanzadores/rem-cerrar.sh
   ```
-- Para el push-to-talk del overlay hacen falta además los binds de Hyprland (ver CLAUDE.md,
+- Para el push-to-talk con tecla hacen falta además los binds de Hyprland (ver CLAUDE.md,
   "Líneas de Hyprland para push-to-talk").
 
 ---

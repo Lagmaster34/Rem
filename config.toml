@@ -83,7 +83,9 @@ modelo = "models/vrm/neru.vrm"
 
 
 [app]
-# Cómo se presenta Rem. Override: rem_chat.py --modo ventana|overlay.
+# Cómo se presenta Yoru la primera vez. Después manda el último modo usado
+# (preferencias.json -> app.modo, lo guarda rem_chat.py al arrancar); el
+# lanzador «Yoru» abre ese. Override: rem_chat.py --modo ventana|escritorio.
 #   "ventana" → ventana GTK normal con avatar + panel de chat (el de siempre).
 #   "escritorio" → avatar que se arrastra por el escritorio, con el chat en una
 #                  ventana aparte (ver [escritorio]); con «Fijar en la esquina»
@@ -92,7 +94,7 @@ modelo = "models/vrm/neru.vrm"
 #   "overlay" → alias de escritorio fijado en la esquina (el antiguo modo).
 # Nunca dos a la vez: es un solo proceso con un solo modo, y un segundo
 # rem_chat.py aborta con un error claro si ya hay uno corriendo.
-modo = "ventana"
+modo = "escritorio"
 
 
 [overlay]

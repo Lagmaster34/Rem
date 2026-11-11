@@ -60,7 +60,7 @@ pid_rem_chat() {
     rm -f "$PIDFILE"
 }
 
-# El modo de la instancia abierta (ventana/overlay/escritorio), o nada.
+# El modo de la instancia abierta (ventana/escritorio), o nada.
 modo_rem_chat() {
     [[ -n "$(pid_rem_chat)" ]] && sed -n 2p "$PIDFILE" 2>/dev/null || true
 }

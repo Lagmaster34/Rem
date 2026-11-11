@@ -3,6 +3,9 @@
 ## ⚠ Fase 2 en curso: ver "Nota de traspaso — fase 2" al final (estado y PENDIENTES en orden) y `notas_fase2/README.md`
 Etapas 2, 4 y 5 hechas y commiteadas (2026-11-06): modo escritorio, ajustes y temas, micrófono.
 Pendientes 1 y 3 de la nota hechos (2026-11-07 y 2026-11-10); el 2 queda sin decidir (falta grabar con la voz de Esteban); lo siguiente es el 4 (opcional) o el 5.
+**2026-11-10**: el modo overlay se fusionó con el de escritorio («Fijar en la esquina», en vivo) y
+hay un solo lanzador, «Yoru», que abre el último modo; menú del clic derecho en todos los modos. Ver "Lanzador Yoru y
+escritorio fijado" al final. Las secciones "Modo overlay: …" de abajo son historia salvo donde se dice.
 **Regla: enseñar siempre el diff antes de cada commit y esperar el ok de Esteban.**
 
 ## ⚠ Cambio 2026-11-04: avatar multimodelo y director de animación (leer antes que lo de abajo)
@@ -51,8 +54,8 @@ no basta con copiar la carpeta.
 ## Archivos principales
 | Archivo | Qué hace |
 |---------|----------|
-| `rem_chat.py` | **La aplicación**: levanta el servidor HTTP/WS y abre UNA presentación, `--modo ventana` (default), `--modo overlay` o `--modo escritorio`. Ver "Modo overlay" y "Modo escritorio" más abajo |
-| `escritorio.py` | El modo escritorio en GTK: la layer surface del avatar (arrastre, región de clic, cambio de monitor, posición guardada) y la ventana de chat aparte. Ver "Modo escritorio" |
+| `rem_chat.py` | **La aplicación**: levanta el servidor HTTP/WS y abre UNA presentación, `--modo ventana` o `--modo escritorio` (sin `--modo`, el último usado; `--modo overlay` = escritorio fijado). Cambiar de modo desde el menú la reinicia. Ver "Lanzador Yoru y escritorio fijado" |
+| `escritorio.py` | El modo escritorio en GTK: la layer surface del avatar (arrastre, región de clic, cambio de monitor, posición guardada, fijar en la esquina en vivo) y la ventana de chat aparte. Ver "Modo escritorio" |
 | `rem_chat_ventana.html` | La ventana de chat del modo escritorio: el panel de chat de siempre con su propio WebSocket (`avatar/chat_remoto.js`) |
 | `rem_escritorio.py` | CLI: `mostrar\|ocultar\|alternar` el avatar del modo escritorio (atajo de Hyprland, lanzador) |
 | `frases_voz.py` / `frases_escritorio.json` | Frases fijas del avatar de escritorio y su caché con voz (`cache_frases/`) |
@@ -356,9 +359,10 @@ la clave `"programas"` del JSON, que no existe en el schema que lee `personalida
 ## Puntos de entrada
 
 ```bash
-venv/bin/python rem_chat.py                    # LA APLICACIÓN — modo ventana (default de config.toml)
-venv/bin/python rem_chat.py --modo overlay     # LA APLICACIÓN — modo overlay (ver "Modo overlay" más abajo)
+venv/bin/python rem_chat.py                    # LA APLICACIÓN — el último modo usado (lanzador «Yoru»; la 1.ª vez, escritorio)
+venv/bin/python rem_chat.py --modo ventana     # LA APLICACIÓN — ventana con avatar + panel de chat
 venv/bin/python rem_chat.py --modo escritorio  # LA APLICACIÓN — avatar arrastrable + chat aparte (ver "Modo escritorio")
+venv/bin/python rem_chat.py --modo overlay     # alias: escritorio fijado en la esquina (ver "Lanzador Yoru y escritorio fijado")
 venv/bin/python bench_chat.py                  # REPL de depuración (ver abajo)
 venv/bin/python rem_panel.py                   # panel de control (con Rem ya abierto)
 ```
@@ -2755,12 +2759,20 @@ escritorio fijado".) **Medir VRAM con `nvidia-smi` en cada etapa** (con Ollama c
   el Hyprland anidado ya arriba (si no, se abre en su escritorio real: pasó el 2026-11-06). Mientras
   una prueba ocupa los puertos 18765/18766 su Rem no puede arrancar (también pasó): cerrar siempre la
   prueba al terminar.
-- `notas_fase2/prueba_arrastre/anidado.conf` es sintaxis vieja de Hyprland: 0.57 lee la config como
-  Lua y lo arranca en **modo de emergencia** (sin binds, reglas, monitor 1280×800 ni animaciones). Las
-  pruebas del 2026-11-10 no dependían de nada de eso (solo WS, la layer surface y el micrófono
-  simulado). Antes de una prueba que use binds, reglas de ventana o el tamaño de salida, pasarlo a Lua.
+- **Hyprland anidado: `Hyprland -c tests/anidado.lua`** (desde 2026-11-10; lo apunta `tests/entorno_aislado.sh`).
+  `notas_fase2/prueba_arrastre/anidado.conf` es la sintaxis vieja: 0.57 lee la config como Lua y lo arranca en **modo de
+  emergencia** (sin binds, reglas, `follow_mouse` ni animaciones). Las pruebas de los avisos con voz
+  (2026-11-10) no dependían de eso (solo WS, la layer surface y el micrófono simulado); las del
+  lanzador y el escritorio fijado ya se hicieron con `anidado.lua`. La salida mide lo que mida su
+  ventana en la sesión real (908×1038 la última vez), no 1280×800: las coordenadas del puntero
+  (`vptr`) salen de `hyprctl layers`/`clients` y de capturas con `grim`.
 - **Enseñar el diff antes de cada commit y esperar el ok de Esteban**; sin líneas de
   Claude/Anthropic en el mensaje.
+- **Commits intermedios (partir un cambio en varios commits): en un `git worktree` aparte**, fuera
+  del repo (`git worktree add <dir> -b <rama> HEAD`), y probarlos ahí (compilar, `node --check`,
+  tests). Nunca `checkout`/`stash`/escribir archivos en el árbol de trabajo para eso: Yoru puede
+  estar corriendo desde él. Al acabar: `git update-ref refs/heads/main <rama>` + `git reset -q`
+  (el árbol ya tiene el contenido final) y borrar el worktree y la rama (2026-11-10).
 
 ### Decisiones tomadas
 
@@ -2797,9 +2809,10 @@ en dos corridas idénticas; la jerga, 6 y 1 de 20. Toda comparación va con 2-3 
 
 ## Modo escritorio (`--modo escritorio`, etapa 2 de la fase 2)
 
-Lanzador **Rem Escritorio** (`lanzadores/rem-escritorio.sh`; si ya está abierto en este modo le manda
-SIGUSR1 y reaparece si estaba oculto, en vez de reiniciar). Dos ventanas en el mismo proceso que el
-servidor (`escritorio.py`):
+Lanzador **Yoru** (`lanzadores/rem.sh`; abre el último modo, y si ya está abierto en escritorio lo
+vuelve a mostrar por WS o, si no responde, con SIGUSR1, en vez de reiniciar). Dos ventanas en el
+mismo proceso que el servidor (`escritorio.py`). Fijado en la esquina (el antiguo overlay), ver
+"Lanzador Yoru y escritorio fijado":
 
 - **Avatar**: layer surface `rem_escritorio` (capa/tamaño en `config.toml` → `[escritorio]`, 380×620
   `top` por defecto), transparente, cuerpo entero, con clips y director como la ventana vieja
@@ -3168,6 +3181,18 @@ Aparte: al abrir el menú con el clic derecho el puntero cuenta como dentro (con
 
 ## Lanzador Yoru y escritorio fijado (2026-11-10)
 
+**Un solo lanzador, «Yoru»** (`lanzadores/rem.desktop` + `rem.sh`): `rem_chat.py` sin `--modo` abre el
+último modo usado. `rem_chat.py` lo guarda al arrancar en `preferencias.json` → `app.modo` (sección
+`app` de `preferencias.ESQUEMA`; base `config.toml [app].modo`, ahora `"escritorio"`: un valor igual a
+la base no se guarda). Con Yoru abierta, el lanzador no abre otra (en escritorio la vuelve a mostrar).
+Fuera del lanzador: Panel, Cerrar y las entradas de cada modo (sus `.sh` siguen para atajos y la
+terminal); `rem-debug.desktop` lleva `NoDisplay=true`. `lanzadores/instalar.sh` instala `rem*.desktop`
+y borra de `~/.local/share/applications` las copias de lanzadores que ya no existen (solo las que
+apuntan a esta carpeta). Títulos: «Yoru» la ventana y «Yoru — Panel de control» el panel
+(`personalidad.NOMBRE_PERSONAJE`). Icono: la cara de Yoru (recorte cuadrado redondeado de
+`~/mcp-vroid/ref/yoru.png`), instalado a mano solo en `~/.local/share/icons/hicolor/*/apps/yoru.png`,
+**no versionado**: `instalar.sh` pone `Icon=yoru` si lo encuentra ahí y si no `avatar-default`.
+
 **Menú del clic derecho en todos los modos**: en escritorio, el de siempre más Fijar en la esquina,
 Cambiar de modo ▸, Abrir panel y Cerrar (antes «Salir»); en la ventana, `avatar/menu_ventana.js` (solo
 sobre la zona 3D: en el panel de chat queda el menú de WebKit para copiar/pegar). Las acciones de la
@@ -3220,4 +3245,14 @@ tamaño (alto visible 0,878 frente a 0,876) ni de sitio. Cálculo (LS15): codo a
 Helltaker y el brazo derecho de `Sneeze3` (61°) ya caben; **el lado izquierdo lo sigue cortando el
 borde de la pantalla** (Yoru está a 210 px de él): para eso hay que subir `margen_izquierdo` (~90), que
 mueve a Yoru. Los clics siguen solo en la silueta, la caja y los botones.
+
+**Verificado** (anidado con `anidado.lua`, entorno aislado, clics reales con `vptr` y capturas con
+`grim`): «Yoru» abre escritorio sin modo guardado; menú con los ítems nuevos; Fijar en la esquina en
+vivo (420×600 en la esquina, medio cuerpo, caja, botones) y Soltar (vuelve a 380×620 en su posición);
+fijado arranca fijado; fijado no se arrastra; teclado ON_DEMAND sobre la caja y NONE al salir;
+Cerrar desde el menú en escritorio y en ventana; Cambiar de modo escritorio → ventana (4 mensajes y el
+modo Eco recuperados y pintados, título «Yoru») y ventana → escritorio (vuelve fijado, como se dejó);
+Abrir panel desde la ventana; «Yoru» recuerda el último modo (ventana) y no abre una segunda; el alias
+`--modo overlay` deja fijado guardado. Con baile y 5 gestos fijado, todos los clips que sonaron cumplen
+el criterio. Los 7 arranques en el entorno aislado: archivos reales intactos.
 

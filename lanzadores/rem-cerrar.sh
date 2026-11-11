@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cierra cualquier rem_chat.py abierto (ventana, overlay o escritorio): SIGTERM,
+# Cierra cualquier rem_chat.py abierto (ventana o escritorio): SIGTERM,
 # y si no se cerró en 5 s (interfaz colgada) vuelca sus pilas al rem_chat.log,
 # lo mata con SIGKILL y cierra los procesos de WebKit que le queden. No toca
 # bench_chat.py.

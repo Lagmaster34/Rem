@@ -9,6 +9,10 @@
 #   -d CARPETA  carpeta del entorno, fuera del repo (se crea y se siembra si no
 #               existe; si ya existe se reusa tal cual). Por defecto, una nueva
 #               en ${TMPDIR:-/tmp} (rem_prueba.XXXXXX).
+# Lo que abre ventanas va dentro de un Hyprland anidado, o se abre en el
+# escritorio real: arrancarlo antes con `Hyprland -c tests/anidado.lua` y pasar
+# su WAYLAND_DISPLAY y HYPRLAND_INSTANCE_SIGNATURE al comando (el más reciente en
+# $XDG_RUNTIME_DIR/hypr/). Cerrarlo al terminar, solo su pid.
 # Ejemplos:
 #   tests/entorno_aislado.sh -- venv/bin/python rem_chat.py --modo escritorio
 #   tests/entorno_aislado.sh -d /tmp/rem_prueba -- notas_fase2/prueba_arrastre/verificar.sh overlay x
@@ -49,7 +53,7 @@ if [[ -n "$pid_real$puertos" ]]; then
     echo "[aislado] hay una instancia real de Rem viva: no se corre la prueba." >&2
     [[ -n "$pid_real" ]] && echo "  pidfile real: rem_chat.py pid $pid_real" >&2
     [[ -n "$puertos" ]] && echo "$puertos" | sed 's/^/  puerto ocupado: /' >&2
-    echo "  Ciérrala (Rem Cerrar) y vuelve a correr la prueba." >&2
+    echo "  Ciérrala (menú → Cerrar, o lanzadores/rem-cerrar.sh) y vuelve a correr la prueba." >&2
     exit 4
 fi
 

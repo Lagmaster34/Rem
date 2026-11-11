@@ -6,7 +6,7 @@ Es solo un cliente: no levanta servidor ni abre puertos. Carga
 http://localhost:18765/rem_panel.html del servidor de rem_chat.py y habla con
 el backend por el mismo WebSocket (:18766), con los mensajes prefs_* (ver
 preferencias.py y "Preferencias del panel de control" en CLAUDE.md). Por eso
-necesita a Rem corriendo (ventana u overlay): si no, avisa y sale.
+necesita a Yoru corriendo (ventana o escritorio): si no, avisa y sale.
 
 Instancia única vía Gtk.Application: lanzarlo otra vez trae al frente la
 ventana ya abierta. Log propio en rem_panel.log; inspector remoto en :9223
@@ -65,11 +65,15 @@ class PanelApp(Gtk.Application):
         if self.win is not None:   # segunda invocación: Gtk la reenvía acá
             self.win.present()
             return
-        self.win = Gtk.ApplicationWindow(application=self, title="Rem — Panel de control")
+        import personalidad
+        self.win = Gtk.ApplicationWindow(application=self, title=f"{personalidad.NOMBRE_PERSONAJE} — Panel de control")
         self.win.set_default_size(ANCHO, ALTO)
         webview = crear_webview(transparente=False, prefijo="[Panel]")
         self.win.add(webview)
-        url = URL_PANEL + (f"?{urllib.parse.urlencode({'pestana': self.pestana})}" if self.pestana else "")
+        params = {"personaje": personalidad.NOMBRE_PERSONAJE}
+        if self.pestana:
+            params["pestana"] = self.pestana
+        url = URL_PANEL + "?" + urllib.parse.urlencode(params)
         cargar_con_retry(webview, url, prefijo="[Panel]")
         self.win.show_all()
 
@@ -78,12 +82,12 @@ def _avisar_sin_rem():
     """Sin servidor no hay página que cargar: diálogo + mensaje a la terminal
     y salida con código 1 — un lanzador sin terminal también se entera."""
     msg = ("Rem no está corriendo: el panel necesita su servidor "
-           f"(:{srv.HTTP_PORT}/:{srv.WS_PORT}). Abrí Rem (ventana u overlay) y volvé a abrir el panel.")
+           f"(:{srv.HTTP_PORT}/:{srv.WS_PORT}). Abre Yoru (lanzador «Yoru») y vuelve a abrir el panel.")
     print(f"[Panel] ERROR: {msg}", file=sys.stderr, flush=True)
     dialogo = Gtk.MessageDialog(message_type=Gtk.MessageType.ERROR,
                                 buttons=Gtk.ButtonsType.CLOSE,
                                 text="Rem no está corriendo")
-    dialogo.format_secondary_text("Abrí Rem (ventana u overlay) y volvé a abrir el panel.")
+    dialogo.format_secondary_text("Abre Yoru (lanzador «Yoru») y vuelve a abrir el panel.")
     dialogo.run()
     sys.exit(1)
 

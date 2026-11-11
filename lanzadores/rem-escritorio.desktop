@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Rem Escritorio
-Comment=Avatar sobre el escritorio que se arrastra; chat en ventana aparte
-Exec=@LANZADORES@/rem-escritorio.sh
-Icon=@ICONO@
-Terminal=false
-Categories=Utility;
-StartupNotify=false

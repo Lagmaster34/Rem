@@ -3,7 +3,7 @@
 
     venv/bin/python rem_escritorio.py mostrar|ocultar|alternar
 
-Pensado para un atajo de Hyprland y para el lanzador «Rem Escritorio» (que lo
+Pensado para un atajo de Hyprland y para el lanzador «Yoru» (que lo
 usa en vez de abrir una segunda instancia). Se conecta al WebSocket de Rem, manda
 la acción y sale: 0 = enviada, 1 = Rem no está corriendo.
 """

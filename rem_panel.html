@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Panel de Rem</title>
+<title>Panel de Yoru</title>
 <link rel="stylesheet" href="/avatar/temas.css">
 <style>
   /* Misma paleta que el panel de chat de rem_avatar.html (fondo violeta muy
@@ -244,7 +244,7 @@
 <body>
   <nav id="lateral">
     <div id="marca">
-      <h1>Rem</h1>
+      <h1 id="marca-nombre">Yoru</h1>
       <p>Panel de control</p>
     </div>
     <div id="pestanas" role="tablist" aria-orientation="vertical"></div>
@@ -1034,6 +1034,8 @@ function pintarChat(cuerpo) {
 }
 
 const _url = new URLSearchParams(location.search).get('pestana');
+// El nombre de la barra lateral: personalidad.NOMBRE_PERSONAJE (lo pasa rem_panel.py).
+{ const n = new URLSearchParams(location.search).get('personaje'); if (n) document.getElementById('marca-nombre').textContent = n; }
 const _pedida = ALIAS_PESTANA[_url] ?? _url;
 const _guardada = ALIAS_PESTANA[pestanaGuardada()] ?? pestanaGuardada();
 const inicial = [_pedida, _guardada].find(id => PESTANAS.some(p => p.id === id)) ?? PESTANAS[0].id;

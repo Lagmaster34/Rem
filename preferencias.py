@@ -187,7 +187,18 @@ def _toml_zona_exclusiva():
 # Cada pestaña del panel añade aquí su sección cuando se implemente. Las bases
 # leen config.toml directo, no los config.leer_*() — esos ya devuelven el valor
 # EFECTIVO (con estas preferencias encima) y sería circular.
+def _toml_modo_app():
+    # El alias "overlay" de config.toml se guarda como escritorio (el fijado
+    # va aparte, en escritorio_estado.json).
+    return config.resolver_modo(config.modo_de_toml())[0]
+
+
 ESQUEMA: dict[str, dict[str, Campo]] = {
+    # El último modo usado: lo guarda rem_chat.py al arrancar, y el lanzador
+    # «Yoru» (rem_chat.py sin --modo) abre ese. Base: config.toml [app].modo.
+    "app": {
+        "modo": Campo(_opcion("Modo", config.MODOS_APP), _toml_modo_app),
+    },
     "modelo": {
         "vrm": Campo(_validar_vrm, lambda: _toml("avatar", "modelo", "models/vrm/neru.vrm")),
     },
