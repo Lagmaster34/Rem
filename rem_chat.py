@@ -241,6 +241,57 @@ def _accion_app(d):
     return False
 
 
+_SYSCALLS_X86_64 = {0: "read", 7: "poll", 23: "select", 47: "recvmsg", 202: "futex", 232: "epoll_wait",
+                    270: "pselect6", 271: "ppoll", 281: "epoll_pwait", 441: "epoll_pwait2"}
+
+
+def _volcado_nativo():
+    """Con GTK colgado, el volcado de Python solo dice "Gtk.main": el bloqueo
+    está en código nativo (GTK, WebKit, Wayland). Esto deja en el log (1) dónde
+    espera el hilo principal según el kernel (wchan + syscall: futex = un
+    cerrojo, como el de JavaScriptCore de la etapa 2; poll/ppoll/recvmsg = una
+    espera de Wayland o del compositor) y (2) las pilas nativas de todos los
+    hilos con gdb, si está instalado. Con ptrace_scope = 1 nadie puede
+    engancharse a este proceso salvo quien él autorice: se autoriza SOLO a ese
+    gdb (prctl PR_SET_PTRACER) y se retira al terminar."""
+    import ctypes
+    import shutil
+    tid = threading.main_thread().native_id
+    try:
+        wchan = open(f"/proc/self/task/{tid}/wchan").read().strip()
+        sc = open(f"/proc/self/task/{tid}/syscall").read().split()
+        nombre = _SYSCALLS_X86_64.get(int(sc[0]), sc[0]) if sc and sc[0].isdigit() else " ".join(sc)
+        extra = ""
+        if sc and sc[0].isdigit() and int(sc[0]) in (0, 47) and len(sc) > 1:   # read/recvmsg: el 1.er arg es el fd
+            fd = int(sc[1], 16)
+            extra = f", fd {fd} -> {os.readlink(f'/proc/self/fd/{fd}')}"
+        print(f"[Vigilante] hilo principal (tid {tid}): wchan={wchan}, syscall={nombre}{extra} ({' '.join(sc[:4])})",
+              flush=True)
+    except (OSError, ValueError) as e:
+        print(f"[Vigilante] no se pudo leer /proc del hilo principal ({e})", flush=True)
+    gdb = shutil.which("gdb")
+    if not gdb:
+        print("[Vigilante] sin gdb: no hay pilas nativas", flush=True)
+        return
+    PR_SET_PTRACER = 0x59616D61
+    libc = ctypes.CDLL(None, use_errno=True)
+    # gdb espera medio segundo antes de engancharse: da tiempo a autorizarlo.
+    proc = subprocess.Popen([gdb, "-q", "-batch", "-nx", "-iex", "set debuginfod enabled off",
+                             "-ex", "shell sleep 0.5", "-ex", f"attach {os.getpid()}",
+                             "-ex", "thread apply all bt 30", "-ex", "detach"],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    libc.prctl(PR_SET_PTRACER, proc.pid, 0, 0, 0)
+    try:
+        salida, _ = proc.communicate(timeout=90)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        salida, _ = proc.communicate()
+        salida = (salida or "") + "\n(gdb no terminó en 90 s)"
+    finally:
+        libc.prctl(PR_SET_PTRACER, 0, 0, 0, 0)
+    print("[Vigilante] pilas nativas (gdb):\n" + (salida or "")[-30000:], flush=True)
+
+
 def _iniciar_vigilante():
     """Diagnóstico de congelamientos: el bucle de GTK escribe "[GTK] vivo" cada
     10 s, y un hilo aparte avisa (una vez por episodio) si ese latido o el de
@@ -271,6 +322,10 @@ def _iniciar_vigilante():
                 print(f"[Vigilante] el bucle de GTK no late desde hace {hace:.0f} s: la interfaz está colgada. "
                       "Pilas de Python:", flush=True)
                 faulthandler.dump_traceback(all_threads=True)
+                try:
+                    _volcado_nativo()
+                except Exception as e:
+                    print(f"[Vigilante] el volcado nativo falló ({type(e).__name__}: {e})", flush=True)
             elif hace < 15:
                 estado["aviso_gtk"] = False
             pag = srv.ultimo_latido_pagina

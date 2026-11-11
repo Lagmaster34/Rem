@@ -3162,6 +3162,23 @@ una excepción que corta `requestAnimationFrame`, no encaja: es la primera líne
   fuerza un redibujado y un commit de márgenes. Probado pausando el Hyprland anidado 9 s con SIGSTOP:
   `sin frames` a los 3 s, GTK vivo, redibujado forzado, y `vuelven a llegar frames` al reanudarlo.
   Excepciones en el frame → `[Bucle] error en el frame` con pila.
+- **Segundo caso (2026-11-10, sesión real, escritorio suelto)**: ~5 s después de soltar un arrastre,
+  `[Bucle] sin frames` durante más de 3 min con la página viva, y `[Vigilante] el bucle de GTK no
+  late…` con el hilo principal **dentro de `Gtk.main` sin nada de Python encima**: bloqueado en código
+  nativo (GTK, WebKit o Wayland). Como GTK no corre, el `sin_frames` de la página tampoco llega a
+  `escritorio.py`: la red de seguridad de los frames no sirve contra esto. No fue el trabajo de los
+  commits de ese día (nada de checkout/stash, índice sin tocar, ningún archivo de la app cambió
+  mientras corría; el cuelgue empezó a las ~21:07:41, antes de cualquier acción de ese turno). Las
+  pilas de Python no dicen más: desde entonces, al detectar el cuelgue el vigilante también vuelca
+  (`_volcado_nativo` en `rem_chat.py`) el `wchan`/`syscall` del hilo principal (futex = cerrojo, como
+  el de JavaScriptCore de la etapa 2; poll/ppoll/recvmsg = esperando a Wayland o al compositor) y las
+  **pilas nativas con `gdb`**, autorizado solo ese gdb con `prctl(PR_SET_PTRACER)` (con
+  `ptrace_scope = 1` un gdb ajeno no puede engancharse). Probado con el hilo principal bloqueado en
+  un futex: `wchan=futex_do_wait, syscall=futex` y las pilas de todos los hilos en 0,8 s.
+- **Pendiente (próxima sesión)**: registrar en el log, al final de cada arrastre, la región de clic
+  que se aplicó y la posición de la capa (monitor, márgenes, tamaño), para poder cruzarlas con un
+  cuelgue que empiece justo después de soltar (el del 2026-11-10 empezó ~5 s después). El estrés de
+  arrastres no se repite: se espera al volcado nativo en uso normal.
 
 **Red de seguridad de los clips** (`avatar/clips.js`, `director.js`): una carga que no termina en
 `CARGA_MAX_S` (15 s) se da por fallida esa vez (no queda en caché: el siguiente pedido reintenta);
