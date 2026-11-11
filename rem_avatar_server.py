@@ -224,6 +224,7 @@ def enviar_audio(ruta_wav: str, timeline: list) -> bool:
     nombre   = f"{audio_id}.wav"
     destino  = os.path.join(TMP_AUDIO_DIR, nombre)
     shutil.copyfile(ruta_wav, destino)
+    _marcar_audio_despachado(_duracion_wav(destino, timeline))
 
     msg = json.dumps({
         "tipo": "audio",
@@ -545,6 +546,38 @@ _ptt_origen       = None      # quién abrió la grabación en curso: "tecla" | 
 _ptt_auto         = None      # grabación en automático: {"detector", "origen", "motivo", "t"}
 _ws_reproduciendo = set()     # websockets cuyo frontend reporta audio sonando (voz_estado)
 _ultimo_fin_habla = 0.0       # time.monotonic() del último fin de voz/turno
+# Final estimado de todo el audio despachado: cada enviar_audio() lo corre
+# hasta max(ahora, final anterior) + la duración del WAV (la página los toca en
+# cola). Mientras no se pase (+ margen), Yoru cuenta como hablando aunque la
+# página no lo haya confirmado (voz_estado). Cubre dos huecos vistos con fallos
+# inyectados: entre despachar una frase y su voz_estado true un ptt_start abría
+# el micrófono a los ~50 ms; y si el WebSocket del avatar se cae (el crash del
+# proceso de red de WebKit) se pierde su _ws_reproduciendo y el micrófono se
+# abría con la frase sonando. El margen cubre lo que tarda en empezar a sonar;
+# no alarga el caso normal, que ya espera espera_tras_habla_s tras el final.
+_AUDIO_MARGEN_S = 0.5
+_audio_fin_estimado = 0.0     # time.monotonic()
+
+
+def _duracion_wav(ruta: str, timeline: list) -> float:
+    import wave
+    try:
+        with wave.open(ruta) as w:
+            return w.getnframes() / w.getframerate()
+    except (OSError, wave.Error, ZeroDivisionError):
+        # Sin cabecera legible: el último evento del timeline, o 2 s.
+        return max((e.get("t", 0) for e in timeline or []), default=0) or 2.0
+
+
+def _marcar_audio_despachado(dur_s: float):
+    """Lo llama enviar_audio() (desde cualquier hilo)."""
+    global _audio_fin_estimado
+    _audio_fin_estimado = max(_audio_fin_estimado, time.monotonic()) + dur_s
+
+
+def _audio_por_confirmar() -> bool:
+    """¿Queda audio despachado que debería estar sonando todavía?"""
+    return time.monotonic() < _audio_fin_estimado + _AUDIO_MARGEN_S
 
 
 # ── Confirmación de acciones (apagar_pc, ver acciones.py) ────────────────
@@ -645,7 +678,7 @@ def _ptt_motivo_ocupada():
     # síntesis que el worker aún no marcó con task_done().
     if cola is not None and getattr(cola, "_unfinished_tasks", 0) > 0:
         return f"{nombre} está preparando su voz"
-    if _ws_reproduciendo:
+    if _ws_reproduciendo or _audio_por_confirmar():
         return f"{nombre} está hablando"
     import stt
     if time.monotonic() - _ultimo_fin_habla < stt.leer_config_stt()["espera_tras_habla_s"]:
@@ -666,7 +699,7 @@ def _motivo_no_decir_frase():
     cola = _chat_cola_habla
     if cola is not None and getattr(cola, "_unfinished_tasks", 0) > 0:
         return "voz en cola"
-    if _ws_reproduciendo:
+    if _ws_reproduciendo or _audio_por_confirmar():
         return "ya está hablando"
     return None
 

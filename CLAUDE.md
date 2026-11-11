@@ -1973,6 +1973,23 @@ muestra como aviso.
 `_registrar_voz_estado()` en el servidor mantiene `_ws_reproduciendo` (el set de websockets con
 audio sonando) y marca `_ultimo_fin_habla` al vaciarse — de ahí sale `espera_tras_habla_s`.
 
+**Audio despachado sin confirmar (2026-11-10)**: `voz_estado` sola dejaba dos huecos, vistos con
+fallos inyectados (un lanzador fuera del repo que cierra el WS del avatar a voluntad) y ráfagas de
+`ptt_start` cada 40 ms: (1) entre `enviar_audio()` y el `voz_estado: true` de la página nada decía
+que Yoru iba a hablar, y el micrófono se abría ~50 ms después de despachar una frase; (2) si el WS del
+avatar se cae (el crash del proceso de red de WebKit), el servidor la saca de `_ws_reproduciendo` al
+desconectar y al reconectar la página no lo repite: el micrófono se abría 1,9-3,2 s antes de que
+acabara una frase de 5 s. Ahora `enviar_audio()` lleva el **final estimado** de todo lo despachado
+(`_audio_fin_estimado` = max(ahora, final anterior) + duración del WAV; la página los toca en cola) y
+`_audio_por_confirmar()` cuenta como hablando hasta ese final + `_AUDIO_MARGEN_S` (0,5 s), confirme o
+no la página; lo miran `_ptt_motivo_ocupada()` y `_motivo_no_decir_frase()`. Medido: con el WS cerrado
+al despachar, el micrófono se abre 0,71-0,78 s **después** del final (3 de 3). En el caso normal no
+alarga nada (ya se esperan `espera_tras_habla_s` tras el `false`): la tecla vuelve a abrir el micrófono
+0,69-0,73 s después de una frase corta aislada y 0,87-0,88 s tras una corta encolada detrás de otra
+(antes, igual). **Límite conocido**: si el WS está caído y además la página tarda más de 0,5 s en
+empezar a sonar un audio (cola atascada, un `stalled`), la estimación termina antes que el audio real
+y el micrófono podría abrirse durante el final de la frase.
+
 **Casos límite probados en vivo, no solo el camino feliz**: toque muy corto (`start`+`stop`
 inmediato) descarta la grabación por `min_grabacion_s` sin transcribir nada; un `ptt_stop` SIN
 `ptt_start` previo (huérfano — puede pasar si el `stop` de un toque corto de verdad llega ANTES que
